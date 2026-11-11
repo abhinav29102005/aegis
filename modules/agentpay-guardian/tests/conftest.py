@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import threading
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -11,7 +11,6 @@ import pytest
 from contracts import (
     AgentIdentity,
     ApprovalRecord,
-    ApprovalStatus,
     AuthorizationDecision,
     BudgetReservation,
     EvidenceRecord,
@@ -30,22 +29,10 @@ from contracts import (
     VerifiedPayPalCapture,
     assert_payment_transition,
     compute_payload_hash,
-    compute_quote_hash,
 )
 from contracts.fixtures import (
-    AGENT_PROCUREMENT_ID,
-    BASE_TIME,
-    MERCHANT_SANDBOX_CLOUD_ID,
-    MERCHANT_UNKNOWN_ID,
-    PASSPORT_DEFAULT_ID,
-    TENANT_ALPHA_ID,
     build_base_entities,
 )
-from guardian.budgets.coordinator import BudgetCoordinator
-from guardian.domain.exceptions import GuardianError, InsufficientBudgetError
-from guardian.domain.service import GuardianService
-from guardian.passports.service import PassportService
-from guardian.policies.engine import PolicyEngine
 from paypal import (
     PayPalCaptureResult,
     PayPalOrderCreationResult,
@@ -53,6 +40,9 @@ from paypal import (
     PayPalTimeoutError,
 )
 from security import compute_financial_event_hash
+
+from guardian.domain.exceptions import InsufficientBudgetError
+from guardian.domain.service import GuardianService
 
 
 def run_sync(coro):

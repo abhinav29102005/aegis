@@ -7,6 +7,7 @@ from typing import Any
 from uuid import UUID
 
 from contracts import Merchant, PassportStatus, SpendingPassport
+
 from guardian.domain.exceptions import GuardianError, PolicyDeniedError
 
 try:

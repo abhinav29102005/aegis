@@ -21,6 +21,7 @@ from contracts import (
     DecisionOutcome,
     PurchaseProposal,
 )
+
 from guardian.domain.exceptions import GuardianError
 
 

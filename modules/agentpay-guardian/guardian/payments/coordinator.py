@@ -19,15 +19,7 @@ from contracts import (
     PaymentIntent,
     PaymentState,
     PayPalBuyerApproval,
-    VerifiedPayPalCapture,
     compute_payload_hash,
-)
-from guardian.budgets.coordinator import BudgetCoordinator
-from guardian.domain.exceptions import (
-    AttemptNotFoundError,
-    GuardianError,
-    IntentNotFoundError,
-    InvalidStateTransitionError,
 )
 from paypal import (
     PayPalCaptureResult,
@@ -35,6 +27,14 @@ from paypal import (
     PayPalReconciliationResult,
     PayPalSandboxClient,
     PayPalTimeoutError,
+)
+
+from guardian.budgets.coordinator import BudgetCoordinator
+from guardian.domain.exceptions import (
+    AttemptNotFoundError,
+    GuardianError,
+    IntentNotFoundError,
+    InvalidStateTransitionError,
 )
 
 try:

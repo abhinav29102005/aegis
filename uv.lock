@@ -4,6 +4,7 @@ requires-python = ">=3.12, <3.14"
 
 [manifest]
 members = [
+    "agentpay-guardian",
     "agentpay-nexus",
     "disputeos",
     "nexus-contracts",
@@ -13,10 +14,32 @@ members = [
 ]
 
 [[package]]
+name = "agentpay-guardian"
+version = "0.1.0"
+source = { editable = "modules/agentpay-guardian" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "nexus-contracts" },
+    { name = "nexus-database" },
+    { name = "nexus-paypal" },
+    { name = "nexus-security" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115.0,<1.0.0" },
+    { name = "nexus-contracts", editable = "packages/contracts" },
+    { name = "nexus-database", editable = "packages/database" },
+    { name = "nexus-paypal", editable = "packages/paypal" },
+    { name = "nexus-security", editable = "packages/security" },
+]
+
+[[package]]
 name = "agentpay-nexus"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "agentpay-guardian" },
     { name = "disputeos" },
     { name = "fastapi" },
     { name = "httpx" },
@@ -38,6 +61,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "agentpay-guardian", editable = "modules/agentpay-guardian" },
     { name = "disputeos", editable = "modules/disputeos" },
     { name = "fastapi", specifier = ">=0.115.0,<1.0.0" },
     { name = "httpx", specifier = ">=0.27.0,<1.0.0" },

@@ -18,18 +18,17 @@ from contracts import (
     AuthorizationDecision,
     DecisionOutcome,
     FinancialEventType,
-    Merchant,
     PaymentAttempt,
     PaymentIntent,
     PaymentState,
     PurchaseProposal,
     QuoteSnapshot,
-    SpendingPassport,
 )
+from paypal import PayPalSandboxClient
+
 from guardian.approvals.service import ApprovalService
 from guardian.budgets.coordinator import BudgetCoordinator
 from guardian.domain.exceptions import (
-    GuardianError,
     IntentNotFoundError,
     InvalidStateTransitionError,
     PolicyDeniedError,
@@ -37,7 +36,6 @@ from guardian.domain.exceptions import (
 from guardian.passports.service import PassportService
 from guardian.payments.coordinator import PaymentCoordinator
 from guardian.policies.engine import PolicyEngine
-from paypal import PayPalSandboxClient
 
 try:
     from database import LedgerRepository
@@ -192,7 +190,7 @@ class GuardianService:
 
         # 7. Act on decision outcome
         if decision.outcome == DecisionOutcome.DENY:
-            failed_intent = self.repo.transition_intent(
+            self.repo.transition_intent(
                 tenant_id=proposal.tenant_id,
                 intent_id=saved_intent.id,
                 target_state=PaymentState.FAILED,
@@ -285,7 +283,7 @@ class GuardianService:
             )
 
         # Decide approval
-        decided_approval = self.approval_service.decide_approval(
+        self.approval_service.decide_approval(
             tenant_id=tenant_id,
             approval_id=approval_id,
             approver_id=approver_id,

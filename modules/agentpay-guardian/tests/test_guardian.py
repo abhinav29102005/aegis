@@ -39,6 +39,7 @@ from contracts.fixtures import (
     PASSPORT_DEFAULT_ID,
     TENANT_ALPHA_ID,
 )
+
 from guardian.agents.purchasing_copilot import (
     AgentSecurityViolationError,
     PurchasingCopilot,

@@ -4,12 +4,12 @@ Provides HTTP endpoints for proposal submission, human approvals,
 checkout initiation, PayPal buyer approval, verified capture, and reconciliation.
 """
 
-from __future__ import annotations
-
+from typing import Annotated, Any
 from uuid import UUID
 
-from contracts import PaymentAttempt, PaymentIntent
+from contracts import PaymentIntent
 from fastapi import APIRouter, Depends, HTTPException, status
+
 from guardian.api.models import (
     ApprovalActionResponse,
     BuyerApprovedRequest,
@@ -57,7 +57,7 @@ def create_guardian_router(
     )
     def submit_proposal(
         request: SubmitProposalRequest,
-        svc: GuardianService = Depends(get_service),
+        svc: Annotated[GuardianService, Depends(get_service)],
     ) -> ProposalSubmissionResponse:
         proposal, quote = request.to_proposal_and_quote()
         try:
@@ -88,7 +88,7 @@ def create_guardian_router(
         request: HumanApprovalRequest,
         tenant_id: UUID,
         approval_id: UUID,
-        svc: GuardianService = Depends(get_service),
+        svc: Annotated[GuardianService, Depends(get_service)],
     ) -> ApprovalActionResponse:
         try:
             intent, approval = svc.approve_and_consume(
@@ -133,7 +133,7 @@ def create_guardian_router(
         intent_id: UUID,
         request: InitiateCheckoutRequest,
         tenant_id: UUID,
-        svc: GuardianService = Depends(get_service),
+        svc: Annotated[GuardianService, Depends(get_service)],
     ) -> CheckoutResponse:
         try:
             intent, attempt = await svc.initiate_checkout(
@@ -170,7 +170,7 @@ def create_guardian_router(
         intent_id: UUID,
         request: BuyerApprovedRequest,
         tenant_id: UUID,
-        svc: GuardianService = Depends(get_service),
+        svc: Annotated[GuardianService, Depends(get_service)],
     ) -> dict[str, Any]:
         try:
             intent, attempt = svc.handle_buyer_approved(
@@ -191,7 +191,7 @@ def create_guardian_router(
         intent_id: UUID,
         request: CaptureRequest,
         tenant_id: UUID,
-        svc: GuardianService = Depends(get_service),
+        svc: Annotated[GuardianService, Depends(get_service)],
     ) -> dict[str, Any]:
         try:
             intent, attempt = await svc.execute_capture(
@@ -211,7 +211,7 @@ def create_guardian_router(
         intent_id: UUID,
         request: BuyerDeclinedRequest,
         tenant_id: UUID,
-        svc: GuardianService = Depends(get_service),
+        svc: Annotated[GuardianService, Depends(get_service)],
     ) -> dict[str, Any]:
         try:
             intent, attempt = svc.handle_buyer_declined(
@@ -232,7 +232,7 @@ def create_guardian_router(
         intent_id: UUID,
         request: ReconcileRequest,
         tenant_id: UUID,
-        svc: GuardianService = Depends(get_service),
+        svc: Annotated[GuardianService, Depends(get_service)],
     ) -> dict[str, Any]:
         try:
             intent, attempt = await svc.reconcile_pending(
@@ -251,7 +251,7 @@ def create_guardian_router(
     def get_payment_intent(
         intent_id: UUID,
         tenant_id: UUID,
-        svc: GuardianService = Depends(get_service),
+        svc: Annotated[GuardianService, Depends(get_service)],
     ) -> PaymentIntent:
         intent = svc.get_intent(tenant_id, intent_id)
         if intent is None:

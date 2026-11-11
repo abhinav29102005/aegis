@@ -12,6 +12,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from contracts import ApprovalRecord, ApprovalStatus, FinancialEventType
+
 from guardian.domain.exceptions import (
     ApprovalExpiredError,
     ApprovalMismatchError,

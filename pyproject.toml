@@ -44,6 +44,7 @@ agentpay-guardian = { workspace = true }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+addopts = ["--import-mode=importlib"]
 testpaths = [
     "packages/contracts/tests",
     "packages/security/tests",
