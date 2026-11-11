@@ -1,4 +1,4 @@
-"""FastAPI router for GhostPay replay, counterfactual simulation, investigations, and timelines."""
+"""FastAPI router for GhostPay replay, counterfactual simulation, Agent DNA, investigations, and timelines."""
 
 from collections.abc import Callable
 from typing import Annotated, Any
@@ -16,12 +16,29 @@ from pydantic import BaseModel, ConfigDict, Field
 from security import TenantIsolationError, assert_same_tenant, get_settings
 from security.settings import DEFAULT_TENANT_UUID
 
+from ghostpay.agentdna.detector import AgentDNAAnomalyResult
+from ghostpay.agentdna.profiles import AgentBehaviorProfile
+from ghostpay.api.models import (
+    AnalyzeAgentRequest,
+    CreateInvestigationRequest,
+    IngestTraceRequest,
+    ReplayCompareRequest,
+)
 from ghostpay.counterfactual.simulator import simulate_counterfactual
+from ghostpay.domain.exceptions import (
+    CrossTenantAccessError,
+    GhostPayError,
+    InvestigationNotFoundError,
+    TraceNotFoundError,
+)
+from ghostpay.domain.models import InvestigationReport, PaymentTrace
+from ghostpay.domain.service import GhostPayService
 from ghostpay.errors import (
     OverrideValidationError,
     ReplayExecutionForbiddenError,
     UnsupportedPolicyVersionError,
 )
+from ghostpay.integrations.disputeos import DisputeOSEvidenceBundle, export_to_disputeos
 from ghostpay.replay.engine import ReplayEngine
 from ghostpay.repository import (
     GhostPayReplayRepository,
@@ -29,8 +46,10 @@ from ghostpay.repository import (
     PersistedInvestigation,
 )
 from ghostpay.timelines.builder import build_timeline
+from ghostpay.timemachine.comparison import PolicyComparisonReport
 
 _DEV_TEST_ENVS = frozenset({"development", "dev", "test", "testing", "local"})
+_UNPROCESSABLE_STATUS = getattr(status, "HTTP_422_UNPROCESSABLE_CONTENT", 422)
 
 
 class SimulateRequest(BaseModel):
@@ -105,11 +124,8 @@ def get_dev_tenant_id(
         ) from exc
 
 
-_UNPROCESSABLE_STATUS = getattr(status, "HTTP_422_UNPROCESSABLE_CONTENT", 422)
-
-
 def _raise_http_for_domain_error(exc: Exception) -> None:
-    if isinstance(exc, (TenantIsolationError, PermissionError)):
+    if isinstance(exc, (TenantIsolationError, CrossTenantAccessError, PermissionError)):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
@@ -133,9 +149,9 @@ def _raise_http_for_domain_error(exc: Exception) -> None:
                 "supported_versions": list(exc.supported_versions),
             },
         ) from exc
-    if isinstance(exc, ValueError):
+    if isinstance(exc, (TraceNotFoundError, InvestigationNotFoundError)):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
         ) from exc
     if isinstance(exc, ReplayExecutionForbiddenError):
@@ -143,15 +159,23 @@ def _raise_http_for_domain_error(exc: Exception) -> None:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Forensic read-only invariant violation.",
         ) from exc
+    if isinstance(exc, (ValueError, GhostPayError)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
     raise exc
 
 
 def create_ghostpay_router(
+    service: GhostPayService | None = None,
+    *,
     tenant_resolver: Callable[..., UUID] | None = None,
     repo_resolver: Callable[..., GhostPayReplayRepository | None] | None = None,
 ) -> APIRouter:
     """Create and configure FastAPI APIRouter for GhostPay forensic services."""
     api_router = APIRouter(prefix="/ghostpay", tags=["ghostpay"])
+    svc = service or GhostPayService()
     resolve_tenant = tenant_resolver or get_dev_tenant_id
 
     def resolve_repo() -> GhostPayReplayRepository | None:
@@ -171,6 +195,60 @@ def create_ghostpay_router(
     def health_check() -> dict[str, str]:
         return {"status": "ok", "service": "ghostpay"}
 
+    # -------------------------------------------------------------------------
+    # Traces & Timelines
+    # -------------------------------------------------------------------------
+    @api_router.post("/traces/ingest", response_model=PaymentTrace)
+    def ingest_trace(
+        req: IngestTraceRequest,
+        tenant_id: Annotated[UUID, Depends(resolve_tenant)],
+    ) -> PaymentTrace:
+        try:
+            assert_same_tenant(tenant_id, req.tenant_id, "ingest_trace_request")
+            return svc.ingest_trace(
+                tenant_id=req.tenant_id,
+                agent_id=req.agent_id,
+                payment_intent_id=req.payment_intent_id,
+                events=req.events,
+                quote_snapshot=req.quote_snapshot,
+                evidence_records=req.evidence_records,
+                recorded_decision=req.recorded_decision,
+                recorded_passport=req.recorded_passport,
+                recorded_merchant=req.recorded_merchant,
+                approval_record=req.approval_record,
+                payment_intent=req.payment_intent,
+                policy_version=req.policy_version,
+                strict_integrity=req.strict_integrity,
+            )
+        except Exception as exc:
+            _raise_http_for_domain_error(exc)
+            raise
+
+    @api_router.get("/traces/{trace_id}", response_model=PaymentTrace)
+    def get_trace(
+        trace_id: UUID,
+        tenant_id: Annotated[UUID, Depends(resolve_tenant)],
+    ) -> PaymentTrace:
+        try:
+            return svc.get_trace(tenant_id, trace_id)
+        except Exception as exc:
+            _raise_http_for_domain_error(exc)
+            raise
+
+    @api_router.get("/traces/{trace_id}/timeline", response_model=list[ReplayTimelineEntry])
+    def get_trace_timeline(
+        trace_id: UUID,
+        tenant_id: Annotated[UUID, Depends(resolve_tenant)],
+    ) -> list[ReplayTimelineEntry]:
+        try:
+            return svc.get_timeline(tenant_id, trace_id)
+        except Exception as exc:
+            _raise_http_for_domain_error(exc)
+            raise
+
+    # -------------------------------------------------------------------------
+    # Replay & Counterfactual Simulation
+    # -------------------------------------------------------------------------
     @api_router.post("/replay", response_model=ReplayResult)
     def replay_transaction(
         request: ReplayRequest,
@@ -214,6 +292,18 @@ def create_ghostpay_router(
             return result
         except HTTPException:
             raise
+        except Exception as exc:
+            _raise_http_for_domain_error(exc)
+            raise
+
+    @api_router.post("/replay/compare", response_model=PolicyComparisonReport)
+    def compare_policies_endpoint(
+        req: ReplayCompareRequest,
+        tenant_id: Annotated[UUID, Depends(resolve_tenant)],
+    ) -> PolicyComparisonReport:
+        try:
+            assert_same_tenant(tenant_id, req.replay_request.tenant_id, "replay_compare_request")
+            return svc.compare_policies(req.replay_request, req.policies)
         except Exception as exc:
             _raise_http_for_domain_error(exc)
             raise
@@ -314,6 +404,35 @@ def create_ghostpay_router(
             _raise_http_for_domain_error(exc)
             raise
 
+    # -------------------------------------------------------------------------
+    # Agent DNA Endpoints
+    # -------------------------------------------------------------------------
+    @api_router.get("/agents/{agent_id}/profile", response_model=AgentBehaviorProfile)
+    def get_agent_profile(
+        agent_id: UUID,
+        tenant_id: Annotated[UUID, Depends(resolve_tenant)],
+    ) -> AgentBehaviorProfile:
+        try:
+            return svc.get_agent_profile(tenant_id, agent_id)
+        except Exception as exc:
+            _raise_http_for_domain_error(exc)
+            raise
+
+    @api_router.post("/agents/{agent_id}/analyze", response_model=AgentDNAAnomalyResult)
+    def analyze_agent_dna(
+        agent_id: UUID,
+        req: AnalyzeAgentRequest,
+        tenant_id: Annotated[UUID, Depends(resolve_tenant)],
+    ) -> AgentDNAAnomalyResult:
+        try:
+            return svc.analyze_agent(tenant_id, agent_id, req.target_trace_id)
+        except Exception as exc:
+            _raise_http_for_domain_error(exc)
+            raise
+
+    # -------------------------------------------------------------------------
+    # Investigation Endpoints
+    # -------------------------------------------------------------------------
     @api_router.get("/investigations", response_model=InvestigationListResponse)
     def list_investigations(
         tenant_id: Annotated[UUID, Depends(resolve_tenant)],
@@ -334,23 +453,55 @@ def create_ghostpay_router(
             offset=offset,
         )
 
-    @api_router.get("/investigations/{investigation_id}", response_model=PersistedInvestigation)
+    @api_router.post("/investigations", response_model=InvestigationReport)
+    def create_investigation(
+        req: CreateInvestigationRequest,
+        tenant_id: Annotated[UUID, Depends(resolve_tenant)],
+    ) -> InvestigationReport:
+        try:
+            return svc.create_investigation(
+                tenant_id=tenant_id,
+                trace_id=req.trace_id,
+                counterfactual_policies=req.counterfactual_policies,
+            )
+        except Exception as exc:
+            _raise_http_for_domain_error(exc)
+            raise
+
+    @api_router.get(
+        "/investigations/{investigation_id}",
+        response_model=PersistedInvestigation | InvestigationReport,
+    )
     def get_investigation(
         investigation_id: UUID,
         tenant_id: Annotated[UUID, Depends(resolve_tenant)],
-        repo: Annotated[GhostPayReplayRepository | None, Depends(repo_dep)],
-    ) -> PersistedInvestigation:
-        active_repo = _require_repo(repo)
-        try:
-            item = active_repo.get_investigation(tenant_id, investigation_id)
-            if item is None:
+        repo: Annotated[GhostPayReplayRepository | None, Depends(repo_dep)] = None,
+    ) -> PersistedInvestigation | InvestigationReport:
+        if repo is not None:
+            item = repo.get_investigation(tenant_id, investigation_id)
+            if item is not None:
+                return item
+            if investigation_id not in svc.investigations:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Investigation {investigation_id} not found.",
                 )
-            return item
-        except HTTPException:
+        try:
+            return svc.get_investigation(tenant_id, investigation_id)
+        except Exception as exc:
+            _raise_http_for_domain_error(exc)
             raise
+
+    @api_router.get("/investigations/{investigation_id}/evidence", response_model=DisputeOSEvidenceBundle)
+    def get_investigation_evidence_bundle(
+        investigation_id: UUID,
+        tenant_id: Annotated[UUID, Depends(resolve_tenant)],
+    ) -> DisputeOSEvidenceBundle:
+        try:
+            inv = svc.get_investigation(tenant_id, investigation_id)
+            trace_id = inv.trace_id if inv.trace_id is not None else inv.payment_intent_id
+            trace = svc.get_trace(tenant_id, trace_id)
+            return export_to_disputeos(trace, inv)
         except Exception as exc:
             _raise_http_for_domain_error(exc)
             raise
@@ -358,4 +509,5 @@ def create_ghostpay_router(
     return api_router
 
 
+# Default router instance
 router = create_ghostpay_router()

@@ -13,10 +13,11 @@ from contracts.fixtures import (
     TENANT_BETA_ID,
     build_authorized_39_purchase_fixture,
 )
+from security import TenantIsolationError
+
 from ghostpay.counterfactual import simulate_counterfactual
 from ghostpay.errors import OverrideValidationError
 from ghostpay.replay import ReplayEngine
-from security import TenantIsolationError
 
 
 def test_1_identical_inputs_and_policy_version_produce_identical_results() -> None:

@@ -17,7 +17,7 @@
   - `disputeos_db.py`: Multi-tenant dispute case creation/listing, synthetic demo seeding (`/v1/disputeos/cases/seed-demo`), case assignment & analyst notes, multipart evidence artifact upload & download (`LocalObjectStorage` + SHA-256 checksums), grounded analysis & contradiction reports, human draft sealing, and fail-closed submission gates (`/v1/disputeos/cases/{case_id}/submit`).
   - `webhooks.py`: Outbound webhook endpoint management, signed PayPal Sandbox webhook ingestion (`/v1/paypal/webhooks`), webhook delivery logs, and dead-letter outbox requeue (`/v1/worker/outbox/{outbox_id}/requeue`).
 - GhostPay integration (`services/api/aegis_api/adapters.py`): `SqlAlchemyGhostPayRepository` reconstructs decision-time approval state and passport balance snapshots (`_build_replay_request`), ensuring baseline replays of approved/completed transactions remain deterministically `CONSISTENT` without false `AUTHORIZATION_DRIFT`, while `read-only` replay guarantees `executed_payment=False`.
-- OpenAPI Surface: **62 HTTP paths** across `/health`, `/ready`, `/v1/auth/*`, `/v1/orgs/*`, `/v1/overview/*`, `/v1/audit-events`, `/v1/guardian/*`, `/v1/ghostpay/*`, `/v1/disputeos/*`, `/v1/webhooks/*`, `/v1/worker/*`, and `/v1/paypal/webhooks`.
+- OpenAPI Surface: **69 HTTP paths** across `/health`, `/ready`, `/v1/auth/*`, `/v1/orgs/*`, `/v1/overview/*`, `/v1/audit-events`, `/v1/guardian/*`, `/v1/ghostpay/*`, `/v1/disputeos/*`, `/v1/webhooks/*`, `/v1/worker/*`, and `/v1/paypal/webhooks`.
 
 ### 1.2 Shared Security, Database & Migrations (`packages/security/`, `packages/database/`)
 - `packages/security/security/auth.py`: PBKDF2-SHA256 password hashing, HS256 JWT tokens, `aegis_<env>_...` API key prefixing + salted SHA-256 verification, and 7-role RBAC permission matrix (`OWNER`, `FINANCE_ADMIN`, `RISK_ANALYST`, `DISPUTE_OPERATOR`, `DEVELOPER`, `AGENT_RUNTIME`, `VIEWER`).
@@ -57,8 +57,8 @@
 | Verification Check | Command | Latest Observed Result | Scope / Condition |
 | --- | --- | --- | --- |
 | Python Lint | `uv run ruff check packages modules services` | Passed (`All checks passed!`) | Full Python codebase |
-| Python Test Suite (without PG env var) | `uv run pytest -v` | `112 passed, 1 skipped` | SQLite unit/API/worker/SDK suites; PG test skipped when `AEGIS_TEST_POSTGRES_URL` unset |
-| Live PostgreSQL 16 Suite (Docker container `postgres:16-alpine`) | `AEGIS_TEST_POSTGRES_URL=... uv run pytest -v` | **`113 passed, 0 skipped`** | Real Alembic `downgrade base -> upgrade head`, PG `SELECT ... FOR UPDATE` double-spend concurrency, restart persistence |
+| Python Test Suite (without PG env var) | `uv run pytest -v` | `143 passed, 1 skipped` | SQLite unit/API/worker/SDK/GhostPay suites; PG test skipped when `AEGIS_TEST_POSTGRES_URL` unset |
+| Live PostgreSQL 16 Suite (Docker container `postgres:16-alpine`) | `AEGIS_TEST_POSTGRES_URL=... uv run pytest -v` | **`144 passed, 0 skipped`** | Real Alembic `downgrade base -> upgrade head`, PG `SELECT ... FOR UPDATE` double-spend concurrency, restart persistence |
 | TypeScript SDK | `cd packages/sdk-typescript && npm run typecheck && npm test` | `3 passed, 0 failed` | `tsc --noEmit`, `tsc` build, HTTP + HMAC signature tests (mocked fetch) |
 | Web Frontend | `cd apps/web && npm run typecheck && npm run lint && npm test && npm run build` | `0 TS errors, 0 ESLint warnings/errors, 3 passed, 14 App Router routes built` | Unit test (`format.test.mjs`) + Next.js 15 production standalone build |
 

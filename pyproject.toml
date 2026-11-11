@@ -1,7 +1,7 @@
 [project]
 name = "agentpay-nexus"
 version = "0.1.0"
-description = "AgentPay Nexus — The Financial Digital Twin for Agentic Commerce"
+description = "AEGIS — Agentic Enforcement, Governance and Investigation System"
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "nexus-contracts",
@@ -10,7 +10,7 @@ dependencies = [
     "nexus-paypal",
     "disputeos",
     "agentpay-guardian",
-    "ghostpay",
+    "agentpay-ghostpay",
     "aegis-api",
     "aegis-worker",
     "aegis-sdk",
@@ -50,7 +50,7 @@ nexus-paypal = { workspace = true }
 aegis-sdk = { workspace = true }
 disputeos = { workspace = true }
 agentpay-guardian = { workspace = true }
-ghostpay = { workspace = true }
+agentpay-ghostpay = { workspace = true }
 aegis-api = { workspace = true }
 aegis-worker = { workspace = true }
 
@@ -69,4 +69,3 @@ testpaths = [
     "services/api/tests",
     "services/worker/tests",
 ]
-
