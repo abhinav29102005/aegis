@@ -111,3 +111,4 @@ Verified on `integration/nexus` (`b862721` before report commit, and re-verified
 1. Confirm whether to push reconciled `feature/ghostpay` (`f58f756`) and `integration/nexus` to `origin` (fast-forward only on `integration/nexus`; note `feature/ghostpay` merge `f58f756` descends from both `e42812c` and `origin/feature/ghostpay` `94bb16c` so a standard `git push origin feature/ghostpay` succeeds without force-push).
 2. Implement the unified `services/api/` entrypoint mounting `guardian`, `ghostpay`, and `disputeos` routers plus `/v1/audit-events` and middleware configuration.
 3. Implement `apps/web/` dashboard views against the 20 `/v1/*` API contracts and verify end-to-end build/tests with PostgreSQL and sandbox credentials when available.
+
