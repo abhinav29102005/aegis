@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
 from contracts.enums import (
-    ApprovalStatus,
     DecisionOutcome,
     DecisionReasonCode,
     DisputeSourceType,
@@ -21,16 +20,15 @@ from contracts.enums import (
 from contracts.hashing import compute_payload_hash, compute_quote_hash
 from contracts.models import (
     AgentIdentity,
-    ApprovalRecord,
     AuthorizationDecision,
     BudgetReservation,
     DisputeCase,
     EvidenceRecord,
     FinancialEvent,
     Merchant,
-    PayPalBuyerApproval,
     PaymentAttempt,
     PaymentIntent,
+    PayPalBuyerApproval,
     PurchaseProposal,
     QuoteSnapshot,
     ReplayRequest,
@@ -39,7 +37,7 @@ from contracts.models import (
     VerifiedPayPalCapture,
 )
 
-BASE_TIME = datetime(2026, 11, 10, 12, 0, 0, tzinfo=timezone.utc)
+BASE_TIME = datetime(2026, 11, 10, 12, 0, 0, tzinfo=UTC)
 
 TENANT_ALPHA_ID = UUID("00000000-0000-4000-8000-000000000001")
 TENANT_BETA_ID = UUID("00000000-0000-4000-8000-000000000002")

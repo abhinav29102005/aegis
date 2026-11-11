@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
-
-from sqlalchemy import func, select, update
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
 
 from contracts import (
     AgentIdentity,
@@ -25,10 +21,10 @@ from contracts import (
     FinancialEventType,
     Merchant,
     PassportStatus,
-    PayPalBuyerApproval,
     PaymentAttempt,
     PaymentIntent,
     PaymentState,
+    PayPalBuyerApproval,
     PurchaseProposal,
     QuoteSnapshot,
     ReservationStatus,
@@ -37,6 +33,10 @@ from contracts import (
     VerifiedPayPalCapture,
     assert_payment_transition,
 )
+from security import assert_same_tenant, compute_financial_event_hash
+from sqlalchemy import select, update
+from sqlalchemy.orm import Session
+
 from database.orm import (
     AgentRow,
     ApprovalRecordRow,
@@ -46,7 +46,6 @@ from database.orm import (
     DisputeCaseRow,
     EvidenceRecordRow,
     FinancialEventRow,
-    IdempotencyRecordRow,
     MerchantRow,
     OutboxEventRow,
     PaymentAttemptRow,
@@ -56,7 +55,6 @@ from database.orm import (
     SpendingPassportRow,
     TenantRow,
 )
-from security import assert_same_tenant, compute_financial_event_hash
 
 
 class InsufficientBudgetError(ValueError):
@@ -68,13 +66,13 @@ class DuplicateIdempotencyError(ValueError):
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _ensure_utc(dt: datetime | None) -> datetime | None:
     if dt is None:
         return None
-    return dt.astimezone(timezone.utc) if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(UTC) if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
 class LedgerRepository:

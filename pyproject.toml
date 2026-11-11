@@ -8,6 +8,7 @@ dependencies = [
     "nexus-security",
     "nexus-database",
     "nexus-paypal",
+    "disputeos",
     "fastapi>=0.115.0,<1.0.0",
     "uvicorn[standard]>=0.30.0,<1.0.0",
     "langgraph>=0.2.0,<1.0.0",
@@ -28,6 +29,7 @@ members = [
     "packages/security",
     "packages/database",
     "packages/paypal",
+    "modules/disputeos",
 ]
 
 [tool.uv.sources]
@@ -35,6 +37,7 @@ nexus-contracts = { workspace = true }
 nexus-security = { workspace = true }
 nexus-database = { workspace = true }
 nexus-paypal = { workspace = true }
+disputeos = { workspace = true }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -43,5 +46,6 @@ testpaths = [
     "packages/security/tests",
     "packages/database/tests",
     "packages/paypal/tests",
+    "modules/disputeos/tests",
 ]
 

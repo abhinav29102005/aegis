@@ -1,8 +1,8 @@
 """Tests for nexus-security primitives."""
 
 from uuid import uuid4
-import pytest
 
+import pytest
 from contracts.fixtures import build_authorized_39_purchase_fixture
 from security import (
     TenantIsolationError,

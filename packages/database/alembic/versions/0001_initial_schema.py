@@ -7,8 +7,6 @@ Create Date: 2026-11-12
 from __future__ import annotations
 
 from alembic import op
-import sqlalchemy as sa
-
 from database.orm import Base
 
 revision = "0001_initial_schema"

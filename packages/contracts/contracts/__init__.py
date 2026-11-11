@@ -1,6 +1,7 @@
 """Canonical shared contracts for AgentPay Nexus."""
 
 from contracts.enums import (
+    VALID_PAYMENT_TRANSITIONS,
     ApprovalStatus,
     DecisionOutcome,
     DecisionReasonCode,
@@ -12,7 +13,6 @@ from contracts.enums import (
     PassportStatus,
     PaymentState,
     ReservationStatus,
-    VALID_PAYMENT_TRANSITIONS,
     assert_payment_transition,
     can_transition_payment,
 )
@@ -28,9 +28,9 @@ from contracts.models import (
     EvidenceRecord,
     FinancialEvent,
     Merchant,
-    PayPalBuyerApproval,
     PaymentAttempt,
     PaymentIntent,
+    PayPalBuyerApproval,
     PurchaseProposal,
     QuoteSnapshot,
     ReplayRequest,
@@ -42,6 +42,7 @@ from contracts.models import (
 )
 
 __all__ = [
+    "VALID_PAYMENT_TRANSITIONS",
     "AgentIdentity",
     "ApprovalRecord",
     "ApprovalStatus",
@@ -73,7 +74,6 @@ __all__ = [
     "ReservationStatus",
     "SpendingPassport",
     "Tenant",
-    "VALID_PAYMENT_TRANSITIONS",
     "VerifiedPayPalCapture",
     "assert_payment_transition",
     "can_transition_payment",

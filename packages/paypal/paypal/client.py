@@ -6,11 +6,11 @@ This module is strictly isolated from LangGraph and AI reasoning modules.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal, ROUND_HALF_UP
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Protocol
-import httpx
 
+import httpx
 from contracts import VerifiedPayPalCapture, compute_payload_hash
 from security import NexusSettings, get_settings
 
@@ -41,7 +41,7 @@ def minor_to_paypal_value(amount_minor: int) -> str:
 
 
 def paypal_value_to_minor(value_str: str) -> int:
-    dec = (Decimal(value_str) * Decimal(100)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    dec = (Decimal(value_str) * Decimal(100)).quantize(Decimal(1), rounding=ROUND_HALF_UP)
     return int(dec)
 
 
@@ -121,7 +121,7 @@ class PayPalSandboxClient:
         self._external_client = http_client
         self._timeout_seconds = timeout_seconds
         self._cached_token: str | None = None
-        self._token_expires_at: datetime = datetime.min.replace(tzinfo=timezone.utc)
+        self._token_expires_at: datetime = datetime.min.replace(tzinfo=UTC)
 
         if self.settings.paypal_mode.lower() != "sandbox":
             raise PayPalConfigurationError(
@@ -141,7 +141,7 @@ class PayPalSandboxClient:
 
     async def get_access_token(self) -> str:
         self._require_credentials()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if self._cached_token and now < self._token_expires_at:
             return self._cached_token
 

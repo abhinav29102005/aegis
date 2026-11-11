@@ -1,11 +1,10 @@
 """Tests for nexus-paypal sandbox adapter using MockTransport (no live PayPal claims)."""
 
 import json
+
 import httpx
 import pytest
-
 from paypal import (
-    PayPalAPIError,
     PayPalConfigurationError,
     PayPalDisputesDisabledError,
     PayPalSandboxClient,
@@ -16,14 +15,14 @@ from security import NexusSettings
 
 
 def _sandbox_settings(**overrides) -> NexusSettings:
-    defaults = dict(
-        paypal_mode="sandbox",
-        paypal_base_url="https://api-m.sandbox.paypal.com",
-        paypal_client_id="sb-client-id",
-        paypal_client_secret="sb-client-secret",
-        paypal_webhook_id="WH-123",
-        paypal_disputes_api_enabled=False,
-    )
+    defaults = {
+        "paypal_mode": "sandbox",
+        "paypal_base_url": "https://api-m.sandbox.paypal.com",
+        "paypal_client_id": "sb-client-id",
+        "paypal_client_secret": "sb-client-secret",
+        "paypal_webhook_id": "WH-123",
+        "paypal_disputes_api_enabled": False,
+    }
     defaults.update(overrides)
     return NexusSettings(**defaults)
 

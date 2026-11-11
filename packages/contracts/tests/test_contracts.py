@@ -1,8 +1,6 @@
 """Contract tests covering state machine, hashing, stage separation, and fixtures."""
 
-from datetime import timedelta
 import pytest
-
 from contracts import (
     DecisionOutcome,
     PaymentState,

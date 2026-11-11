@@ -1,12 +1,10 @@
 """Tests for nexus-database atomic budget reservation, tenant isolation, and hash-chained events."""
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
-
 from contracts import FinancialEventType, PaymentIntent, PaymentState
 from contracts.fixtures import (
     TENANT_ALPHA_ID,

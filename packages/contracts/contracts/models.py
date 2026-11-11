@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -27,13 +27,13 @@ SCHEMA_VERSION = "1.0.0"
 
 
 def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _normalize_utc(dt: datetime | None) -> datetime | None:
     if dt is None:
         return None
-    return dt.astimezone(timezone.utc) if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(UTC) if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
 class NexusBaseModel(BaseModel):
@@ -180,7 +180,7 @@ class QuoteSnapshot(NexusBaseModel):
         return _normalize_utc(v)  # type: ignore[return-value]
 
     @model_validator(mode="after")
-    def _populate_hash(self) -> "QuoteSnapshot":
+    def _populate_hash(self) -> QuoteSnapshot:
         if not self.quote_hash:
             self.quote_hash = compute_quote_hash(
                 merchant_id=self.merchant_id,

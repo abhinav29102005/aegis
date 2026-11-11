@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -13,7 +13,7 @@ def _json_default(value: Any) -> Any:
     if isinstance(value, UUID):
         return str(value)
     if isinstance(value, datetime):
-        utc_val = value.astimezone(timezone.utc) if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        utc_val = value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
         return utc_val.isoformat()
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json")

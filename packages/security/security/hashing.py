@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 from uuid import UUID
 
 from contracts import FinancialEvent, canonical_json, compute_payload_hash
