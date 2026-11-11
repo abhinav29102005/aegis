@@ -92,6 +92,11 @@ class AegisClient:
             headers.update(extra)
         return headers
 
+    def _url(self, path: str) -> str:
+        if not str(self._client.base_url).rstrip("/"):
+            return f"{self.base_url}{path}"
+        return path
+
     def _request(
         self,
         method: str,
@@ -107,12 +112,13 @@ class AegisClient:
         clean_params = {k: v for k, v in (params or {}).items() if v is not None}
         req_headers = self._headers(headers)
         attempt = 0
+        target_url = self._url(path)
 
         while True:
             try:
                 resp = self._client.request(
                     method,
-                    path,
+                    target_url,
                     json=json_body,
                     data=data,
                     files=files,
@@ -719,7 +725,7 @@ class AegisClient:
         buyer_claim: str,
         amount_minor: int,
         currency: str = "USD",
-        source_type: str = "MANUAL",
+        source_type: str = "SYNTHETIC_DEMO",
         is_synthetic: bool = False,
         correlation_id: str | UUID | None = None,
         payment_intent_id: str | UUID | None = None,
@@ -1051,6 +1057,11 @@ class AsyncAegisClient:
             headers.update(extra)
         return headers
 
+    def _url(self, path: str) -> str:
+        if not str(self._client.base_url).rstrip("/"):
+            return f"{self.base_url}{path}"
+        return path
+
     async def _request(
         self,
         method: str,
@@ -1066,12 +1077,13 @@ class AsyncAegisClient:
         clean_params = {k: v for k, v in (params or {}).items() if v is not None}
         req_headers = self._headers(headers)
         attempt = 0
+        target_url = self._url(path)
 
         while True:
             try:
                 resp = await self._client.request(
                     method,
-                    path,
+                    target_url,
                     json=json_body,
                     data=data,
                     files=files,
@@ -1683,7 +1695,7 @@ class AsyncAegisClient:
         buyer_claim: str,
         amount_minor: int,
         currency: str = "USD",
-        source_type: str = "MANUAL",
+        source_type: str = "SYNTHETIC_DEMO",
         is_synthetic: bool = False,
         correlation_id: str | UUID | None = None,
         payment_intent_id: str | UUID | None = None,

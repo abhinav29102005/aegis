@@ -84,12 +84,18 @@ export interface GovernedToolResult<TResult = unknown> {
   };
 }
 
-function defaultExtractProposal(args: unknown): Omit<SubmitProposalInput, "agent_id" | "passport_id"> {
-  if (!args || typeof args !== "object") {
+function defaultExtractProposal(ctxOrArgs: unknown): Omit<SubmitProposalInput, "agent_id" | "passport_id"> {
+  if (!ctxOrArgs || typeof ctxOrArgs !== "object") {
     throw new Error("Unable to extract purchase proposal: tool arguments must be an object");
   }
 
-  const record = args as Record<string, unknown>;
+  // Handle either direct arguments or ProposalExtractionContext wrapper { args, toolCallId }
+  const record = (
+    "args" in ctxOrArgs && ctxOrArgs.args && typeof ctxOrArgs.args === "object"
+      ? ctxOrArgs.args
+      : ctxOrArgs
+  ) as Record<string, unknown>;
+
   const amountMinor =
     typeof record.amount_minor === "number"
       ? record.amount_minor

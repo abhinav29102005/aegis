@@ -265,8 +265,7 @@ export class AegisClient {
     let yielded = 0;
 
     while (yielded < maxItems) {
-      const limit = Math.min(pageSize, maxItems - yielded);
-      const res = await fetcher({ limit, offset });
+      const res = await fetcher({ limit: pageSize, offset });
       const items = Array.isArray(res) ? res : res.items;
 
       if (!items || items.length === 0) {
@@ -279,7 +278,7 @@ export class AegisClient {
         if (yielded >= maxItems) break;
       }
 
-      if (items.length < limit) {
+      if (items.length < pageSize) {
         break;
       }
 
@@ -476,10 +475,11 @@ export class AegisClient {
     state?: PaymentState | string;
     agent_id?: string;
     maxItems?: number;
+    pageSize?: number;
   }): AsyncIterableIterator<PaymentIntent> {
     return this.paginate(
       ({ limit, offset }) => this.listPayments({ ...params, limit, offset }),
-      { maxItems: params?.maxItems }
+      { maxItems: params?.maxItems, pageSize: params?.pageSize }
     );
   }
 
