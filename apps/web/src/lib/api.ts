@@ -1,188 +1,25 @@
-export interface OrganizationSummary {
-  id: string;
-  name: string;
-  slug: string;
-  role: string;
-  created_at: string;
-}
+import { truncateId as formatTruncateId } from "./format";
+import type {
+  AgentRecord,
+  DisputeCaseRecord,
+  FinancialEventRecord,
+  ListAgentsParams,
+  ListAuditEventsParams,
+  ListDisputesParams,
+  ListMerchantsParams,
+  ListPassportsParams,
+  ListPaymentsParams,
+  MerchantRecord,
+  OverviewMetrics,
+  PassportRecord,
+  PaymentIntentRecord,
+} from "./types";
 
-export interface AuthSession {
-  access_token: string;
-  token_type: string;
-  user_id: string;
-  email: string;
-  full_name: string;
-  active_tenant_id: string;
-  active_role: string;
-  permissions: string[];
-  organizations: OrganizationSummary[];
-}
+export * from "./types";
 
-export interface OverviewMetrics {
-  tenant_id: string;
-  agents: { total: number; active: number };
-  budget: {
-    total_budget_minor: number;
-    spent_minor: number;
-    reserved_minor: number;
-    available_minor: number;
-  };
-  payments: {
-    total: number;
-    by_state: Record<string, number>;
-  };
-  pending_approvals: number;
-  open_disputes: number;
-  risk_alerts: number;
-  dead_letter_outbox: number;
-  recent_events: FinancialEventRecord[];
-}
-
-export interface FinancialEventRecord {
-  id: string;
-  tenant_id: string;
-  correlation_id: string;
-  payment_intent_id: string | null;
-  sequence_number: number;
-  event_type: string;
-  actor_type: string;
-  actor_id: string;
-  previous_hash: string;
-  event_hash: string;
-  payload: Record<string, unknown>;
-  occurred_at: string;
-}
-
-export interface AgentRecord {
-  id: string;
-  tenant_id: string;
-  name: string;
-  purpose: string;
-  framework: string;
-  status: string;
-  public_fingerprint: string;
-  created_at: string;
-}
-
-export interface MerchantRecord {
-  id: string;
-  tenant_id: string;
-  name: string;
-  domain: string;
-  category: string;
-  paypal_merchant_id: string | null;
-  is_allowlisted: boolean;
-  is_sandbox_verified: boolean;
-  created_at: string;
-}
-
-export interface PassportRecord {
-  id: string;
-  tenant_id: string;
-  agent_id: string;
-  policy_version: string;
-  currency: string;
-  total_budget_minor: number;
-  spent_minor: number;
-  reserved_minor: number;
-  per_tx_limit_minor: number;
-  daily_limit_minor: number;
-  human_approval_threshold_minor: number;
-  allowed_merchant_ids: string[];
-  allowed_categories: string[];
-  allow_unknown_merchants: boolean;
-  status: string;
-  expires_at: string;
-  created_at: string;
-}
-
-export interface PaymentIntentRecord {
-  id: string;
-  tenant_id: string;
-  correlation_id: string;
-  proposal_id: string;
-  agent_id: string;
-  passport_id: string;
-  merchant_id: string;
-  quote_snapshot_id: string;
-  quote_hash: string;
-  amount_minor: number;
-  currency: string;
-  state: string;
-  idempotency_key: string;
-  authorization_decision_id: string | null;
-  approval_record_id: string | null;
-  reservation_id: string | null;
-  active_attempt_id: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface InvestigationRecord {
-  id: string;
-  tenant_id: string;
-  payment_intent_id: string;
-  correlation_id: string;
-  mode: string;
-  policy_version: string;
-  original_outcome: string;
-  recomputed_outcome: string;
-  consistency_status: string;
-  drift_detected: boolean;
-  integrity_valid: boolean;
-  anomalies: string[];
-  overrides: Record<string, unknown>;
-  created_by: string;
-  created_at: string;
-}
-
-export interface ReplayResultRecord {
-  replay_id: string;
-  tenant_id: string;
-  correlation_id: string;
-  payment_intent_id: string;
-  policy_version: string;
-  original_outcome: string;
-  recomputed_outcome: string;
-  original_reason_codes: string[];
-  recomputed_reason_codes: string[];
-  changed_constraints: string[];
-  drift_detected: boolean;
-  explanation: string;
-  anomalies: string[];
-  missing_evidence: string[];
-  integrity_valid: boolean;
-  consistency_status: string;
-  executed_payment: boolean;
-  timeline: Array<{
-    sequence_number: number;
-    timestamp: string;
-    source: string;
-    event_type: string;
-    actor: string;
-    summary: string;
-  }>;
-}
-
-export interface DisputeCaseRecord {
-  id: string;
-  tenant_id: string;
-  correlation_id: string;
-  payment_intent_id: string;
-  paypal_dispute_id: string | null;
-  source_type: string;
-  is_synthetic: boolean;
-  reason: string;
-  buyer_claim: string;
-  amount_minor: number;
-  currency: string;
-  status: string;
-  evidence_ids: string[];
-  human_approved_for_submission: boolean;
-  approved_by: string | null;
-  approved_at: string | null;
-  opened_at: string;
-  updated_at: string;
+// Runtime polyfill for global truncateId used across client pages
+if (typeof globalThis !== "undefined") {
+  (globalThis as unknown as { truncateId?: typeof formatTruncateId }).truncateId = formatTruncateId;
 }
 
 export class ApiClientError extends Error {
@@ -198,19 +35,77 @@ export class ApiClientError extends Error {
 }
 
 export function getApiBaseUrl(): string {
-  return (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000").replace(/\/+$/, "");
+  if (typeof window !== "undefined") {
+    return "";
+  }
+  return (
+    process.env.API_BASE_URL ||
+    process.env.NEXT_PUBLIC_API_BASE_URL ||
+    "http://127.0.0.1:8000"
+  ).replace(/\/+$/, "");
+}
+
+export interface ApiRequestOptions {
+  method?: string;
+  token?: string | null;
+  orgId?: string | null;
+  body?: unknown;
+  isFormData?: boolean;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  params?: Record<string, string | number | boolean | null | undefined>;
+}
+
+export function buildQueryString(params?: Record<string, string | number | boolean | null | undefined>): string {
+  if (!params) return "";
+  const searchParams = new URLSearchParams();
+  for (const [key, val] of Object.entries(params)) {
+    if (val !== undefined && val !== null && val !== "") {
+      searchParams.set(key, String(val));
+    }
+  }
+  const qs = searchParams.toString();
+  return qs ? `?${qs}` : "";
 }
 
 export async function apiRequest<T>(
   path: string,
-  options: {
-    method?: string;
-    token?: string | null;
-    orgId?: string | null;
-    body?: unknown;
-    isFormData?: boolean;
-  } = {},
+  options: ApiRequestOptions = {},
 ): Promise<T> {
+  const timeoutMs = options.timeoutMs ?? 15000;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  if (options.signal) {
+    if (options.signal.aborted) {
+      controller.abort();
+    } else {
+      options.signal.addEventListener("abort", () => controller.abort(), { once: true });
+    }
+  }
+
+  let finalPath = path;
+  if (options.params) {
+    const qs = buildQueryString(options.params);
+    if (qs) {
+      finalPath = `${path}${path.includes("?") ? "&" : "?"}${qs.slice(1)}`;
+    }
+  }
+
+  let targetUrl = finalPath;
+
+  // In browser runtime, route /v1/ calls through the Next.js HttpOnly cookie BFF proxy
+  if (typeof window !== "undefined") {
+    if (finalPath.startsWith("/v1/")) {
+      targetUrl = `/api/proxy/${finalPath.replace(/^\/v1\//, "")}`;
+    }
+  } else {
+    // Server-side fetch needs full base URL
+    if (finalPath.startsWith("/v1/") || finalPath.startsWith("/api/")) {
+      targetUrl = `${getApiBaseUrl()}${finalPath}`;
+    }
+  }
+
   const headers: Record<string, string> = {};
   if (!options.isFormData) {
     headers["Content-Type"] = "application/json";
@@ -222,37 +117,180 @@ export async function apiRequest<T>(
     headers["X-Org-Id"] = options.orgId;
   }
 
-  const resp = await fetch(`${getApiBaseUrl()}${path}`, {
-    method: options.method ?? "GET",
-    headers,
-    body: options.isFormData
-      ? (options.body as FormData)
-      : options.body !== undefined
-        ? JSON.stringify(options.body)
-        : undefined,
-  });
+  try {
+    const resp = await fetch(targetUrl, {
+      method: options.method ?? "GET",
+      headers,
+      credentials: "same-origin",
+      signal: controller.signal,
+      body: options.isFormData
+        ? (options.body as FormData)
+        : options.body !== undefined
+          ? JSON.stringify(options.body)
+          : undefined,
+    });
 
-  const text = await resp.text();
-  let parsed: unknown = null;
-  if (text) {
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      parsed = text;
-    }
-  }
-
-  if (!resp.ok) {
-    let msg = `HTTP ${resp.status}`;
-    if (parsed && typeof parsed === "object") {
-      const obj = parsed as Record<string, unknown>;
-      if (typeof obj.message === "string") msg = obj.message;
-      else if (typeof obj.detail === "string") msg = obj.detail;
-      else if (obj.detail && typeof obj.detail === "object" && "message" in obj.detail) {
-        msg = String((obj.detail as { message: unknown }).message);
+    const text = await resp.text();
+    let parsed: unknown = null;
+    if (text) {
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        parsed = text;
       }
     }
-    throw new ApiClientError(resp.status, msg, parsed);
+
+    if (!resp.ok) {
+      // Auto-evict and redirect cleanly to /login on 401 when in browser
+      if (resp.status === 401 && typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
+        const next = encodeURIComponent(window.location.pathname + window.location.search);
+        window.location.href = `/login?next=${next}`;
+      }
+
+      let msg = `HTTP ${resp.status}`;
+      if (parsed && typeof parsed === "object") {
+        const obj = parsed as Record<string, unknown>;
+        if (typeof obj.message === "string") {
+          msg = obj.message;
+        } else if (typeof obj.detail === "string") {
+          msg = obj.detail;
+        } else if (Array.isArray(obj.detail)) {
+          msg = obj.detail.map((e: { msg?: string }) => e.msg || JSON.stringify(e)).join(", ");
+        } else if (obj.detail && typeof obj.detail === "object" && "message" in obj.detail) {
+          msg = String((obj.detail as { message: unknown }).message);
+        }
+      }
+      throw new ApiClientError(resp.status, msg, parsed);
+    }
+    return parsed as T;
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new ApiClientError(408, `Request timed out after ${timeoutMs}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
   }
-  return parsed as T;
+}
+
+// Strongly typed endpoint helper functions with pagination query params (limit, offset, q)
+export async function getPayments(
+  params?: ListPaymentsParams,
+  options?: ApiRequestOptions,
+): Promise<PaymentIntentRecord[]> {
+  return apiRequest<PaymentIntentRecord[]>("/v1/guardian/payments", {
+    ...options,
+    params: {
+      limit: params?.limit,
+      offset: params?.offset,
+      q: params?.q,
+      state: params?.state,
+      agent_id: params?.agent_id,
+      merchant_id: params?.merchant_id,
+      ...options?.params,
+    },
+  });
+}
+
+export async function getPayment(
+  paymentId: string,
+  options?: ApiRequestOptions,
+): Promise<PaymentIntentRecord> {
+  return apiRequest<PaymentIntentRecord>(`/v1/guardian/payments/${paymentId}`, options);
+}
+
+export async function getAgents(
+  params?: ListAgentsParams,
+  options?: ApiRequestOptions,
+): Promise<AgentRecord[]> {
+  return apiRequest<AgentRecord[]>("/v1/guardian/agents", {
+    ...options,
+    params: {
+      limit: params?.limit,
+      offset: params?.offset,
+      q: params?.q,
+      status: params?.status,
+      ...options?.params,
+    },
+  });
+}
+
+export async function getMerchants(
+  params?: ListMerchantsParams,
+  options?: ApiRequestOptions,
+): Promise<MerchantRecord[]> {
+  return apiRequest<MerchantRecord[]>("/v1/guardian/merchants", {
+    ...options,
+    params: {
+      limit: params?.limit,
+      offset: params?.offset,
+      q: params?.q,
+      allowlisted: params?.allowlisted,
+      ...options?.params,
+    },
+  });
+}
+
+export async function getPassports(
+  params?: ListPassportsParams,
+  options?: ApiRequestOptions,
+): Promise<PassportRecord[]> {
+  return apiRequest<PassportRecord[]>("/v1/guardian/passports", {
+    ...options,
+    params: {
+      limit: params?.limit,
+      offset: params?.offset,
+      q: params?.q,
+      status: params?.status,
+      agent_id: params?.agent_id,
+      ...options?.params,
+    },
+  });
+}
+
+export async function getDisputes(
+  params?: ListDisputesParams,
+  options?: ApiRequestOptions,
+): Promise<DisputeCaseRecord[]> {
+  return apiRequest<DisputeCaseRecord[]>("/v1/disputeos/cases", {
+    ...options,
+    params: {
+      limit: params?.limit,
+      offset: params?.offset,
+      q: params?.q,
+      status: params?.status,
+      ...options?.params,
+    },
+  });
+}
+
+export async function getDispute(
+  caseId: string,
+  options?: ApiRequestOptions,
+): Promise<DisputeCaseRecord> {
+  return apiRequest<DisputeCaseRecord>(`/v1/disputeos/cases/${caseId}`, options);
+}
+
+export async function getAuditEvents(
+  params?: ListAuditEventsParams,
+  options?: ApiRequestOptions,
+): Promise<FinancialEventRecord[]> {
+  return apiRequest<FinancialEventRecord[]>("/v1/audit-events", {
+    ...options,
+    params: {
+      limit: params?.limit,
+      offset: params?.offset,
+      q: params?.q,
+      event_type: params?.event_type,
+      actor_id: params?.actor_id,
+      payment_intent_id: params?.payment_intent_id,
+      ...options?.params,
+    },
+  });
+}
+
+export async function getOverviewMetrics(
+  options?: ApiRequestOptions,
+): Promise<OverviewMetrics> {
+  return apiRequest<OverviewMetrics>("/v1/overview", options);
 }

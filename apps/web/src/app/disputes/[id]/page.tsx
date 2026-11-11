@@ -6,7 +6,12 @@ import React, { useCallback, useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { StatusBadge } from "@/components/StatusBadge";
-import { apiRequest, getApiBaseUrl, type DisputeCaseRecord } from "@/lib/api";
+import {
+  apiRequest,
+  getApiBaseUrl,
+  type DisputeAnalysis,
+  type DisputeCaseRecord,
+} from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { formatIsoDateTime, formatMinorCurrency, truncateId } from "@/lib/format";
 
@@ -22,17 +27,7 @@ interface CaseDetailPayload {
     is_synthetic: boolean;
     ingested_at: string;
   }>;
-  latest_analysis: {
-    id: string;
-    summary: string;
-    recommendation: string;
-    draft_response_text: string;
-    contradictions: Array<{ code: string; severity: string; summary: string }>;
-    evidence_citations: Array<{ evidence_id: string; claim: string }>;
-    missing_evidence: string[];
-    model_used: string | null;
-    analyzed_at: string;
-  } | null;
+  latest_analysis: DisputeAnalysis | null;
   evidence_graph: {
     nodes: Array<{ id: string; node_type: string; label: string }>;
     edges: Array<{ source_id: string; target_id: string; relation: string }>;
@@ -48,6 +43,40 @@ interface CaseDetailPayload {
     sha256: string;
     created_at: string;
   }>;
+}
+
+function renderSlaBadge(dueIso?: string | null) {
+  if (!dueIso) {
+    return <span className="text-xs text-slate-500">No SLA</span>;
+  }
+  const due = new Date(dueIso).getTime();
+  const now = Date.now();
+  const diffMs = due - now;
+  if (diffMs <= 0) {
+    const overdueHrs = Math.floor(Math.abs(diffMs) / (1000 * 60 * 60));
+    return (
+      <span className="inline-flex items-center gap-1 rounded-md border border-rose-500/40 bg-rose-500/10 px-2 py-0.5 text-xs font-semibold text-rose-300">
+        <span className="h-1.5 w-1.5 rounded-full bg-rose-400 animate-pulse" />
+        SLA OVERDUE ({overdueHrs}h)
+      </span>
+    );
+  }
+  const hours = Math.floor(diffMs / (1000 * 60 * 60));
+  const days = Math.floor(hours / 24);
+  const remainingHours = hours % 24;
+  const isUrgent = hours < 48;
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium ${
+        isUrgent
+          ? "border-amber-500/40 bg-amber-500/10 text-amber-300"
+          : "border-sky-500/40 bg-sky-500/10 text-sky-300"
+      }`}
+      title={`Response due by: ${formatIsoDateTime(dueIso)}`}
+    >
+      <span>⏱</span> Response SLA: {days > 0 ? `${days}d ${remainingHours}h` : `${hours}h`} remaining
+    </span>
+  );
 }
 
 export default function DisputeCaseDetailPage() {
@@ -66,9 +95,33 @@ export default function DisputeCaseDetailPage() {
   const [artifactFile, setArtifactFile] = useState<File | null>(null);
   const [draftResponse, setDraftResponse] = useState("");
 
+  // JSON /evidence attach form state
+  const [showJsonEvidenceForm, setShowJsonEvidenceForm] = useState(false);
+  const [jsonEvidenceTitle, setJsonEvidenceTitle] = useState("Carrier Delivery Confirmation");
+  const [jsonEvidenceSourceType, setJsonEvidenceSourceType] = useState("DELIVERY_RECEIPT");
+  const [jsonEvidenceSourceRef, setJsonEvidenceSourceRef] = useState("fedex:track:920559012345");
+  const [jsonEvidenceRaw, setJsonEvidenceRaw] = useState(
+    JSON.stringify(
+      {
+        tracking_number: "920559012345",
+        status: "DELIVERED",
+        delivered_at: "2026-11-10T14:32:00Z",
+        signed_by: "FRONT_PORCH",
+        latitude: 37.7749,
+        longitude: -122.4194,
+      },
+      null,
+      2,
+    ),
+  );
+
+  // Modals & Action busy states
   const [busy, setBusy] = useState(false);
   const [confirmApprove, setConfirmApprove] = useState(false);
   const [confirmSubmit, setConfirmSubmit] = useState(false);
+  const [confirmResolve, setConfirmResolve] = useState(false);
+  const [resolveReason, setResolveReason] = useState("Resolved in merchant favor via signed delivery evidence.");
+  const [exportingReport, setExportingReport] = useState(false);
 
   const loadCase = useCallback(async () => {
     if (!session || !caseId) return;
@@ -131,6 +184,42 @@ export default function DisputeCaseDetailPage() {
       await loadCase();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add analyst note");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleAttachJsonEvidence(e: React.FormEvent) {
+    e.preventDefault();
+    if (!session || !caseId) return;
+    let parsedContent: Record<string, unknown>;
+    try {
+      parsedContent = JSON.parse(jsonEvidenceRaw);
+    } catch {
+      setError("Invalid JSON entered. Please check formatting.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    try {
+      await apiRequest(`/v1/disputeos/cases/${caseId}/evidence`, {
+        method: "POST",
+        token: session.access_token,
+        orgId: session.active_tenant_id,
+        body: {
+          title: jsonEvidenceTitle.trim() || "Structured Evidence Document",
+          source_type: jsonEvidenceSourceType,
+          source_ref: jsonEvidenceSourceRef.trim() || "manual:evidence",
+          content: parsedContent,
+          is_synthetic: detail?.case.is_synthetic ?? false,
+        },
+      });
+      setNotice("Structured JSON evidence attached with content hash.");
+      setShowJsonEvidenceForm(false);
+      await loadCase();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to attach JSON evidence");
     } finally {
       setBusy(false);
     }
@@ -255,19 +344,69 @@ export default function DisputeCaseDetailPage() {
     }
   }
 
+  async function handleResolveCase() {
+    if (!session || !caseId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await apiRequest(`/v1/disputeos/cases/${caseId}/resolve`, {
+        method: "POST",
+        token: session.access_token,
+        orgId: session.active_tenant_id,
+        body: { reason: resolveReason.trim() },
+      });
+      setConfirmResolve(false);
+      setNotice("Dispute case marked as RESOLVED.");
+      await loadCase();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to resolve dispute case");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleExportReport() {
+    if (!session || !caseId) return;
+    setExportingReport(true);
+    setError(null);
+    try {
+      const report = await apiRequest<Record<string, unknown>>(`/v1/disputeos/cases/${caseId}/report`, {
+        token: session.access_token,
+        orgId: session.active_tenant_id,
+      });
+      const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `dispute-report-${caseId}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setNotice("Dossier report downloaded successfully.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to export dispute report");
+    } finally {
+      setExportingReport(false);
+    }
+  }
+
   const dc = detail?.case;
+  const analysis = detail?.latest_analysis;
 
   return (
     <AppShell title="Dispute Case Dossier" subtitle={dc ? `Case ${dc.id}` : "Loading dispute case..."}>
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <Link href="/disputes" className="text-xs font-medium text-sky-400 hover:underline">
           ← Back to Dispute Cases
         </Link>
-        {dc && (
-          <Link href={`/payments/${dc.payment_intent_id}`} className="text-xs font-medium text-slate-300 hover:underline">
-            Inspect Linked Payment →
-          </Link>
-        )}
+        <div className="flex items-center gap-3">
+          {dc && (
+            <Link href={`/payments/${dc.payment_intent_id}`} className="text-xs font-medium text-slate-300 hover:underline">
+              Inspect Linked Payment →
+            </Link>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -293,80 +432,238 @@ export default function DisputeCaseDetailPage() {
             </div>
           )}
 
-          {/* Header Summary */}
+          {/* Header Summary & Actions Bar */}
           <section className="rounded-xl border border-aegis-border bg-aegis-surface p-5">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
                   <StatusBadge label={dc.status} />
-                  {dc.is_synthetic && <StatusBadge label="SYNTHETIC_DEMO" />}
+                  {dc.is_synthetic ? (
+                    <StatusBadge label="SYNTHETIC_DEMO" />
+                  ) : (
+                    <span className="rounded bg-slate-800 px-2 py-0.5 text-xs text-slate-300">
+                      {dc.source_type}
+                    </span>
+                  )}
+                  {renderSlaBadge(dc.response_due_by)}
                   <span className="text-xl font-bold text-white">
                     {formatMinorCurrency(dc.amount_minor, dc.currency)}
                   </span>
                 </div>
                 <p className="mt-2 text-sm text-slate-200">{dc.buyer_claim}</p>
-                <p className="mt-1 text-xs text-slate-400">Reason: {dc.reason}</p>
+                <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-slate-400">
+                  <span>Reason: <strong className="text-slate-200">{dc.reason}</strong></span>
+                  {dc.paypal_dispute_id && (
+                    <span>PayPal Dispute ID: <strong className="font-mono text-sky-300">{dc.paypal_dispute_id}</strong></span>
+                  )}
+                  <span>Opened: {formatIsoDateTime(dc.opened_at)}</span>
+                  {dc.response_due_by && (
+                    <span>Due: <strong className="text-slate-300">{formatIsoDateTime(dc.response_due_by)}</strong></span>
+                  )}
+                </div>
               </div>
-              {hasPermission("disputes:write") && (
+
+              {/* Action Buttons */}
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  disabled={busy}
-                  onClick={() => void handleAnalyze()}
-                  className="rounded-lg bg-sky-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50"
+                  disabled={exportingReport}
+                  onClick={() => void handleExportReport()}
+                  className="rounded-lg border border-aegis-border bg-aegis-panel px-3.5 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800 disabled:opacity-50"
                 >
-                  {busy ? "Analyzing…" : "Run Grounded Analysis"}
+                  {exportingReport ? "Exporting…" : "Export Report"}
                 </button>
-              )}
+
+                {hasPermission("disputes:write") && dc.status !== "RESOLVED" && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setConfirmResolve(true)}
+                    className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3.5 py-2 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50"
+                  >
+                    Resolve Case
+                  </button>
+                )}
+
+                {hasPermission("disputes:write") && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void handleAnalyze()}
+                    className="rounded-lg bg-sky-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50"
+                  >
+                    {busy ? "Analyzing…" : "Run Grounded Analysis"}
+                  </button>
+                )}
+              </div>
             </div>
           </section>
 
           {/* Grounded AI Analysis & Human Approval */}
           <div className="grid gap-6 lg:grid-cols-2">
+            {/* Grounded Analysis Card */}
             <section className="rounded-xl border border-aegis-border bg-aegis-surface p-5">
-              <h2 className="text-sm font-semibold text-white">Grounded Analysis & Contradictions</h2>
-              {detail.latest_analysis ? (
-                <div className="mt-3 space-y-3 text-xs">
-                  <p className="text-slate-200">{detail.latest_analysis.summary}</p>
-                  <div className="rounded-lg border border-aegis-border bg-aegis-panel p-3">
-                    <div className="font-semibold text-slate-300">
-                      Recommendation: {detail.latest_analysis.recommendation}
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-white">Grounded Analysis & Contradictions</h2>
+                {analysis && (
+                  <span
+                    className={`rounded px-2 py-0.5 text-[11px] font-medium ${
+                      analysis.generated_with_llm
+                        ? "border border-purple-500/40 bg-purple-500/10 text-purple-300"
+                        : "border border-sky-500/40 bg-sky-500/10 text-sky-300"
+                    }`}
+                  >
+                    {analysis.generated_with_llm ? "LLM Augmented" : "Deterministic Engine"}
+                  </span>
+                )}
+              </div>
+
+              {analysis ? (
+                <div className="mt-3 space-y-4 text-xs">
+                  {/* Grounded Summary */}
+                  <div>
+                    <h3 className="text-[11px] font-medium uppercase tracking-wider text-slate-400">
+                      Grounded Summary
+                    </h3>
+                    <p className="mt-1 leading-relaxed text-slate-200">{analysis.grounded_summary}</p>
+                  </div>
+
+                  {/* Recommendation & Confidence */}
+                  <div className="grid grid-cols-2 gap-3 rounded-lg border border-aegis-border bg-aegis-panel p-3">
+                    <div>
+                      <div className="text-[11px] uppercase text-slate-400">Recommendation</div>
+                      <div className="mt-1 font-semibold text-white">{analysis.recommendation}</div>
                     </div>
-                    <div className="mt-1 text-slate-400">
-                      Engine: {detail.latest_analysis.model_used ?? "Deterministic evidence analyzer"}
+                    <div>
+                      <div className="text-[11px] uppercase text-slate-400">Confidence Score</div>
+                      <div className="mt-1 font-mono font-semibold text-sky-300">
+                        {Math.round(analysis.confidence_score * 100)}%
+                      </div>
                     </div>
                   </div>
-                  {detail.latest_analysis.contradictions.length > 0 && (
+
+                  {/* Agent Authorization & Compliance Flags */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={`rounded px-2 py-0.5 text-[11px] ${analysis.agent_authorized ? "bg-emerald-500/10 text-emerald-300 border border-emerald-500/30" : "bg-rose-500/10 text-rose-300 border border-rose-500/30"}`}>
+                      Agent Authorized: {analysis.agent_authorized ? "Yes" : "No"}
+                    </span>
+                    <span className={`rounded px-2 py-0.5 text-[11px] ${analysis.agent_followed_policy ? "bg-emerald-500/10 text-emerald-300 border border-emerald-500/30" : "bg-rose-500/10 text-rose-300 border border-rose-500/30"}`}>
+                      Policy Compliant: {analysis.agent_followed_policy ? "Yes" : "No"}
+                    </span>
+                  </div>
+
+                  {/* Contradictions */}
+                  {analysis.contradictions && analysis.contradictions.length > 0 && (
                     <div>
-                      <h3 className="font-semibold text-amber-200">Detected Contradictions</h3>
-                      <ul className="mt-1 space-y-1.5">
-                        {detail.latest_analysis.contradictions.map((c) => (
-                          <li key={c.code} className="rounded border border-amber-500/30 bg-amber-500/10 p-2 text-amber-100">
-                            <span className="font-mono font-semibold">{c.code}</span> ({c.severity}): {c.summary}
+                      <h3 className="font-semibold text-amber-200">
+                        Detected Contradictions ({analysis.contradictions.length})
+                      </h3>
+                      <ul className="mt-1.5 space-y-1.5">
+                        {analysis.contradictions.map((c, idx) => (
+                          <li
+                            key={idx}
+                            className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-amber-100"
+                          >
+                            {typeof c === "string" ? c : JSON.stringify(c)}
                           </li>
                         ))}
                       </ul>
                     </div>
                   )}
-                  <div className="text-slate-400">
+
+                  {/* Missing Evidence */}
+                  {analysis.missing_evidence && analysis.missing_evidence.length > 0 && (
+                    <div>
+                      <h3 className="font-semibold text-rose-300">
+                        Missing Evidence ({analysis.missing_evidence.length})
+                      </h3>
+                      <ul className="mt-1.5 space-y-1">
+                        {analysis.missing_evidence.map((me, idx) => (
+                          <li
+                            key={idx}
+                            className="rounded border border-rose-500/30 bg-rose-500/10 px-2.5 py-1.5 text-rose-200"
+                          >
+                            {me}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Recommended Actions */}
+                  {analysis.recommended_actions && analysis.recommended_actions.length > 0 && (
+                    <div>
+                      <h3 className="font-semibold text-sky-200">
+                        Recommended Actions ({analysis.recommended_actions.length})
+                      </h3>
+                      <ul className="mt-1.5 space-y-1">
+                        {analysis.recommended_actions.map((act, idx) => (
+                          <li
+                            key={idx}
+                            className="flex items-center gap-2 rounded border border-sky-500/30 bg-sky-500/10 px-2.5 py-1.5 text-sky-100"
+                          >
+                            <span className="text-sky-400">→</span> {act}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Citations */}
+                  {analysis.citations && analysis.citations.length > 0 && (
+                    <div>
+                      <h3 className="font-semibold text-slate-300">
+                        Evidence Citations ({analysis.citations.length})
+                      </h3>
+                      <ul className="mt-1.5 space-y-2">
+                        {analysis.citations.map((cite, idx) => (
+                          <li
+                            key={idx}
+                            className="rounded-lg border border-aegis-border bg-aegis-panel p-2.5 text-slate-300"
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="font-medium text-white">{cite.claim}</span>
+                              <span className={`text-[10px] ${cite.verified ? "text-emerald-400" : "text-amber-400"}`}>
+                                {cite.verified ? "✓ Verified" : "Unverified"}
+                              </span>
+                            </div>
+                            {cite.verbatim_excerpt && (
+                              <blockquote className="mt-1 border-l-2 border-sky-500/40 pl-2 text-[11px] italic text-slate-400">
+                                &ldquo;{cite.verbatim_excerpt}&rdquo;
+                              </blockquote>
+                            )}
+                            <div className="mt-1 font-mono text-[10px] text-slate-500">
+                              Ref: {truncateId(cite.evidence_id, 14)}
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  <div className="text-[11px] text-slate-400">
                     Evidence graph: {detail.evidence_graph.nodes.length} nodes · {detail.evidence_graph.edges.length} edges
                   </div>
                 </div>
               ) : (
-                <p className="mt-2 text-xs text-slate-400">Run Grounded Analysis to build citations and detect contradictions.</p>
+                <p className="mt-2 text-xs text-slate-400">
+                  Run Grounded Analysis to build verifiable citations and detect contradictions across all records.
+                </p>
               )}
             </section>
 
+            {/* Human-Reviewed Dispute Response */}
             <section className="rounded-xl border border-aegis-border bg-aegis-surface p-5">
               <h2 className="text-sm font-semibold text-white">Human-Reviewed Dispute Response</h2>
               <label htmlFor="draft-response" className="mt-2 block text-xs text-slate-400">
-                Edit and verify every cited fact before human sign-off.
+                Edit and verify every cited fact before human sign-off. Response is sealed with a SHA-256 hash.
               </label>
               <textarea
                 id="draft-response"
-                rows={7}
+                rows={9}
                 value={draftResponse}
                 onChange={(e) => setDraftResponse(e.target.value)}
-                className="mt-2 w-full rounded-lg border border-aegis-border bg-aegis-panel p-3 text-xs text-slate-100"
+                className="mt-2 w-full rounded-lg border border-aegis-border bg-aegis-panel p-3 text-xs leading-relaxed text-slate-100"
                 placeholder="Run analysis or compose verified dispute response..."
               />
               <div className="mt-3 flex flex-wrap gap-2">
@@ -383,9 +680,21 @@ export default function DisputeCaseDetailPage() {
                 {hasPermission("disputes:submit") && (
                   <button
                     type="button"
-                    disabled={busy || dc.is_synthetic || !dc.human_approved_for_submission || dc.status === "SUBMITTED"}
+                    disabled={
+                      busy ||
+                      dc.is_synthetic ||
+                      !dc.human_approved_for_submission ||
+                      dc.status === "SUBMITTED" ||
+                      dc.status === "RESOLVED"
+                    }
                     onClick={() => setConfirmSubmit(true)}
-                    title={dc.is_synthetic ? "Synthetic demo cases cannot be submitted externally" : undefined}
+                    title={
+                      dc.is_synthetic
+                        ? "Synthetic demo cases cannot be submitted externally"
+                        : !dc.human_approved_for_submission
+                          ? "Must be approved first"
+                          : undefined
+                    }
                     className="rounded-lg bg-emerald-500 px-3.5 py-2 text-xs font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-40"
                   >
                     {dc.status === "SUBMITTED" ? "Submitted" : "Submit to PayPal"}
@@ -395,12 +704,94 @@ export default function DisputeCaseDetailPage() {
             </section>
           </div>
 
-          {/* Evidence & Artifacts */}
+          {/* Evidence Records, JSON Evidence & Uploaded Artifacts */}
           <div className="grid gap-6 lg:grid-cols-2">
             <section className="rounded-xl border border-aegis-border bg-aegis-surface p-5">
-              <h2 className="text-sm font-semibold text-white">Evidence Records & Uploaded Artifacts</h2>
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-white">Evidence Records & Artifacts</h2>
+                {hasPermission("disputes:write") && (
+                  <button
+                    type="button"
+                    onClick={() => setShowJsonEvidenceForm((s) => !s)}
+                    className="rounded border border-sky-500/40 bg-sky-500/10 px-2.5 py-1 text-xs font-medium text-sky-300 hover:bg-sky-500/20"
+                  >
+                    {showJsonEvidenceForm ? "Close JSON Form" : "+ Attach JSON Evidence"}
+                  </button>
+                )}
+              </div>
+
+              {/* JSON /evidence attach form */}
+              {showJsonEvidenceForm && (
+                <form
+                  onSubmit={handleAttachJsonEvidence}
+                  className="mt-3 space-y-3 rounded-lg border border-sky-500/30 bg-sky-500/5 p-3 text-xs"
+                >
+                  <h3 className="font-semibold text-sky-200">Attach Structured JSON Evidence</h3>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <div>
+                      <label htmlFor="json-ev-title" className="block text-slate-300">Title</label>
+                      <input
+                        id="json-ev-title"
+                        type="text"
+                        value={jsonEvidenceTitle}
+                        onChange={(e) => setJsonEvidenceTitle(e.target.value)}
+                        className="mt-1 w-full rounded border border-aegis-border bg-aegis-panel px-2.5 py-1.5 text-white"
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="json-ev-type" className="block text-slate-300">Source Type</label>
+                      <select
+                        id="json-ev-type"
+                        value={jsonEvidenceSourceType}
+                        onChange={(e) => setJsonEvidenceSourceType(e.target.value)}
+                        className="mt-1 w-full rounded border border-aegis-border bg-aegis-panel px-2.5 py-1.5 text-white"
+                      >
+                        <option value="DELIVERY_RECEIPT">DELIVERY_RECEIPT</option>
+                        <option value="MERCHANT_COMMUNICATION">MERCHANT_COMMUNICATION</option>
+                        <option value="CUSTOMER_SUPPORT_CHAT">CUSTOMER_SUPPORT_CHAT</option>
+                        <option value="TERMS_OF_SERVICE">TERMS_OF_SERVICE</option>
+                        <option value="ACCESS_LOG">ACCESS_LOG</option>
+                        <option value="REFUND_POLICY">REFUND_POLICY</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label htmlFor="json-ev-ref" className="block text-slate-300">Source Reference</label>
+                    <input
+                      id="json-ev-ref"
+                      type="text"
+                      value={jsonEvidenceSourceRef}
+                      onChange={(e) => setJsonEvidenceSourceRef(e.target.value)}
+                      placeholder="e.g. carrier:tracking:12345"
+                      className="mt-1 w-full rounded border border-aegis-border bg-aegis-panel px-2.5 py-1.5 font-mono text-white"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="json-ev-content" className="block text-slate-300">JSON Payload</label>
+                    <textarea
+                      id="json-ev-content"
+                      rows={5}
+                      value={jsonEvidenceRaw}
+                      onChange={(e) => setJsonEvidenceRaw(e.target.value)}
+                      className="mt-1 w-full rounded border border-aegis-border bg-aegis-panel p-2 font-mono text-[11px] text-white"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={busy}
+                    className="rounded bg-sky-500 px-3.5 py-1.5 text-xs font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50"
+                  >
+                    {busy ? "Attaching…" : "Save Evidence Record"}
+                  </button>
+                </form>
+              )}
+
+              {/* File Artifact Upload Form */}
               {hasPermission("disputes:write") && (
-                <form onSubmit={handleUploadArtifact} className="mt-3 space-y-2 rounded-lg border border-aegis-border bg-aegis-panel p-3">
+                <form
+                  onSubmit={handleUploadArtifact}
+                  className="mt-3 space-y-2 rounded-lg border border-aegis-border bg-aegis-panel p-3"
+                >
                   <div className="grid gap-2 sm:grid-cols-2">
                     <input
                       type="text"
@@ -422,11 +813,12 @@ export default function DisputeCaseDetailPage() {
                     disabled={busy || !artifactFile}
                     className="rounded-md bg-sky-500 px-3 py-1.5 text-xs font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50"
                   >
-                    Upload Artifact
+                    Upload File Artifact
                   </button>
                 </form>
               )}
 
+              {/* Evidence Records List */}
               <ul className="mt-3 space-y-2 text-xs">
                 {detail.evidence.map((ev) => {
                   const matchedArt = detail.artifacts.find((a) => a.evidence_record_id === ev.id);
@@ -513,6 +905,7 @@ export default function DisputeCaseDetailPage() {
         </div>
       )}
 
+      {/* Approval Confirmation Dialog */}
       <ConfirmDialog
         open={confirmApprove}
         title="Approve Dispute Response Draft"
@@ -523,6 +916,7 @@ export default function DisputeCaseDetailPage() {
         onConfirm={() => void handleApproveDraft()}
       />
 
+      {/* PayPal External Submission Confirmation Dialog */}
       <ConfirmDialog
         open={confirmSubmit}
         title="Submit Dispute Response to PayPal"
@@ -533,6 +927,55 @@ export default function DisputeCaseDetailPage() {
         onCancel={() => setConfirmSubmit(false)}
         onConfirm={() => void handleSubmitExternal()}
       />
+
+      {/* Resolve Case Modal / Dialog */}
+      {confirmResolve && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="resolve-modal-title"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4"
+        >
+          <div className="w-full max-w-md rounded-2xl border border-aegis-border bg-aegis-surface p-6 shadow-2xl">
+            <h2 id="resolve-modal-title" className="text-base font-semibold text-white">
+              Resolve Dispute Case
+            </h2>
+            <p className="mt-1 text-xs text-slate-400">
+              Close this dispute case and transition status to <span className="font-semibold text-emerald-400">RESOLVED</span> via <span className="font-mono text-sky-300">POST /v1/disputeos/cases/{caseId}/resolve</span>.
+            </p>
+            <div className="mt-4">
+              <label htmlFor="resolve-reason-input" className="block text-xs font-medium text-slate-300">
+                Resolution Notes
+              </label>
+              <textarea
+                id="resolve-reason-input"
+                rows={3}
+                value={resolveReason}
+                onChange={(e) => setResolveReason(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-panel p-2.5 text-xs text-white"
+              />
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setConfirmResolve(false)}
+                className="rounded-lg border border-aegis-border px-3.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void handleResolveCase()}
+                className="rounded-lg bg-emerald-500 px-4 py-1.5 text-xs font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-50"
+              >
+                {busy ? "Resolving…" : "Confirm Resolution"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </AppShell>
   );
 }

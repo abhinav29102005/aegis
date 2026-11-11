@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -11,24 +11,25 @@ import {
   type MerchantRecord,
   type PassportRecord,
   type PaymentIntentRecord,
+  type PaymentState,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { formatIsoDateTime, formatMinorCurrency, truncateId } from "@/lib/format";
 
-const PAYMENT_STATES = [
-  "",
-  "PROPOSED",
-  "POLICY_EVALUATED",
+// Canonical 11 Payment States
+const CANONICAL_PAYMENT_STATES: readonly PaymentState[] = [
+  "CREATED",
+  "POLICY_CHECK",
   "AWAITING_APPROVAL",
-  "CHECKOUT_READY",
-  "AWAITING_PAYPAL_BUYER",
-  "BUYER_APPROVED",
-  "CAPTURE_IN_PROGRESS",
-  "PENDING_PROVIDER",
-  "SUCCEEDED",
+  "APPROVED",
+  "CHECKOUT_CREATED",
+  "CAPTURE_PENDING",
+  "CAPTURED",
   "FAILED",
-  "REJECTED",
-];
+  "CANCELLED",
+  "EXPIRED",
+  "REFUNDED",
+] as const;
 
 export default function PaymentsPage() {
   const { session, hasPermission } = useAuth();
@@ -36,7 +37,11 @@ export default function PaymentsPage() {
   const [agents, setAgents] = useState<AgentRecord[]>([]);
   const [passports, setPassports] = useState<PassportRecord[]>([]);
   const [merchants, setMerchants] = useState<MerchantRecord[]>([]);
-  const [stateFilter, setStateFilter] = useState("");
+  const [stateFilter, setStateFilter] = useState<string>("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [limit, setLimit] = useState(25);
+  const [offset, setOffset] = useState(0);
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -58,9 +63,14 @@ export default function PaymentsPage() {
     setLoading(true);
     setError(null);
     try {
-      const qs = stateFilter ? `?state=${encodeURIComponent(stateFilter)}&limit=100` : "?limit=100";
+      const qsParams = new URLSearchParams({
+        limit: "100",
+      });
+      if (stateFilter) qsParams.set("state", stateFilter);
+      if (searchQuery.trim()) qsParams.set("q", searchQuery.trim());
+
       const [p, a, ps, m] = await Promise.all([
-        apiRequest<PaymentIntentRecord[]>(`/v1/guardian/payments${qs}`, {
+        apiRequest<PaymentIntentRecord[]>(`/v1/guardian/payments?${qsParams.toString()}`, {
           token: session.access_token,
           orgId: session.active_tenant_id,
         }),
@@ -89,11 +99,36 @@ export default function PaymentsPage() {
     } finally {
       setLoading(false);
     }
-  }, [session, stateFilter]);
+  }, [searchQuery, session, stateFilter]);
 
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  // Client-side filtering & search
+  const filteredPayments = useMemo(() => {
+    let result = payments;
+    if (stateFilter) {
+      result = result.filter((p) => p.state === stateFilter);
+    }
+    const q = searchQuery.trim().toLowerCase();
+    if (q) {
+      result = result.filter(
+        (p) =>
+          p.id.toLowerCase().includes(q) ||
+          p.correlation_id.toLowerCase().includes(q) ||
+          p.quote_hash.toLowerCase().includes(q) ||
+          p.agent_id.toLowerCase().includes(q) ||
+          p.merchant_id.toLowerCase().includes(q) ||
+          p.state.toLowerCase().includes(q),
+      );
+    }
+    return result;
+  }, [payments, searchQuery, stateFilter]);
+
+  const pagedPayments = useMemo(() => {
+    return filteredPayments.slice(offset, offset + limit);
+  }, [filteredPayments, offset, limit]);
 
   async function handleSubmitProposal(e: React.FormEvent) {
     e.preventDefault();
@@ -371,71 +406,144 @@ export default function PaymentsPage() {
         </section>
       )}
 
-      <section className="rounded-xl border border-aegis-border bg-aegis-surface">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-aegis-border px-5 py-3">
-          <h2 className="text-sm font-semibold text-white">Payment Intents</h2>
-          <div className="flex items-center gap-2">
-            <label htmlFor="state-filter" className="text-xs text-slate-400">
-              State:
-            </label>
-            <select
-              id="state-filter"
-              value={stateFilter}
-              onChange={(e) => setStateFilter(e.target.value)}
-              className="rounded-lg border border-aegis-border bg-aegis-panel px-2.5 py-1 text-xs text-white"
-            >
-              {PAYMENT_STATES.map((st) => (
-                <option key={st || "ALL"} value={st}>
-                  {st || "All States"}
-                </option>
-              ))}
-            </select>
+      {/* Payment Intents Section */}
+      <section className="rounded-xl border border-aegis-border bg-aegis-surface p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-aegis-border pb-4">
+          <h2 className="text-base font-semibold text-white">
+            Payment Intents ({filteredPayments.length})
+          </h2>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setOffset(0);
+                }}
+                placeholder="Search intents (ID, hash, agent)..."
+                className="w-64 rounded-lg border border-aegis-border bg-aegis-bg px-3 py-1.5 text-xs text-white placeholder-slate-400"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery("");
+                    setOffset(0);
+                  }}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-white"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center gap-1.5 text-xs text-slate-300">
+              <label htmlFor="payment-limit-select">Limit:</label>
+              <select
+                id="payment-limit-select"
+                value={limit}
+                onChange={(e) => {
+                  setLimit(Number(e.target.value));
+                  setOffset(0);
+                }}
+                className="rounded border border-aegis-border bg-aegis-bg px-2 py-1 text-xs text-white"
+              >
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
+            </div>
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <caption className="sr-only">Organization payment intents</caption>
-            <thead className="border-b border-aegis-border bg-aegis-panel/60 text-xs uppercase tracking-wider text-slate-400">
+        {/* Canonical 11 PaymentState Filter Chips */}
+        <div className="my-4 flex flex-wrap items-center gap-1.5">
+          <span className="mr-1 text-xs font-medium text-slate-400">State:</span>
+          <button
+            type="button"
+            onClick={() => {
+              setStateFilter("");
+              setOffset(0);
+            }}
+            className={`rounded-full px-2.5 py-1 text-xs font-medium transition ${
+              stateFilter === ""
+                ? "bg-sky-500 text-slate-950 font-semibold shadow-sm"
+                : "border border-aegis-border bg-aegis-bg text-slate-300 hover:bg-slate-800"
+            }`}
+          >
+            All
+          </button>
+          {CANONICAL_PAYMENT_STATES.map((st) => {
+            const isSelected = stateFilter === st;
+            return (
+              <button
+                key={st}
+                type="button"
+                onClick={() => {
+                  setStateFilter(isSelected ? "" : st);
+                  setOffset(0);
+                }}
+                className={`rounded-full px-2.5 py-1 text-xs font-mono transition ${
+                  isSelected
+                    ? "bg-sky-500 text-slate-950 font-semibold shadow-sm"
+                    : "border border-aegis-border bg-aegis-bg text-slate-300 hover:bg-slate-800"
+                }`}
+              >
+                {st}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Accessible Table Structure with .table-wrapper and <th scope="col"> */}
+        <div tabIndex={0} role="region" aria-labelledby="payments-table-caption" className="table-wrapper">
+          <table className="aegis-table w-full text-left text-sm">
+            <caption id="payments-table-caption" className="sr-only">Organization payment intents</caption>
+            <thead>
               <tr>
-                <th className="px-4 py-3">Intent</th>
-                <th className="px-4 py-3">State</th>
-                <th className="px-4 py-3">Amount</th>
-                <th className="px-4 py-3">Quote Hash</th>
-                <th className="px-4 py-3">Updated</th>
-                <th className="px-4 py-3 text-right">Actions</th>
+                <th scope="col">Intent</th>
+                <th scope="col">State</th>
+                <th scope="col">Amount</th>
+                <th scope="col">Quote Hash</th>
+                <th scope="col">Updated</th>
+                <th scope="col" className="text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-aegis-border">
+            <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
+                  <td colSpan={6} className="text-center text-slate-400 py-6">
                     Loading payment intents…
                   </td>
                 </tr>
-              ) : payments.length === 0 ? (
+              ) : pagedPayments.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
-                    No payment intents found. Register an agent, passport, and merchant, then submit a proposal above.
+                  <td colSpan={6} className="text-center text-slate-400 py-6">
+                    {searchQuery || stateFilter
+                      ? "No payment intents matching current filters."
+                      : "No payment intents found. Register an agent, passport, and merchant, then submit a proposal above."}
                   </td>
                 </tr>
               ) : (
-                payments.map((p) => (
+                pagedPayments.map((p) => (
                   <tr key={p.id} className="hover:bg-slate-800/30">
-                    <td className="px-4 py-3 font-mono text-xs text-sky-300">
+                    <td className="font-mono text-xs text-sky-300">
                       <Link href={`/payments/${p.id}`} className="hover:underline">
                         {truncateId(p.id, 12)}
                       </Link>
                     </td>
-                    <td className="px-4 py-3">
+                    <td>
                       <StatusBadge label={p.state} />
                     </td>
-                    <td className="px-4 py-3 font-medium text-white">
+                    <td className="font-medium text-white">
                       {formatMinorCurrency(p.amount_minor, p.currency)}
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs text-slate-400">{truncateId(p.quote_hash, 12)}</td>
-                    <td className="px-4 py-3 text-xs text-slate-400">{formatIsoDateTime(p.updated_at)}</td>
-                    <td className="px-4 py-3 text-right">
+                    <td className="font-mono text-xs text-slate-400">{truncateId(p.quote_hash, 12)}</td>
+                    <td className="text-xs text-slate-400">{formatIsoDateTime(p.updated_at)}</td>
+                    <td className="text-right">
                       <div className="inline-flex items-center gap-2">
                         <Link
                           href={`/payments/${p.id}`}
@@ -457,6 +565,36 @@ export default function PaymentsPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Payments Pagination Bar */}
+        {filteredPayments.length > 0 && (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-aegis-border pt-3 text-xs text-slate-400">
+            <div>
+              Showing {Math.min(filteredPayments.length, offset + 1)} to {Math.min(filteredPayments.length, offset + limit)} of {filteredPayments.length} intents
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={offset === 0}
+                onClick={() => setOffset((prev) => Math.max(0, prev - limit))}
+                className="rounded border border-aegis-border bg-aegis-bg px-2.5 py-1 text-xs text-slate-200 hover:bg-slate-800 disabled:opacity-40"
+              >
+                Previous
+              </button>
+              <span>
+                Page {Math.floor(offset / limit) + 1} of {Math.max(1, Math.ceil(filteredPayments.length / limit))}
+              </span>
+              <button
+                type="button"
+                disabled={offset + limit >= filteredPayments.length}
+                onClick={() => setOffset((prev) => prev + limit)}
+                className="rounded border border-aegis-border bg-aegis-bg px-2.5 py-1 text-xs text-slate-200 hover:bg-slate-800 disabled:opacity-40"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
       </section>
 
       <ConfirmDialog

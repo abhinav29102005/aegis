@@ -2,9 +2,19 @@
 
 import Link from "next/link";
 import React, { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, Bot, CheckCircle2, RefreshCw, Scale, Shield, Wallet } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowRight,
+  Bot,
+  CheckCircle2,
+  Compass,
+  RefreshCw,
+  Scale,
+  Shield,
+  Sparkles,
+  Wallet,
+} from "lucide-react";
 import { AppShell } from "@/components/AppShell";
-import { StatusBadge } from "@/components/StatusBadge";
 import { apiRequest, type OverviewMetrics } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { formatIsoDateTime, formatMinorCurrency, truncateId } from "@/lib/format";
@@ -41,23 +51,62 @@ export default function DashboardPage() {
       title="Platform Overview"
       subtitle="Real-time governance metrics, budget posture, and cryptographically chained events"
     >
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div className="text-xs text-slate-400">
           Organization ID: <span className="font-mono text-slate-300">{session?.active_tenant_id}</span>
         </div>
-        <button
-          type="button"
-          onClick={() => void loadMetrics()}
-          className="inline-flex items-center gap-2 rounded-lg border border-aegis-border bg-aegis-surface px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-800"
-        >
-          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/onboarding"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-1.5 text-xs font-medium text-sky-300 hover:bg-sky-500/20"
+          >
+            <Compass className="h-3.5 w-3.5" />
+            <span>Onboarding Wizard</span>
+          </Link>
+          <button
+            type="button"
+            onClick={() => void loadMetrics()}
+            className="inline-flex items-center gap-2 rounded-lg border border-aegis-border bg-aegis-surface px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-800"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+            <span>Refresh</span>
+          </button>
+        </div>
       </div>
 
       {error && (
-        <div role="status" className="mb-6 rounded-xl border border-rose-500/40 bg-rose-500/10 p-4 text-sm text-rose-200">
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="mb-6 rounded-xl border border-rose-500/40 bg-rose-500/10 p-4 text-sm text-rose-200"
+        >
           {error}
+        </div>
+      )}
+
+      {/* Quick Setup Checklist if no agents or budgets initialized */}
+      {metrics && metrics.agents.total === 0 && (
+        <div className="mb-6 rounded-2xl border border-sky-500/30 bg-gradient-to-r from-sky-500/10 via-slate-900 to-aegis-surface p-5">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-500/20 text-sky-400">
+                <Sparkles className="h-5 w-5" />
+              </div>
+              <div>
+                <h2 className="text-sm font-semibold text-white">Initial Organization Setup Checklist</h2>
+                <p className="mt-0.5 text-xs text-slate-300">
+                  Ready to empower autonomous purchasing? Complete the setup wizard to register your first agent and spending passport.
+                </p>
+              </div>
+            </div>
+            <Link
+              href="/onboarding"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-sky-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-sky-400"
+            >
+              <span>Launch Guided Onboarding</span>
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          </div>
         </div>
       )}
 
@@ -148,27 +197,27 @@ export default function DashboardPage() {
                 <table className="aegis-table">
                   <thead>
                     <tr>
-                      <th scope="col">Seq</th>
+                      <th scope="col">Seq #</th>
                       <th scope="col">Event Type</th>
                       <th scope="col">Actor</th>
-                      <th scope="col">Correlation ID</th>
+                      <th scope="col">Previous Hash</th>
                       <th scope="col">Event Hash</th>
-                      <th scope="col">Occurred</th>
+                      <th scope="col">Timestamp</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {metrics.recent_events.map((ev) => (
-                      <tr key={ev.id}>
-                        <td className="font-mono text-xs text-slate-300">#{ev.sequence_number}</td>
-                        <td>
-                          <StatusBadge label={ev.event_type} />
+                    {metrics.recent_events.map((evt) => (
+                      <tr key={evt.id}>
+                        <td className="font-mono text-slate-300">{evt.sequence_number}</td>
+                        <td className="font-semibold text-white">{evt.event_type}</td>
+                        <td className="text-slate-300">
+                          {evt.actor_type}: {truncateId(evt.actor_id, 10)}
                         </td>
-                        <td className="text-xs text-slate-300">
-                          {ev.actor_type} ({truncateId(ev.actor_id, 12)})
+                        <td className="font-mono text-slate-400">
+                          {evt.previous_event_hash ? truncateId(evt.previous_event_hash, 12) : "GENESIS"}
                         </td>
-                        <td className="font-mono text-xs text-sky-300">{truncateId(ev.correlation_id, 12)}</td>
-                        <td className="font-mono text-xs text-slate-400">{truncateId(ev.event_hash, 14)}</td>
-                        <td className="text-xs text-slate-400">{formatIsoDateTime(ev.occurred_at)}</td>
+                        <td className="font-mono text-sky-300">{truncateId(evt.event_hash, 12)}</td>
+                        <td className="text-slate-400">{formatIsoDateTime(evt.occurred_at)}</td>
                       </tr>
                     ))}
                   </tbody>

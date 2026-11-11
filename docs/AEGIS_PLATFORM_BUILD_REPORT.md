@@ -20,7 +20,7 @@
 - OpenAPI Surface: **69 HTTP paths** across `/health`, `/ready`, `/v1/auth/*`, `/v1/orgs/*`, `/v1/overview/*`, `/v1/audit-events`, `/v1/guardian/*`, `/v1/ghostpay/*`, `/v1/disputeos/*`, `/v1/webhooks/*`, `/v1/worker/*`, and `/v1/paypal/webhooks`.
 
 ### 1.2 Shared Security, Database & Migrations (`packages/security/`, `packages/database/`)
-- `packages/security/security/auth.py`: PBKDF2-SHA256 password hashing, HS256 JWT tokens, `aegis_<env>_...` API key prefixing + salted SHA-256 verification, and 7-role RBAC permission matrix (`OWNER`, `FINANCE_ADMIN`, `RISK_ANALYST`, `DISPUTE_OPERATOR`, `DEVELOPER`, `AGENT_RUNTIME`, `VIEWER`).
+- `packages/security/security/auth.py`: PBKDF2-SHA256 password hashing, HS256 JWT tokens, `aegis_<env>_...` API key prefixing + salted SHA-256 verification, and canonical 6-role RBAC permission matrix (`OWNER`, `ADMIN`, `OPERATOR`, `AUDITOR`, `AGENT_SERVICE`, `VIEWER`) enforcing granular permissions including `passports:write`.
 - `packages/database/database/orm.py`, `repository.py`, `platform_repo.py`, `storage.py`: Multi-tenant ORM tables with Alembic revisions:
   - `0001_initial_schema` (core financial ledger, agents, merchants, passports, proposals, quotes, intents, decisions, approvals, reservations, attempts, events, dispute cases, evidence, analyses)
   - `0002_aegis_platform_extensions` (`organizations`, `users`, `memberships`, `service_accounts`, `api_keys`, `webhook_endpoints`, `webhook_deliveries`, `outbox_events`, `dispute_metadata`, `evidence_artifacts`, `admin_audit_logs`, `ghostpay_investigations`)
@@ -68,3 +68,4 @@
 - **PayPal Sandbox Orders v2 / Webhooks / Disputes API**: **VERIFIED WITH MOCKS** (unit/API/worker tests stub HTTP transport with realistic PayPal payloads and verify fail-closed behavior when credentials are missing). Live network execution against `api-m.sandbox.paypal.com` with real sandbox credentials is **`NOT VERIFIED`** in this environment.
 - **External LLM Providers (`OPENAI_API_KEY` / `GOOGLE_API_KEY`)**: **VERIFIED WITH DETERMINISTIC FALLBACK & MOCKED ERROR TESTS**. Live external LLM API calls with real provider keys are **`NOT VERIFIED`** in this environment (`LLM_PROVIDER=deterministic` is active by default).
 - **Full `docker compose up` Live Container Boot**: Compose manifests and Dockerfiles were authored cleanly and PostgreSQL 16 container integration ran directly; full multi-image Docker build/boot is **`NOT VERIFIED`** in this session.
+- **Mobile / Android Staging Clients**: **`NOT VERIFIED`** / **OUT OF SCOPE**. AEGIS is implemented and verified for Linux container backends, web browsers (Next.js 15), and Python/TypeScript SDKs. No Android client application is built, tested, or deployed to staging environments.

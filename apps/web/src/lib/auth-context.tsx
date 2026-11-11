@@ -1,11 +1,12 @@
 "use client";
 
 import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
-import { apiRequest, type AuthSession } from "./api";
+import { apiRequest, ApiClientError, type AuthSession } from "./api";
 
 interface AuthContextValue {
   session: AuthSession | null;
   loading: boolean;
+  error: string | null;
   login: (email: string, password: string, orgId?: string) => Promise<void>;
   register: (payload: {
     email: string;
@@ -15,49 +16,60 @@ interface AuthContextValue {
     organization_slug: string;
   }) => Promise<void>;
   switchOrganization: (orgId: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
+  clearError: () => void;
   hasPermission: (perm: string) => boolean;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
-const STORAGE_KEY = "aegis.session.v1";
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const checkSession = useCallback(async () => {
     try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as AuthSession;
-        setSession(parsed);
+      const data = await apiRequest<AuthSession>("/api/auth/me", {
+        timeoutMs: 10000,
+      });
+      setSession(data);
+      setError(null);
+    } catch (err) {
+      // 401 or invalid session -> evict and redirect cleanly to /login
+      setSession(null);
+      if (err instanceof ApiClientError && err.status === 401) {
+        if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
+          const next = encodeURIComponent(window.location.pathname + window.location.search);
+          window.location.href = `/login?next=${next}`;
+        }
       }
-    } catch {
-      window.localStorage.removeItem(STORAGE_KEY);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  const persistSession = useCallback((next: AuthSession | null) => {
-    setSession(next);
-    if (next) {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    } else {
-      window.localStorage.removeItem(STORAGE_KEY);
-    }
-  }, []);
+  useEffect(() => {
+    void checkSession();
+  }, [checkSession]);
 
   const login = useCallback(
     async (email: string, password: string, orgId?: string) => {
-      const data = await apiRequest<AuthSession>("/v1/auth/login", {
-        method: "POST",
-        body: { email, password, organization_id: orgId ?? null },
-      });
-      persistSession(data);
+      setError(null);
+      try {
+        const data = await apiRequest<AuthSession>("/api/auth/login", {
+          method: "POST",
+          body: { email, password, organization_id: orgId ?? null },
+          timeoutMs: 15000,
+        });
+        setSession(data);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Authentication failed";
+        setError(msg);
+        throw err;
+      }
     },
-    [persistSession],
+    [],
   );
 
   const register = useCallback(
@@ -68,53 +80,100 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       organization_name: string;
       organization_slug: string;
     }) => {
-      const data = await apiRequest<AuthSession>("/v1/auth/register", {
-        method: "POST",
-        body: payload,
-      });
-      persistSession(data);
+      setError(null);
+      try {
+        const data = await apiRequest<AuthSession>("/api/auth/signup", {
+          method: "POST",
+          body: payload,
+          timeoutMs: 15000,
+        });
+        setSession(data);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Registration failed";
+        setError(msg);
+        throw err;
+      }
     },
-    [persistSession],
+    [],
   );
 
   const switchOrganization = useCallback(
     async (orgId: string) => {
-      if (!session) return;
-      const me = await apiRequest<{
-        user_id: string | null;
-        email: string | null;
-        full_name?: string;
-        active_tenant_id: string;
-        active_role?: string;
-        role?: string;
-        permissions: string[];
-        organizations: AuthSession["organizations"];
-      }>("/v1/auth/me", {
-        token: session.access_token,
-        orgId,
-      });
-      persistSession({
-        ...session,
-        active_tenant_id: me.active_tenant_id,
-        active_role: me.active_role ?? me.role ?? session.active_role,
-        permissions: me.permissions,
-        organizations: me.organizations,
-      });
+      setError(null);
+      try {
+        const data = await apiRequest<AuthSession>("/api/auth/switch-org", {
+          method: "POST",
+          body: { organization_id: orgId },
+          timeoutMs: 15000,
+        });
+        setSession(data);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Failed to switch organization";
+        setError(msg);
+        throw err;
+      }
     },
-    [persistSession, session],
+    [],
   );
 
-  const logout = useCallback(() => {
-    persistSession(null);
-  }, [persistSession]);
+  const logout = useCallback(async () => {
+    try {
+      await apiRequest("/api/auth/logout", { method: "POST", timeoutMs: 5000 });
+    } catch {
+      // ignore
+    } finally {
+      setSession(null);
+      if (typeof window !== "undefined") {
+        window.location.href = "/login";
+      }
+    }
+  }, []);
+
+  const clearError = useCallback(() => setError(null), []);
 
   const hasPermission = useCallback(
-    (perm: string) => Boolean(session?.permissions.includes(perm)),
+    (perm: string) => {
+      if (!session) return false;
+      if (session.active_role === "OWNER" || session.active_role === "ADMIN") return true;
+      return session.permissions?.includes(perm) ?? false;
+    },
     [session],
   );
 
   return (
-    <AuthContext.Provider value={{ session, loading, login, register, switchOrganization, logout, hasPermission }}>
+    <AuthContext.Provider
+      value={{
+        session,
+        loading,
+        error,
+        login,
+        register,
+        switchOrganization,
+        logout,
+        clearError,
+        hasPermission,
+      }}
+    >
+      {error && (
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="fixed top-4 right-4 z-50 flex max-w-md items-center justify-between gap-3 rounded-xl border border-rose-500/40 bg-rose-950/95 px-4 py-3 text-sm text-rose-200 shadow-2xl backdrop-blur transition-all"
+        >
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-rose-400">Error:</span>
+            <span>{error}</span>
+          </div>
+          <button
+            type="button"
+            onClick={clearError}
+            className="rounded p-1 text-rose-400 hover:bg-rose-900/60 hover:text-rose-100"
+            aria-label="Dismiss error"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       {children}
     </AuthContext.Provider>
   );
@@ -123,7 +182,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 export function useAuth(): AuthContextValue {
   const ctx = useContext(AuthContext);
   if (!ctx) {
-    throw new Error("useAuth must be used inside <AuthProvider>");
+    throw new Error("useAuth must be used within an AuthProvider");
   }
   return ctx;
 }
