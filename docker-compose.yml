@@ -15,7 +15,8 @@ services:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aegis} -d ${POSTGRES_DB:-aegis_platform}"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      start_period: 15s
+      retries: 10
 
   redis:
     image: redis:7-alpine
@@ -42,7 +43,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-aegis}:${POSTGRES_PASSWORD:-aegis_dev_password}@postgres:5432/${POSTGRES_DB:-aegis_platform}
-    command: ["sh", "-c", "cd /app/packages/database && uv run --no-sync alembic upgrade head"]
+    command: ["sh", "-c", "cd /app/packages/database && alembic upgrade head"]
     restart: "no"
 
   api:

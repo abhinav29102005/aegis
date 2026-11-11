@@ -4,7 +4,7 @@ FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_LINK_MODE=copy \
-    UV_CACHE_DIR=/tmp/uv-cache \
+    UV_CACHE_DIR=/home/aegis/.cache/uv \
     PATH="/app/.venv/bin:$PATH"
 
 WORKDIR /app
@@ -12,7 +12,7 @@ WORKDIR /app
 RUN pip install --no-cache-dir uv==0.10.12 && \
     groupadd --system aegis && \
     useradd --system --gid aegis --home-dir /home/aegis --create-home aegis && \
-    mkdir -p /var/lib/aegis/evidence
+    mkdir -p /var/lib/aegis/evidence /home/aegis/.cache/uv
 
 COPY pyproject.toml uv.lock ./
 COPY packages ./packages
@@ -21,11 +21,12 @@ COPY services/api ./services/api
 COPY services/worker ./services/worker
 
 RUN uv sync --frozen --no-dev --python 3.12 && \
-    chown -R aegis:aegis /app /var/lib/aegis
+    rm -rf /tmp/uv-cache && \
+    chown -R aegis:aegis /app /var/lib/aegis /home/aegis
 
 USER aegis
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD python -m aegis_worker.main --healthcheck || exit 1
 
-CMD ["uv", "run", "--no-sync", "python", "-m", "aegis_worker.main"]
+CMD ["python", "-m", "aegis_worker.main"]

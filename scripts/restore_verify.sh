@@ -47,7 +47,17 @@ while [[ $# -gt 0 ]]; do
 done
 
 RESTORE_USE_DOCKER="${RESTORE_USE_DOCKER:-auto}"
-POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:16-alpine}"
+if [[ -z "${POSTGRES_IMAGE:-}" ]]; then
+  PG_CLIENT_MAJOR=""
+  if command -v pg_restore >/dev/null 2>&1; then
+    PG_CLIENT_MAJOR="$(pg_restore --version | sed -nE 's/.* ([0-9]+)\.[0-9]+.*/\1/p' | head -n1 || true)"
+  fi
+  if [[ -n "${PG_CLIENT_MAJOR}" && "${PG_CLIENT_MAJOR}" -ge 16 ]] 2>/dev/null; then
+    POSTGRES_IMAGE="postgres:${PG_CLIENT_MAJOR}-alpine"
+  else
+    POSTGRES_IMAGE="postgres:16-alpine"
+  fi
+fi
 REQUIRE_IMMUTABILITY_TRIGGER="${REQUIRE_IMMUTABILITY_TRIGGER:-true}"
 REQUIRE_CHECKSUM="${REQUIRE_CHECKSUM:-false}"
 if [[ "${ALLOW_MISSING_TRIGGER}" == "true" ]]; then
