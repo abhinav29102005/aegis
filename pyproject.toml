@@ -9,6 +9,8 @@ dependencies = [
     "nexus-database",
     "nexus-paypal",
     "disputeos",
+    "agentpay-guardian",
+    "agentpay-ghostpay",
     "fastapi>=0.115.0,<1.0.0",
     "uvicorn[standard]>=0.30.0,<1.0.0",
     "langgraph>=0.2.0,<1.0.0",
@@ -30,6 +32,8 @@ members = [
     "packages/database",
     "packages/paypal",
     "modules/disputeos",
+    "modules/agentpay-guardian",
+    "modules/ghostpay",
 ]
 
 [tool.uv.sources]
@@ -38,6 +42,8 @@ nexus-security = { workspace = true }
 nexus-database = { workspace = true }
 nexus-paypal = { workspace = true }
 disputeos = { workspace = true }
+agentpay-guardian = { workspace = true }
+agentpay-ghostpay = { workspace = true }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -47,5 +53,7 @@ testpaths = [
     "packages/database/tests",
     "packages/paypal/tests",
     "modules/disputeos/tests",
+    "modules/agentpay-guardian/tests",
+    "modules/ghostpay/tests",
 ]
 

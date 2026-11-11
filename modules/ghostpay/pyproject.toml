@@ -1,12 +1,12 @@
 [build-system]
-requires = ["setuptools>=68.0"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
-name = "ghostpay"
+name = "agentpay-ghostpay"
 version = "0.1.0"
-description = "GhostPay — Deterministic replay, counterfactual policy simulation, anomaly detection, and evidence provenance timelines"
-requires-python = ">=3.12"
+description = "GhostPay — Policy Time Machine, Agent DNA, and Financial Forensics for AgentPay Nexus"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "nexus-contracts",
     "nexus-security",
@@ -14,7 +14,17 @@ dependencies = [
     "pydantic>=2.9.0,<3.0.0",
 ]
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["ghostpay*"]
+[tool.uv.sources]
+nexus-contracts = { workspace = true }
+nexus-security = { workspace = true }
 
+[tool.hatch.build.targets.wheel]
+packages = ["ghostpay"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]

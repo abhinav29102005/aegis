@@ -8,7 +8,6 @@ import pkgutil
 from datetime import UTC
 from uuid import UUID
 
-import ghostpay
 import pytest
 from contracts import (
     DecisionOutcome,
@@ -24,6 +23,10 @@ from contracts.fixtures import (
 )
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
+from security import TenantIsolationError
+from security.settings import get_settings
+
+import ghostpay
 from ghostpay.api import create_ghostpay_router, router
 from ghostpay.counterfactual import simulate_counterfactual
 from ghostpay.errors import OverrideValidationError, UnsupportedPolicyVersionError
@@ -33,8 +36,6 @@ from ghostpay.replay import (
     ReplayEngine,
 )
 from ghostpay.repository import GhostPayReplayRepository
-from security import TenantIsolationError
-from security.settings import get_settings
 
 
 def _make_client() -> TestClient:

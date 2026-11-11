@@ -1,16 +1,5 @@
-"""FastAPI router surface for GhostPay."""
+"""API package for GhostPay."""
 
-from ghostpay.api.router import (
-    SimulateRequest,
-    TimelineRequest,
-    create_ghostpay_router,
-    router,
-)
+from ghostpay.api.router import create_ghostpay_router, router
 
-__all__ = [
-    "SimulateRequest",
-    "TimelineRequest",
-    "create_ghostpay_router",
-    "router",
-]
-
+__all__ = ["create_ghostpay_router", "router"]
