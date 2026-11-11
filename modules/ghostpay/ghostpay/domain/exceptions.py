@@ -33,3 +33,4 @@ class TraceNotFoundError(GhostPayError):
 
 class InvestigationNotFoundError(GhostPayError):
     """Raised when an investigation report is not found."""
+

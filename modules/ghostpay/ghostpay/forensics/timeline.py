@@ -163,3 +163,4 @@ def build_timeline(
         timeline.append(entry)
 
     return timeline
+

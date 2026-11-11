@@ -22,3 +22,4 @@ def format_agent_dna_explanation(result: AgentDNAAnomalyResult) -> str:
 
     lines.append(f"Authority Note: {result.authorization_note}")
     return "\n".join(lines)
+

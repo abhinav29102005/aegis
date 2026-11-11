@@ -143,3 +143,4 @@ class TraceIngestionAdapter:
 
     def get_trace(self, trace_id: UUID) -> PaymentTrace | None:
         return self.traces.get(trace_id)
+

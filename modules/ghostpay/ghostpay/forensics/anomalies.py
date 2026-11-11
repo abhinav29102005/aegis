@@ -60,3 +60,4 @@ def detect_anomalies(
         anomalies.append("UNCERTAIN_PROVIDER_STATE: capture requested but neither verified nor failed")
 
     return anomalies
+

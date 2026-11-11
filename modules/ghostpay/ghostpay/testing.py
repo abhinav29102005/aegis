@@ -268,3 +268,4 @@ def build_baseline_history() -> list[PaymentTrace]:
         )
         traces.append(trace)
     return traces
+

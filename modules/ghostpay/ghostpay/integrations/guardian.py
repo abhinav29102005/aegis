@@ -53,3 +53,4 @@ class GuardianTraceAdapter:
             payment_intent=intent,
             policy_version=policy_version,
         )
+

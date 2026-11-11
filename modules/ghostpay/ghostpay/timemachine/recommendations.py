@@ -46,3 +46,4 @@ def generate_safeguard_recommendations(result: ReplayResult) -> list[str]:
             recommendations.append("Review agent spending passport configuration and audit logs.")
 
     return recommendations
+
