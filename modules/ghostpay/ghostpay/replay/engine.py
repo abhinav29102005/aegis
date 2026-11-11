@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime
-from uuid import uuid4
+from typing import Any
+from uuid import UUID, uuid4
 
 from contracts import (
     ApprovalRecord,
@@ -17,6 +18,7 @@ from contracts import (
     ReplayRequest,
     ReplayResult,
     SpendingPassport,
+    compute_quote_hash,
 )
 
 from ghostpay.anomalies.detector import detect_anomalies
@@ -159,13 +161,66 @@ class ReplayEngine:
         # 2. Reconstruct deterministic event timeline
         timeline = build_timeline(request.events, request.evidence_records)
 
-        # 3. Deterministically recompute policy outcome
+        # 3. Deterministically recompute policy outcome (applying counterfactual overrides if set)
         eval_time = request.evaluation_time or request.recorded_decision.decided_at
+        proposal_to_eval = request.proposal
+        quote_to_eval = request.quote_snapshot
+        passport_to_eval = request.recorded_passport
+        merchant_to_eval = request.recorded_merchant
+
+        if request.counterfactual_overrides:
+            co = request.counterfactual_overrides
+            passport_updates: dict[str, Any] = {}
+            if "per_tx_limit_minor" in co:
+                passport_updates["per_tx_limit_minor"] = int(co["per_tx_limit_minor"])
+            if "total_budget_minor" in co:
+                passport_updates["total_budget_minor"] = int(co["total_budget_minor"])
+            if "allowed_merchant_ids" in co:
+                passport_updates["allowed_merchant_ids"] = [
+                    m if isinstance(m, UUID) else UUID(str(m)) for m in co["allowed_merchant_ids"]
+                ]
+            if "allow_unknown_merchants" in co:
+                passport_updates["allow_unknown_merchants"] = bool(co["allow_unknown_merchants"])
+            if "human_approval_threshold_minor" in co:
+                passport_updates["human_approval_threshold_minor"] = int(co["human_approval_threshold_minor"])
+            if "passport_status" in co:
+                raw_st = co["passport_status"]
+                passport_updates["status"] = raw_st if isinstance(raw_st, PassportStatus) else PassportStatus(str(raw_st))
+            if "expires_at" in co:
+                raw_exp = co["expires_at"]
+                passport_updates["expires_at"] = (
+                    datetime.fromisoformat(raw_exp) if isinstance(raw_exp, str) else raw_exp
+                )
+            if passport_updates:
+                passport_to_eval = passport_to_eval.model_copy(update=passport_updates)
+
+            if "merchant_override" in co:
+                m_val = co["merchant_override"]
+                if isinstance(m_val, Merchant):
+                    merchant_to_eval = m_val
+                elif isinstance(m_val, dict):
+                    merchant_to_eval = merchant_to_eval.model_copy(update=m_val)
+                elif isinstance(m_val, UUID):
+                    merchant_to_eval = merchant_to_eval.model_copy(update={"id": m_val})
+                else:
+                    merchant_to_eval = merchant_to_eval.model_copy(update={"id": UUID(str(m_val))})
+
+            if "amount_override_minor" in co:
+                new_amt = int(co["amount_override_minor"])
+                proposal_to_eval = proposal_to_eval.model_copy(update={"amount_minor": new_amt})
+                new_qh = compute_quote_hash(
+                    merchant_id=quote_to_eval.merchant_id,
+                    amount_minor=new_amt,
+                    currency=quote_to_eval.currency,
+                    line_items=quote_to_eval.line_items,
+                )
+                quote_to_eval = quote_to_eval.model_copy(update={"amount_minor": new_amt, "quote_hash": new_qh})
+
         recomputed_outcome, recomputed_reasons, new_violated_constraints = evaluate_deterministic_policy(
-            proposal=request.proposal,
-            quote=request.quote_snapshot,
-            passport=request.recorded_passport,
-            merchant=request.recorded_merchant,
+            proposal=proposal_to_eval,
+            quote=quote_to_eval,
+            passport=passport_to_eval,
+            merchant=merchant_to_eval,
             approval_record=request.approval_record,
             evaluation_time=eval_time,
         )

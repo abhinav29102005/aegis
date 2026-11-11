@@ -140,6 +140,68 @@ def test_5_counterfactual_policies_do_not_mutate_original_records() -> None:
     assert req.recorded_merchant.id == orig_merchant_id
 
 
+def test_counterfactual_all_nine_supported_overrides_individually() -> None:
+    """Verify all 9 individual counterfactual overrides function without mutation."""
+    from datetime import timedelta
+
+    fixture = build_authorized_39_purchase_fixture()
+    req = fixture["replay_request"]
+    unknown_merchant = fixture["unknown_merchant"]
+
+    # 1. per_tx_limit_minor: reduce to $20.00, below $39.00 purchase -> DENIED_EXCEEDS_PER_TX_LIMIT
+    res1 = simulate_counterfactual(req, {"per_tx_limit_minor": 2000})
+    assert res1.recomputed_outcome == DecisionOutcome.DENY
+    assert DecisionReasonCode.DENIED_EXCEEDS_PER_TX_LIMIT in res1.recomputed_reason_codes
+    assert req.recorded_passport.per_tx_limit_minor == 7500  # unmutated
+
+    # 2. total_budget_minor: reduce to $20.00, below $39.00 purchase -> DENIED_EXCEEDS_PASSPORT_BUDGET
+    res2 = simulate_counterfactual(req, {"total_budget_minor": 2000})
+    assert res2.recomputed_outcome == DecisionOutcome.DENY
+    assert DecisionReasonCode.DENIED_EXCEEDS_PASSPORT_BUDGET in res2.recomputed_reason_codes
+
+    # 3. allowed_merchant_ids: override to only allow unknown_merchant -> CloudCompute store is now DENIED
+    res3 = simulate_counterfactual(req, {"allowed_merchant_ids": [unknown_merchant.id]})
+    assert res3.recomputed_outcome == DecisionOutcome.DENY
+    assert DecisionReasonCode.DENIED_MERCHANT_NOT_ALLOWLISTED in res3.recomputed_reason_codes
+
+    # 4. allow_unknown_merchants + unapproved merchant: escalates instead of denied
+    unapproved_req = req.model_copy(update={"recorded_merchant": unknown_merchant})
+    res4 = simulate_counterfactual(unapproved_req, {"allow_unknown_merchants": True})
+    assert res4.recomputed_outcome == DecisionOutcome.ESCALATE
+    assert DecisionReasonCode.ESCALATED_UNKNOWN_MERCHANT in res4.recomputed_reason_codes
+
+    # 5. human_approval_threshold_minor: reduce threshold to $30.00 -> $39.00 purchase now requires approval
+    res5 = simulate_counterfactual(req, {"human_approval_threshold_minor": 3000})
+    assert res5.recomputed_outcome == DecisionOutcome.ESCALATE
+    assert DecisionReasonCode.ESCALATED_REQUIRES_HUMAN_APPROVAL in res5.recomputed_reason_codes
+
+    # 6. passport_status: set to REVOKED -> DENIED_PASSPORT_REVOKED
+    res6 = simulate_counterfactual(req, {"passport_status": PassportStatus.REVOKED})
+    assert res6.recomputed_outcome == DecisionOutcome.DENY
+    assert DecisionReasonCode.DENIED_PASSPORT_REVOKED in res6.recomputed_reason_codes
+
+    # 7. expires_at: set expiration in the past -> DENIED_PASSPORT_EXPIRED
+    res7 = simulate_counterfactual(req, {"expires_at": req.quote_snapshot.created_at - timedelta(days=1)})
+    assert res7.recomputed_outcome == DecisionOutcome.DENY
+    assert DecisionReasonCode.DENIED_PASSPORT_EXPIRED in res7.recomputed_reason_codes
+
+    # 8. merchant_override: substitute merchant via override -> DENIED_MERCHANT_NOT_ALLOWLISTED
+    res8 = simulate_counterfactual(req, {"merchant_override": unknown_merchant})
+    assert res8.recomputed_outcome == DecisionOutcome.DENY
+    assert DecisionReasonCode.DENIED_MERCHANT_NOT_ALLOWLISTED in res8.recomputed_reason_codes
+
+    # 9. amount_override_minor: increase amount to $85.00 -> DENIED_EXCEEDS_PER_TX_LIMIT
+    res9 = simulate_counterfactual(req, {"amount_override_minor": 8500})
+    assert res9.recomputed_outcome == DecisionOutcome.DENY
+    assert DecisionReasonCode.DENIED_EXCEEDS_PER_TX_LIMIT in res9.recomputed_reason_codes
+
+    # Check direct request.counterfactual_overrides also works in ReplayEngine.replay
+    direct_req = req.model_copy(update={"counterfactual_overrides": {"per_tx_limit_minor": 1000}})
+    res_direct = ReplayEngine.replay(direct_req)
+    assert res_direct.recomputed_outcome == DecisionOutcome.DENY
+    assert DecisionReasonCode.DENIED_EXCEEDS_PER_TX_LIMIT in res_direct.recomputed_reason_codes
+
+
 def test_6_missing_evidence_is_explicitly_reported() -> None:
     """Scenario 6: Missing evidence is explicitly reported (missing_evidence populated, INCOMPLETE_EVIDENCE)."""
     fixture = build_authorized_39_purchase_fixture()

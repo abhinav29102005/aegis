@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -25,12 +26,12 @@ def simulate_counterfactual(
     Supported overrides:
     - per_tx_limit_minor: int
     - total_budget_minor: int
-    - allowed_merchant_ids: list[UUID]
+    - allowed_merchant_ids: list[UUID | str]
     - allow_unknown_merchants: bool
     - human_approval_threshold_minor: int
     - passport_status: PassportStatus | str
-    - expires_at: datetime
-    - merchant_override: Merchant | dict | UUID
+    - expires_at: datetime | str
+    - merchant_override: Merchant | dict | UUID | str
     - amount_override_minor: int
     """
     # 1. Deep clone the request to guarantee zero mutation of caller inputs
@@ -45,22 +46,30 @@ def simulate_counterfactual(
     # 3. Apply passport overrides to cloned object
     passport_updates: dict[str, Any] = {}
     if "per_tx_limit_minor" in effective_overrides:
-        passport_updates["per_tx_limit_minor"] = effective_overrides["per_tx_limit_minor"]
+        passport_updates["per_tx_limit_minor"] = int(effective_overrides["per_tx_limit_minor"])
     if "total_budget_minor" in effective_overrides:
-        passport_updates["total_budget_minor"] = effective_overrides["total_budget_minor"]
+        passport_updates["total_budget_minor"] = int(effective_overrides["total_budget_minor"])
     if "allowed_merchant_ids" in effective_overrides:
-        passport_updates["allowed_merchant_ids"] = effective_overrides["allowed_merchant_ids"]
+        raw_m_ids = effective_overrides["allowed_merchant_ids"]
+        passport_updates["allowed_merchant_ids"] = [
+            m if isinstance(m, UUID) else UUID(str(m)) for m in raw_m_ids
+        ]
     if "allow_unknown_merchants" in effective_overrides:
-        passport_updates["allow_unknown_merchants"] = effective_overrides["allow_unknown_merchants"]
+        passport_updates["allow_unknown_merchants"] = bool(effective_overrides["allow_unknown_merchants"])
     if "human_approval_threshold_minor" in effective_overrides:
-        passport_updates["human_approval_threshold_minor"] = effective_overrides["human_approval_threshold_minor"]
+        passport_updates["human_approval_threshold_minor"] = int(effective_overrides["human_approval_threshold_minor"])
     if "passport_status" in effective_overrides:
         raw_status = effective_overrides["passport_status"]
         passport_updates["status"] = (
             raw_status if isinstance(raw_status, PassportStatus) else PassportStatus(str(raw_status))
         )
     if "expires_at" in effective_overrides:
-        passport_updates["expires_at"] = effective_overrides["expires_at"]
+        raw_exp = effective_overrides["expires_at"]
+        if isinstance(raw_exp, str):
+            exp_dt = datetime.fromisoformat(raw_exp)
+        else:
+            exp_dt = raw_exp
+        passport_updates["expires_at"] = exp_dt
 
     if passport_updates:
         cloned_passport = cloned.recorded_passport.model_copy(update=passport_updates)
@@ -93,9 +102,14 @@ def simulate_counterfactual(
             "amount_minor": new_amount,
             "quote_hash": new_q_hash,
         })
+        cloned_intent = cloned.payment_intent.model_copy(update={
+            "amount_minor": new_amount,
+            "quote_hash": new_q_hash,
+        })
         cloned = cloned.model_copy(update={
             "proposal": cloned_proposal,
             "quote_snapshot": cloned_quote,
+            "payment_intent": cloned_intent,
         })
 
     # 6. Replay cloned request
