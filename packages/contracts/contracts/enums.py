@@ -1,0 +1,178 @@
+"""Canonical enumerations and explicit payment state transitions."""
+
+from enum import StrEnum
+
+
+class PaymentState(StrEnum):
+    CREATED = "CREATED"
+    POLICY_CHECK = "POLICY_CHECK"
+    AWAITING_APPROVAL = "AWAITING_APPROVAL"
+    CHECKOUT_READY = "CHECKOUT_READY"
+    AWAITING_PAYPAL_BUYER = "AWAITING_PAYPAL_BUYER"
+    CAPTURE_PENDING = "CAPTURE_PENDING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    PENDING_PROVIDER = "PENDING_PROVIDER"
+    CANCELLED = "CANCELLED"
+
+
+VALID_PAYMENT_TRANSITIONS: dict[PaymentState, frozenset[PaymentState]] = {
+    PaymentState.CREATED: frozenset({
+        PaymentState.POLICY_CHECK,
+        PaymentState.CANCELLED,
+        PaymentState.FAILED,
+    }),
+    PaymentState.POLICY_CHECK: frozenset({
+        PaymentState.AWAITING_APPROVAL,
+        PaymentState.CHECKOUT_READY,
+        PaymentState.FAILED,
+        PaymentState.CANCELLED,
+    }),
+    PaymentState.AWAITING_APPROVAL: frozenset({
+        PaymentState.CHECKOUT_READY,
+        PaymentState.CANCELLED,
+        PaymentState.FAILED,
+    }),
+    PaymentState.CHECKOUT_READY: frozenset({
+        PaymentState.AWAITING_PAYPAL_BUYER,
+        PaymentState.CANCELLED,
+        PaymentState.FAILED,
+    }),
+    PaymentState.AWAITING_PAYPAL_BUYER: frozenset({
+        PaymentState.CAPTURE_PENDING,
+        PaymentState.PENDING_PROVIDER,
+        PaymentState.CANCELLED,
+        PaymentState.FAILED,
+    }),
+    PaymentState.CAPTURE_PENDING: frozenset({
+        PaymentState.SUCCEEDED,
+        PaymentState.PENDING_PROVIDER,
+        PaymentState.FAILED,
+    }),
+    PaymentState.PENDING_PROVIDER: frozenset({
+        PaymentState.SUCCEEDED,
+        PaymentState.FAILED,
+        PaymentState.CANCELLED,
+    }),
+    PaymentState.SUCCEEDED: frozenset(),
+    PaymentState.FAILED: frozenset(),
+    PaymentState.CANCELLED: frozenset(),
+}
+
+
+def can_transition_payment(current: PaymentState, target: PaymentState) -> bool:
+    """Return True if transitioning from current to target PaymentState is valid."""
+    return target in VALID_PAYMENT_TRANSITIONS.get(current, frozenset())
+
+
+def assert_payment_transition(current: PaymentState, target: PaymentState) -> None:
+    """Raise ValueError if a payment state transition violates the canonical state machine."""
+    if not can_transition_payment(current, target):
+        raise ValueError(
+            f"Illegal payment state transition: {current.value} -> {target.value}"
+        )
+
+
+class DecisionOutcome(StrEnum):
+    ALLOW = "ALLOW"
+    DENY = "DENY"
+    ESCALATE = "ESCALATE"
+
+
+class DecisionReasonCode(StrEnum):
+    OK_WITHIN_POLICY = "OK_WITHIN_POLICY"
+    DENIED_EXCEEDS_PER_TX_LIMIT = "DENIED_EXCEEDS_PER_TX_LIMIT"
+    DENIED_EXCEEDS_PASSPORT_BUDGET = "DENIED_EXCEEDS_PASSPORT_BUDGET"
+    DENIED_EXCEEDS_DAILY_LIMIT = "DENIED_EXCEEDS_DAILY_LIMIT"
+    DENIED_MERCHANT_NOT_ALLOWLISTED = "DENIED_MERCHANT_NOT_ALLOWLISTED"
+    DENIED_CATEGORY_NOT_ALLOWED = "DENIED_CATEGORY_NOT_ALLOWED"
+    DENIED_PASSPORT_EXPIRED = "DENIED_PASSPORT_EXPIRED"
+    DENIED_PASSPORT_REVOKED = "DENIED_PASSPORT_REVOKED"
+    DENIED_AGENT_SUSPENDED = "DENIED_AGENT_SUSPENDED"
+    DENIED_APPROVAL_EXPIRED = "DENIED_APPROVAL_EXPIRED"
+    DENIED_APPROVAL_MISMATCH = "DENIED_APPROVAL_MISMATCH"
+    DENIED_QUOTE_EXPIRED = "DENIED_QUOTE_EXPIRED"
+    DENIED_INSUFFICIENT_BUDGET = "DENIED_INSUFFICIENT_BUDGET"
+    DENIED_CROSS_TENANT = "DENIED_CROSS_TENANT"
+    ESCALATED_REQUIRES_HUMAN_APPROVAL = "ESCALATED_REQUIRES_HUMAN_APPROVAL"
+    ESCALATED_UNKNOWN_MERCHANT = "ESCALATED_UNKNOWN_MERCHANT"
+    ESCALATED_HIGH_RISK_AMOUNT = "ESCALATED_HIGH_RISK_AMOUNT"
+
+
+class PassportStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    PAUSED = "PAUSED"
+    REVOKED = "REVOKED"
+    EXPIRED = "EXPIRED"
+
+
+class ApprovalStatus(StrEnum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    EXPIRED = "EXPIRED"
+    CONSUMED = "CONSUMED"
+
+
+class ReservationStatus(StrEnum):
+    HELD = "HELD"
+    CAPTURED = "CAPTURED"
+    RELEASED = "RELEASED"
+    EXPIRED = "EXPIRED"
+
+
+class FinancialEventType(StrEnum):
+    PROPOSAL_CREATED = "PROPOSAL_CREATED"
+    POLICY_EVALUATED = "POLICY_EVALUATED"
+    APPROVAL_REQUESTED = "APPROVAL_REQUESTED"
+    HUMAN_APPROVED = "HUMAN_APPROVED"
+    HUMAN_REJECTED = "HUMAN_REJECTED"
+    BUDGET_RESERVED = "BUDGET_RESERVED"
+    BUDGET_RELEASED = "BUDGET_RELEASED"
+    BUDGET_CAPTURED = "BUDGET_CAPTURED"
+    PAYPAL_ORDER_CREATED = "PAYPAL_ORDER_CREATED"
+    PAYPAL_BUYER_APPROVED = "PAYPAL_BUYER_APPROVED"
+    PAYPAL_BUYER_CANCELLED = "PAYPAL_BUYER_CANCELLED"
+    PAYPAL_CAPTURE_REQUESTED = "PAYPAL_CAPTURE_REQUESTED"
+    PAYPAL_CAPTURE_VERIFIED = "PAYPAL_CAPTURE_VERIFIED"
+    PAYPAL_TIMEOUT_PENDING = "PAYPAL_TIMEOUT_PENDING"
+    PAYPAL_WEBHOOK_RECEIVED = "PAYPAL_WEBHOOK_RECEIVED"
+    PAYMENT_FAILED = "PAYMENT_FAILED"
+    DISPUTE_OPENED = "DISPUTE_OPENED"
+    DISPUTE_ANALYZED = "DISPUTE_ANALYZED"
+    DISPUTE_RESPONSE_APPROVED = "DISPUTE_RESPONSE_APPROVED"
+
+
+class EvidenceSourceType(StrEnum):
+    PROPOSAL = "PROPOSAL"
+    QUOTE = "QUOTE"
+    POLICY_DECISION = "POLICY_DECISION"
+    HUMAN_APPROVAL = "HUMAN_APPROVAL"
+    PAYPAL_ORDER = "PAYPAL_ORDER"
+    PAYPAL_CAPTURE = "PAYPAL_CAPTURE"
+    PAYPAL_WEBHOOK = "PAYPAL_WEBHOOK"
+    CARRIER_TRACKING = "CARRIER_TRACKING"
+    DELIVERY_RECEIPT = "DELIVERY_RECEIPT"
+    CUSTOMER_MESSAGE = "CUSTOMER_MESSAGE"
+    SYNTHETIC_FIXTURE = "SYNTHETIC_FIXTURE"
+
+
+class DisputeSourceType(StrEnum):
+    PAYPAL_SANDBOX = "PAYPAL_SANDBOX"
+    SYNTHETIC_DEMO = "SYNTHETIC_DEMO"
+
+
+class DisputeStatus(StrEnum):
+    OPEN = "OPEN"
+    UNDER_INVESTIGATION = "UNDER_INVESTIGATION"
+    DRAFT_READY = "DRAFT_READY"
+    APPROVED_FOR_SUBMISSION = "APPROVED_FOR_SUBMISSION"
+    SUBMITTED = "SUBMITTED"
+    RESOLVED = "RESOLVED"
+
+
+class DisputeRecommendation(StrEnum):
+    CHALLENGE_WITH_EVIDENCE = "CHALLENGE_WITH_EVIDENCE"
+    OFFER_PARTIAL_OR_RETURN = "OFFER_PARTIAL_OR_RETURN"
+    ACCEPT_AND_REFUND = "ACCEPT_AND_REFUND"
+    NEED_MORE_EVIDENCE = "NEED_MORE_EVIDENCE"

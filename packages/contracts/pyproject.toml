@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nexus-contracts"
+version = "0.1.0"
+description = "Canonical shared Pydantic v2 contracts, state machine, schemas, and fixtures for AgentPay Nexus"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.9.0,<3.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["contracts*"]

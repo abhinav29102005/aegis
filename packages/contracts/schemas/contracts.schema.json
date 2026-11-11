@@ -1,0 +1,2171 @@
+{
+  "$defs": {
+    "AgentIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "tenant_id": {
+          "format": "uuid",
+          "title": "Tenant Id",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "purpose": {
+          "default": "autonomous-purchasing",
+          "maxLength": 255,
+          "title": "Purpose",
+          "type": "string"
+        },
+        "framework": {
+          "default": "langgraph",
+          "maxLength": 64,
+          "title": "Framework",
+          "type": "string"
+        },
+        "status": {
+          "default": "ACTIVE",
+          "pattern": "^(ACTIVE|SUSPENDED|REVOKED)$",
+          "title": "Status",
+          "type": "string"
+        },
+        "public_fingerprint": {
+          "maxLength": 128,
+          "minLength": 8,
+          "title": "Public Fingerprint",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenant_id",
+        "name",
+        "public_fingerprint"
+      ],
+      "title": "AgentIdentity",
+      "type": "object"
+    },
+    "ApprovalRecord": {
+      "additionalProperties": false,
+      "description": "Explicit human authorization bound to a specific merchant, amount, and quote hash.",
+      "properties": {
+        "schema_version": {
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "tenant_id": {
+          "format": "uuid",
+          "title": "Tenant Id",
+          "type": "string"
+        },
+        "correlation_id": {
+          "format": "uuid",
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "payment_intent_id": {
+          "format": "uuid",
+          "title": "Payment Intent Id",
+          "type": "string"
+        },
+        "decision_id": {
+          "format": "uuid",
+          "title": "Decision Id",
+          "type": "string"
+        },
+        "approver_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Approver Id",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ApprovalStatus",
+          "default": "PENDING"
+        },
+        "bound_merchant_id": {
+          "format": "uuid",
+          "title": "Bound Merchant Id",
+          "type": "string"
+        },
+        "bound_amount_minor": {
+          "exclusiveMinimum": 0,
+          "title": "Bound Amount Minor",
+          "type": "integer"
+        },
+        "bound_currency": {
+          "default": "USD",
+          "maxLength": 3,
+          "minLength": 3,
+          "title": "Bound Currency",
+          "type": "string"
+        },
+        "bound_quote_hash": {
+          "title": "Bound Quote Hash",
+          "type": "string"
+        },
+        "comment": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Comment"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "title": "Expires At",
+          "type": "string"
+        },
+        "decided_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Decided At"
+        },
+        "consumed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Consumed At"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenant_id",
+        "correlation_id",
+        "payment_intent_id",
+        "decision_id",
+        "approver_id",
+        "bound_merchant_id",
+        "bound_amount_minor",
+        "bound_quote_hash",
+        "expires_at"
+      ],
+      "title": "ApprovalRecord",
+      "type": "object"
+    },
+    "ApprovalStatus": {
+      "enum": [
+        "PENDING",
+        "APPROVED",
+        "REJECTED",
+        "EXPIRED",
+        "CONSUMED"
+      ],
+      "title": "ApprovalStatus",
+      "type": "string"
+    },
+    "AuthorizationDecision": {
+      "additionalProperties": false,
+      "description": "Deterministic internal policy engine output (never produced by an LLM).",
+      "properties": {
+        "schema_version": {
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "tenant_id": {
+          "format": "uuid",
+          "title": "Tenant Id",
+          "type": "string"
+        },
+        "correlation_id": {
+          "format": "uuid",
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "payment_intent_id": {
+          "format": "uuid",
+          "title": "Payment Intent Id",
+          "type": "string"
+        },
+        "proposal_id": {
+          "format": "uuid",
+          "title": "Proposal Id",
+          "type": "string"
+        },
+        "passport_id": {
+          "format": "uuid",
+          "title": "Passport Id",
+          "type": "string"
+        },
+        "quote_snapshot_id": {
+          "format": "uuid",
+          "title": "Quote Snapshot Id",
+          "type": "string"
+        },
+        "quote_hash": {
+          "title": "Quote Hash",
+          "type": "string"
+        },
+        "policy_version": {
+          "default": "policy-v1",
+          "maxLength": 64,
+          "title": "Policy Version",
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/DecisionOutcome"
+        },
+        "reason_codes": {
+          "items": {
+            "$ref": "#/$defs/DecisionReasonCode"
+          },
+          "minItems": 1,
+          "title": "Reason Codes",
+          "type": "array"
+        },
+        "violated_constraints": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Violated Constraints",
+          "type": "array"
+        },
+        "requires_human_approval": {
+          "default": false,
+          "title": "Requires Human Approval",
+          "type": "boolean"
+        },
+        "explanation": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Explanation",
+          "type": "string"
+        },
+        "policy_inputs": {
+          "additionalProperties": true,
+          "title": "Policy Inputs",
+          "type": "object"
+        },
+        "decided_at": {
+          "format": "date-time",
+          "title": "Decided At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenant_id",
+        "correlation_id",
+        "payment_intent_id",
+        "proposal_id",
+        "passport_id",
+        "quote_snapshot_id",
+        "quote_hash",
+        "outcome",
+        "reason_codes",
+        "explanation"
+      ],
+      "title": "AuthorizationDecision",
+      "type": "object"
+    },
+    "BudgetReservation": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "tenant_id": {
+          "format": "uuid",
+          "title": "Tenant Id",
+          "type": "string"
+        },
+        "correlation_id": {
+          "format": "uuid",
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "passport_id": {
+          "format": "uuid",
+          "title": "Passport Id",
+          "type": "string"
+        },
+        "payment_intent_id": {
+          "format": "uuid",
+          "title": "Payment Intent Id",
+          "type": "string"
+        },
+        "amount_minor": {
+          "exclusiveMinimum": 0,
+          "title": "Amount Minor",
+          "type": "integer"
+        },
+        "currency": {
+          "default": "USD",
+          "maxLength": 3,
+          "minLength": 3,
+          "title": "Currency",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ReservationStatus",
+          "default": "HELD"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "title": "Expires At",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenant_id",
+        "correlation_id",
+        "passport_id",
+        "payment_intent_id",
+        "amount_minor",
+        "expires_at"
+      ],
+      "title": "BudgetReservation",
+      "type": "object"
+    },
+    "DecisionOutcome": {
+      "enum": [
+        "ALLOW",
+        "DENY",
+        "ESCALATE"
+      ],
+      "title": "DecisionOutcome",
+      "type": "string"
+    },
+    "DecisionReasonCode": {
+      "enum": [
+        "OK_WITHIN_POLICY",
+        "DENIED_EXCEEDS_PER_TX_LIMIT",
+        "DENIED_EXCEEDS_PASSPORT_BUDGET",
+        "DENIED_EXCEEDS_DAILY_LIMIT",
+        "DENIED_MERCHANT_NOT_ALLOWLISTED",
+        "DENIED_CATEGORY_NOT_ALLOWED",
+        "DENIED_PASSPORT_EXPIRED",
+        "DENIED_PASSPORT_REVOKED",
+        "DENIED_AGENT_SUSPENDED",
+        "DENIED_APPROVAL_EXPIRED",
+        "DENIED_APPROVAL_MISMATCH",
+        "DENIED_QUOTE_EXPIRED",
+        "DENIED_INSUFFICIENT_BUDGET",
+        "DENIED_CROSS_TENANT",
+        "ESCALATED_REQUIRES_HUMAN_APPROVAL",
+        "ESCALATED_UNKNOWN_MERCHANT",
+        "ESCALATED_HIGH_RISK_AMOUNT"
+      ],
+      "title": "DecisionReasonCode",
+      "type": "string"
+    },
+    "DisputeAnalysis": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "tenant_id": {
+          "format": "uuid",
+          "title": "Tenant Id",
+          "type": "string"
+        },
+        "correlation_id": {
+          "format": "uuid",
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "dispute_case_id": {
+          "format": "uuid",
+          "title": "Dispute Case Id",
+          "type": "string"
+        },
+        "is_synthetic": {
+          "default": true,
+          "title": "Is Synthetic",
+          "type": "boolean"
+        },
+        "recommendation": {
+          "$ref": "#/$defs/DisputeRecommendation"
+        },
+        "confidence_score": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence Score",
+          "type": "number"
+        },
+        "agent_authorized": {
+          "title": "Agent Authorized",
+          "type": "boolean"
+        },
+        "agent_followed_policy": {
+          "title": "Agent Followed Policy",
+          "type": "boolean"
+        },
+        "merchant_fulfilled_order": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Merchant Fulfilled Order"
+        },
+        "contradictions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Contradictions",
+          "type": "array"
+        },
+        "missing_evidence": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing Evidence",
+          "type": "array"
+        },
+        "citations": {
+          "items": {
+            "$ref": "#/$defs/DisputeEvidenceCitation"
+          },
+          "title": "Citations",
+          "type": "array"
+        },
+        "rejected_claims": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Rejected Claims",
+          "type": "array"
+        },
+        "grounded_summary": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Grounded Summary",
+          "type": "string"
+        },
+        "draft_response_text": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Draft Response Text",
+          "type": "string"
+        },
+        "requires_human_approval": {
+          "default": true,
+          "title": "Requires Human Approval",
+          "type": "boolean"
+        },
+        "generated_with_llm": {
+          "default": false,
+          "title": "Generated With Llm",
+          "type": "boolean"
+        },
+        "analyzed_at": {
+          "format": "date-time",
+          "title": "Analyzed At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenant_id",
+        "correlation_id",
+        "dispute_case_id",
+        "recommendation",
+        "confidence_score",
+        "agent_authorized",
+        "agent_followed_policy",
+        "grounded_summary",
+        "draft_response_text"
+      ],
+      "title": "DisputeAnalysis",
+      "type": "object"
+    },
+    "DisputeCase": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "tenant_id": {
+          "format": "uuid",
+          "title": "Tenant Id",
+          "type": "string"
+        },
+        "correlation_id": {
+          "format": "uuid",
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "payment_intent_id": {
+          "format": "uuid",
+          "title": "Payment Intent Id",
+          "type": "string"
+        },
+        "paypal_dispute_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Paypal Dispute Id"
+        },
+        "source_type": {
+          "$ref": "#/$defs/DisputeSourceType",
+          "default": "SYNTHETIC_DEMO"
+        },
+        "is_synthetic": {
+          "default": true,
+          "title": "Is Synthetic",
+          "type": "boolean"
+        },
+        "reason": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "buyer_claim": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Buyer Claim",
+          "type": "string"
+        },
+        "amount_minor": {
+          "exclusiveMinimum": 0,
+          "title": "Amount Minor",
+          "type": "integer"
+        },
+        "currency": {
+          "default": "USD",
+          "maxLength": 3,
+          "minLength": 3,
+          "title": "Currency",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/DisputeStatus",
+          "default": "OPEN"
+        },
+        "evidence_ids": {
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "human_approved_for_submission": {
+          "default": false,
+          "title": "Human Approved For Submission",
+          "type": "boolean"
+        },
+        "approved_by": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approved By"
+        },
+        "approved_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approved At"
+        },
+        "response_payload_hash": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Response Payload Hash"
+        },
+        "opened_at": {
+          "format": "date-time",
+          "title": "Opened At",
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenant_id",
+        "correlation_id",
+        "payment_intent_id",
+        "reason",
+        "buyer_claim",
+        "amount_minor"
+      ],
+      "title": "DisputeCase",
+      "type": "object"
+    },
+    "DisputeEvidenceCitation": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "claim": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Claim",
+          "type": "string"
+        },
+        "evidence_id": {
+          "format": "uuid",
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "verbatim_excerpt": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Verbatim Excerpt",
+          "type": "string"
+        },
+        "verified": {
+          "default": true,
+          "title": "Verified",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "claim",
+        "evidence_id",
+        "verbatim_excerpt"
+      ],
+      "title": "DisputeEvidenceCitation",
+      "type": "object"
+    },
+    "DisputeRecommendation": {
+      "enum": [
+        "CHALLENGE_WITH_EVIDENCE",
+        "OFFER_PARTIAL_OR_RETURN",
+        "ACCEPT_AND_REFUND",
+        "NEED_MORE_EVIDENCE"
+      ],
+      "title": "DisputeRecommendation",
+      "type": "string"
+    },
+    "DisputeSourceType": {
+      "enum": [
+        "PAYPAL_SANDBOX",
+        "SYNTHETIC_DEMO"
+      ],
+      "title": "DisputeSourceType",
+      "type": "string"
+    },
+    "DisputeStatus": {
+      "enum": [
+        "OPEN",
+        "UNDER_INVESTIGATION",
+        "DRAFT_READY",
+        "APPROVED_FOR_SUBMISSION",
+        "SUBMITTED",
+        "RESOLVED"
+      ],
+      "title": "DisputeStatus",
+      "type": "string"
+    },
+    "EvidenceRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "tenant_id": {
+          "format": "uuid",
+          "title": "Tenant Id",
+          "type": "string"
+        },
+        "correlation_id": {
+          "format": "uuid",
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "payment_intent_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Payment Intent Id"
+        },
+        "dispute_case_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dispute Case Id"
+        },
+        "source_type": {
+          "$ref": "#/$defs/EvidenceSourceType"
+        },
+        "source_ref": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Source Ref",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "content": {
+          "additionalProperties": true,
+          "title": "Content",
+          "type": "object"
+        },
+        "content_hash": {
+          "maxLength": 128,
+          "minLength": 16,
+          "title": "Content Hash",
+          "type": "string"
+        },
+        "is_synthetic": {
+          "default": false,
+          "title": "Is Synthetic",
+          "type": "boolean"
+        },
+        "collected_at": {
+          "format": "date-time",
+          "title": "Collected At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenant_id",
+        "correlation_id",
+        "source_type",
+        "source_ref",
+        "title",
+        "content_hash"
+      ],
+      "title": "EvidenceRecord",
+      "type": "object"
+    },
+    "EvidenceSourceType": {
+      "enum": [
+        "PROPOSAL",
+        "QUOTE",
+        "POLICY_DECISION",
+        "HUMAN_APPROVAL",
+        "PAYPAL_ORDER",
+        "PAYPAL_CAPTURE",
+        "PAYPAL_WEBHOOK",
+        "CARRIER_TRACKING",
+        "DELIVERY_RECEIPT",
+        "CUSTOMER_MESSAGE",
+        "SYNTHETIC_FIXTURE"
+      ],
+      "title": "EvidenceSourceType",
+      "type": "string"
+    },
+    "FinancialEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "tenant_id": {
+          "format": "uuid",
+          "title": "Tenant Id",
+          "type": "string"
+        },
+        "correlation_id": {
+          "format": "uuid",
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "payment_intent_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Payment Intent Id"
+        },
+        "sequence_number": {
+          "minimum": 1,
+          "title": "Sequence Number",
+          "type": "integer"
+        },
+        "event_type": {
+          "$ref": "#/$defs/FinancialEventType"
+        },
+        "actor_type": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Actor Type",
+          "type": "string"
+        },
+        "actor_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Actor Id",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": true,
+          "title": "Payload",
+          "type": "object"
+        },
+        "previous_event_hash": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Previous Event Hash"
+        },
+        "event_hash": {
+          "maxLength": 128,
+          "minLength": 16,
+          "title": "Event Hash",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenant_id",
+        "correlation_id",
+        "sequence_number",
+        "event_type",
+        "actor_type",
+        "actor_id",
+        "event_hash"
+      ],
+      "title": "FinancialEvent",
+      "type": "object"
+    },
+    "FinancialEventType": {
+      "enum": [
+        "PROPOSAL_CREATED",
+        "POLICY_EVALUATED",
+        "APPROVAL_REQUESTED",
+        "HUMAN_APPROVED",
+        "HUMAN_REJECTED",
+        "BUDGET_RESERVED",
+        "BUDGET_RELEASED",
+        "BUDGET_CAPTURED",
+        "PAYPAL_ORDER_CREATED",
+        "PAYPAL_BUYER_APPROVED",
+        "PAYPAL_BUYER_CANCELLED",
+        "PAYPAL_CAPTURE_REQUESTED",
+        "PAYPAL_CAPTURE_VERIFIED",
+        "PAYPAL_TIMEOUT_PENDING",
+        "PAYPAL_WEBHOOK_RECEIVED",
+        "PAYMENT_FAILED",
+        "DISPUTE_OPENED",
+        "DISPUTE_ANALYZED",
+        "DISPUTE_RESPONSE_APPROVED"
+      ],
+      "title": "FinancialEventType",
+      "type": "string"
+    },
+    "Merchant": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "tenant_id": {
+          "format": "uuid",
+          "title": "Tenant Id",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "domain": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Domain",
+          "type": "string"
+        },
+        "category": {
+          "default": "SOFTWARE",
+          "maxLength": 64,
+          "title": "Category",
+          "type": "string"
+        },
+        "paypal_merchant_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Paypal Merchant Id"
+        },
+        "is_allowlisted": {
+          "default": false,
+          "title": "Is Allowlisted",
+          "type": "boolean"
+        },
+        "is_sandbox_verified": {
+          "default": false,
+          "title": "Is Sandbox Verified",
+          "type": "boolean"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenant_id",
+        "name",
+        "domain"
+      ],
+      "title": "Merchant",
+      "type": "object"
+    },
+    "PassportStatus": {
+      "enum": [
+        "ACTIVE",
+        "PAUSED",
+        "REVOKED",
+        "EXPIRED"
+      ],
+      "title": "PassportStatus",
+      "type": "string"
+    },
+    "PayPalBuyerApproval": {
+      "additionalProperties": false,
+      "description": "Distinguished stage: buyer approval inside PayPal sandbox JS SDK.",
+      "properties": {
+        "schema_version": {
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "paypal_order_id": {
+          "maxLength": 128,
+          "minLength": 3,
+          "title": "Paypal Order Id",
+          "type": "string"
+        },
+        "payer_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Payer Id"
+        },
+        "buyer_status": {
+          "default": "APPROVED",
+          "maxLength": 64,
+          "title": "Buyer Status",
+          "type": "string"
+        },
+        "approved_at": {
+          "format": "date-time",
+          "title": "Approved At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "paypal_order_id"
+      ],
+      "title": "PayPalBuyerApproval",
+      "type": "object"
+    },
+    "PaymentAttempt": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "tenant_id": {
+          "format": "uuid",
+          "title": "Tenant Id",
+          "type": "string"
+        },
+        "correlation_id": {
+          "format": "uuid",
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "payment_intent_id": {
+          "format": "uuid",
+          "title": "Payment Intent Id",
+          "type": "string"
+        },
+        "attempt_number": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Attempt Number",
+          "type": "integer"
+        },
+        "idempotency_key": {
+          "maxLength": 128,
+          "minLength": 8,
+          "title": "Idempotency Key",
+          "type": "string"
+        },
+        "provider": {
+          "default": "PAYPAL_SANDBOX",
+          "maxLength": 64,
+          "title": "Provider",
+          "type": "string"
+        },
+        "paypal_order_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Paypal Order Id"
+        },
+        "paypal_approval_url": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Paypal Approval Url"
+        },
+        "buyer_approval": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PayPalBuyerApproval"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "verified_capture": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VerifiedPayPalCapture"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "state": {
+          "$ref": "#/$defs/PaymentState",
+          "default": "CHECKOUT_READY"
+        },
+        "failure_code": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Failure Code"
+        },
+        "failure_reason": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Failure Reason"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenant_id",
+        "correlation_id",
+        "payment_intent_id",
+        "idempotency_key"
+      ],
+      "title": "PaymentAttempt",
+      "type": "object"
+    },
+    "PaymentIntent": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "tenant_id": {
+          "format": "uuid",
+          "title": "Tenant Id",
+          "type": "string"
+        },
+        "correlation_id": {
+          "format": "uuid",
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "proposal_id": {
+          "format": "uuid",
+          "title": "Proposal Id",
+          "type": "string"
+        },
+        "agent_id": {
+          "format": "uuid",
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "passport_id": {
+          "format": "uuid",
+          "title": "Passport Id",
+          "type": "string"
+        },
+        "merchant_id": {
+          "format": "uuid",
+          "title": "Merchant Id",
+          "type": "string"
+        },
+        "quote_snapshot_id": {
+          "format": "uuid",
+          "title": "Quote Snapshot Id",
+          "type": "string"
+        },
+        "quote_hash": {
+          "title": "Quote Hash",
+          "type": "string"
+        },
+        "amount_minor": {
+          "exclusiveMinimum": 0,
+          "title": "Amount Minor",
+          "type": "integer"
+        },
+        "currency": {
+          "default": "USD",
+          "maxLength": 3,
+          "minLength": 3,
+          "title": "Currency",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/PaymentState",
+          "default": "CREATED"
+        },
+        "idempotency_key": {
+          "maxLength": 128,
+          "minLength": 8,
+          "title": "Idempotency Key",
+          "type": "string"
+        },
+        "authorization_decision_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Authorization Decision Id"
+        },
+        "approval_record_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approval Record Id"
+        },
+        "reservation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reservation Id"
+        },
+        "active_attempt_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Active Attempt Id"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenant_id",
+        "correlation_id",
+        "proposal_id",
+        "agent_id",
+        "passport_id",
+        "merchant_id",
+        "quote_snapshot_id",
+        "quote_hash",
+        "amount_minor",
+        "idempotency_key"
+      ],
+      "title": "PaymentIntent",
+      "type": "object"
+    },
+    "PaymentState": {
+      "enum": [
+        "CREATED",
+        "POLICY_CHECK",
+        "AWAITING_APPROVAL",
+        "CHECKOUT_READY",
+        "AWAITING_PAYPAL_BUYER",
+        "CAPTURE_PENDING",
+        "SUCCEEDED",
+        "FAILED",
+        "PENDING_PROVIDER",
+        "CANCELLED"
+      ],
+      "title": "PaymentState",
+      "type": "string"
+    },
+    "PurchaseProposal": {
+      "additionalProperties": false,
+      "description": "Non-authoritative AI agent proposal to buy an item or service.",
+      "properties": {
+        "schema_version": {
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "tenant_id": {
+          "format": "uuid",
+          "title": "Tenant Id",
+          "type": "string"
+        },
+        "correlation_id": {
+          "format": "uuid",
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "agent_id": {
+          "format": "uuid",
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "passport_id": {
+          "format": "uuid",
+          "title": "Passport Id",
+          "type": "string"
+        },
+        "merchant_id": {
+          "format": "uuid",
+          "title": "Merchant Id",
+          "type": "string"
+        },
+        "merchant_name": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Merchant Name",
+          "type": "string"
+        },
+        "merchant_category": {
+          "default": "SOFTWARE",
+          "maxLength": 64,
+          "title": "Merchant Category",
+          "type": "string"
+        },
+        "amount_minor": {
+          "exclusiveMinimum": 0,
+          "title": "Amount Minor",
+          "type": "integer"
+        },
+        "currency": {
+          "default": "USD",
+          "maxLength": 3,
+          "minLength": 3,
+          "title": "Currency",
+          "type": "string"
+        },
+        "item_summary": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Item Summary",
+          "type": "string"
+        },
+        "line_items": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Line Items",
+          "type": "array"
+        },
+        "rationale": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "maxLength": 128,
+          "minLength": 8,
+          "title": "Idempotency Key",
+          "type": "string"
+        },
+        "proposed_by_model": {
+          "default": "deterministic-planner",
+          "maxLength": 128,
+          "title": "Proposed By Model",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenant_id",
+        "agent_id",
+        "passport_id",
+        "merchant_id",
+        "merchant_name",
+        "amount_minor",
+        "item_summary",
+        "rationale",
+        "idempotency_key"
+      ],
+      "title": "PurchaseProposal",
+      "type": "object"
+    },
+    "QuoteSnapshot": {
+      "additionalProperties": false,
+      "description": "Immutable snapshot of merchant, amount, and line items bound to authorization.",
+      "properties": {
+        "schema_version": {
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "tenant_id": {
+          "format": "uuid",
+          "title": "Tenant Id",
+          "type": "string"
+        },
+        "correlation_id": {
+          "format": "uuid",
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "proposal_id": {
+          "format": "uuid",
+          "title": "Proposal Id",
+          "type": "string"
+        },
+        "merchant_id": {
+          "format": "uuid",
+          "title": "Merchant Id",
+          "type": "string"
+        },
+        "amount_minor": {
+          "exclusiveMinimum": 0,
+          "title": "Amount Minor",
+          "type": "integer"
+        },
+        "currency": {
+          "default": "USD",
+          "maxLength": 3,
+          "minLength": 3,
+          "title": "Currency",
+          "type": "string"
+        },
+        "line_items": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Line Items",
+          "type": "array"
+        },
+        "quote_hash": {
+          "default": "",
+          "title": "Quote Hash",
+          "type": "string"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "title": "Expires At",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenant_id",
+        "correlation_id",
+        "proposal_id",
+        "merchant_id",
+        "amount_minor",
+        "expires_at"
+      ],
+      "title": "QuoteSnapshot",
+      "type": "object"
+    },
+    "ReplayRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "tenant_id": {
+          "format": "uuid",
+          "title": "Tenant Id",
+          "type": "string"
+        },
+        "correlation_id": {
+          "format": "uuid",
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "payment_intent": {
+          "$ref": "#/$defs/PaymentIntent"
+        },
+        "proposal": {
+          "$ref": "#/$defs/PurchaseProposal"
+        },
+        "quote_snapshot": {
+          "$ref": "#/$defs/QuoteSnapshot"
+        },
+        "recorded_passport": {
+          "$ref": "#/$defs/SpendingPassport"
+        },
+        "recorded_merchant": {
+          "$ref": "#/$defs/Merchant"
+        },
+        "recorded_decision": {
+          "$ref": "#/$defs/AuthorizationDecision"
+        },
+        "approval_record": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ApprovalRecord"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "policy_version": {
+          "default": "policy-v1",
+          "maxLength": 64,
+          "title": "Policy Version",
+          "type": "string"
+        },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/FinancialEvent"
+          },
+          "title": "Events",
+          "type": "array"
+        },
+        "evidence_records": {
+          "items": {
+            "$ref": "#/$defs/EvidenceRecord"
+          },
+          "title": "Evidence Records",
+          "type": "array"
+        },
+        "counterfactual_overrides": {
+          "additionalProperties": true,
+          "title": "Counterfactual Overrides",
+          "type": "object"
+        },
+        "evaluation_time": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evaluation Time"
+        }
+      },
+      "required": [
+        "tenant_id",
+        "correlation_id",
+        "payment_intent",
+        "proposal",
+        "quote_snapshot",
+        "recorded_passport",
+        "recorded_merchant",
+        "recorded_decision"
+      ],
+      "title": "ReplayRequest",
+      "type": "object"
+    },
+    "ReplayResult": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "replay_id": {
+          "format": "uuid",
+          "title": "Replay Id",
+          "type": "string"
+        },
+        "tenant_id": {
+          "format": "uuid",
+          "title": "Tenant Id",
+          "type": "string"
+        },
+        "correlation_id": {
+          "format": "uuid",
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "payment_intent_id": {
+          "format": "uuid",
+          "title": "Payment Intent Id",
+          "type": "string"
+        },
+        "policy_version": {
+          "title": "Policy Version",
+          "type": "string"
+        },
+        "timeline": {
+          "items": {
+            "$ref": "#/$defs/ReplayTimelineEntry"
+          },
+          "title": "Timeline",
+          "type": "array"
+        },
+        "original_outcome": {
+          "$ref": "#/$defs/DecisionOutcome"
+        },
+        "recomputed_outcome": {
+          "$ref": "#/$defs/DecisionOutcome"
+        },
+        "original_reason_codes": {
+          "items": {
+            "$ref": "#/$defs/DecisionReasonCode"
+          },
+          "title": "Original Reason Codes",
+          "type": "array"
+        },
+        "recomputed_reason_codes": {
+          "items": {
+            "$ref": "#/$defs/DecisionReasonCode"
+          },
+          "title": "Recomputed Reason Codes",
+          "type": "array"
+        },
+        "changed_constraints": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Changed Constraints",
+          "type": "array"
+        },
+        "drift_detected": {
+          "default": false,
+          "title": "Drift Detected",
+          "type": "boolean"
+        },
+        "explanation": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Explanation",
+          "type": "string"
+        },
+        "evidence_references": {
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": "Evidence References",
+          "type": "array"
+        },
+        "missing_evidence": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing Evidence",
+          "type": "array"
+        },
+        "anomalies": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Anomalies",
+          "type": "array"
+        },
+        "integrity_valid": {
+          "default": true,
+          "title": "Integrity Valid",
+          "type": "boolean"
+        },
+        "consistency_status": {
+          "pattern": "^(CONSISTENT|DRIFT_DETECTED|INTEGRITY_FAILURE|INCOMPLETE_EVIDENCE)$",
+          "title": "Consistency Status",
+          "type": "string"
+        },
+        "executed_payment": {
+          "default": false,
+          "title": "Executed Payment",
+          "type": "boolean"
+        },
+        "replayed_at": {
+          "format": "date-time",
+          "title": "Replayed At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenant_id",
+        "correlation_id",
+        "payment_intent_id",
+        "policy_version",
+        "original_outcome",
+        "recomputed_outcome",
+        "explanation",
+        "consistency_status"
+      ],
+      "title": "ReplayResult",
+      "type": "object"
+    },
+    "ReplayTimelineEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "sequence_number": {
+          "minimum": 1,
+          "title": "Sequence Number",
+          "type": "integer"
+        },
+        "event_id": {
+          "format": "uuid",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "event_type": {
+          "$ref": "#/$defs/FinancialEventType"
+        },
+        "actor_type": {
+          "title": "Actor Type",
+          "type": "string"
+        },
+        "actor_id": {
+          "title": "Actor Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "integrity_verified": {
+          "default": true,
+          "title": "Integrity Verified",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "sequence_number",
+        "event_id",
+        "event_type",
+        "actor_type",
+        "actor_id",
+        "occurred_at",
+        "summary"
+      ],
+      "title": "ReplayTimelineEntry",
+      "type": "object"
+    },
+    "ReservationStatus": {
+      "enum": [
+        "HELD",
+        "CAPTURED",
+        "RELEASED",
+        "EXPIRED"
+      ],
+      "title": "ReservationStatus",
+      "type": "string"
+    },
+    "SpendingPassport": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "tenant_id": {
+          "format": "uuid",
+          "title": "Tenant Id",
+          "type": "string"
+        },
+        "agent_id": {
+          "format": "uuid",
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "policy_version": {
+          "default": "policy-v1",
+          "maxLength": 64,
+          "title": "Policy Version",
+          "type": "string"
+        },
+        "currency": {
+          "default": "USD",
+          "maxLength": 3,
+          "minLength": 3,
+          "title": "Currency",
+          "type": "string"
+        },
+        "total_budget_minor": {
+          "minimum": 0,
+          "title": "Total Budget Minor",
+          "type": "integer"
+        },
+        "spent_minor": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Spent Minor",
+          "type": "integer"
+        },
+        "reserved_minor": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Reserved Minor",
+          "type": "integer"
+        },
+        "per_tx_limit_minor": {
+          "minimum": 0,
+          "title": "Per Tx Limit Minor",
+          "type": "integer"
+        },
+        "daily_limit_minor": {
+          "minimum": 0,
+          "title": "Daily Limit Minor",
+          "type": "integer"
+        },
+        "human_approval_threshold_minor": {
+          "default": 5000,
+          "minimum": 0,
+          "title": "Human Approval Threshold Minor",
+          "type": "integer"
+        },
+        "allowed_merchant_ids": {
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": "Allowed Merchant Ids",
+          "type": "array"
+        },
+        "allowed_categories": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Categories",
+          "type": "array"
+        },
+        "allow_unknown_merchants": {
+          "default": false,
+          "title": "Allow Unknown Merchants",
+          "type": "boolean"
+        },
+        "status": {
+          "$ref": "#/$defs/PassportStatus",
+          "default": "ACTIVE"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "title": "Expires At",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenant_id",
+        "agent_id",
+        "total_budget_minor",
+        "per_tx_limit_minor",
+        "daily_limit_minor",
+        "expires_at"
+      ],
+      "title": "SpendingPassport",
+      "type": "object"
+    },
+    "Tenant": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "slug": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Slug",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "slug"
+      ],
+      "title": "Tenant",
+      "type": "object"
+    },
+    "VerifiedPayPalCapture": {
+      "additionalProperties": false,
+      "description": "Distinguished stage: server-verified PayPal capture before SUCCEEDED state.",
+      "properties": {
+        "schema_version": {
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "paypal_order_id": {
+          "maxLength": 128,
+          "minLength": 3,
+          "title": "Paypal Order Id",
+          "type": "string"
+        },
+        "paypal_capture_id": {
+          "maxLength": 128,
+          "minLength": 3,
+          "title": "Paypal Capture Id",
+          "type": "string"
+        },
+        "paypal_status": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Paypal Status",
+          "type": "string"
+        },
+        "verified_amount_minor": {
+          "exclusiveMinimum": 0,
+          "title": "Verified Amount Minor",
+          "type": "integer"
+        },
+        "verified_currency": {
+          "maxLength": 3,
+          "minLength": 3,
+          "title": "Verified Currency",
+          "type": "string"
+        },
+        "verification_hash": {
+          "maxLength": 128,
+          "minLength": 16,
+          "title": "Verification Hash",
+          "type": "string"
+        },
+        "verified_at": {
+          "format": "date-time",
+          "title": "Verified At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "paypal_order_id",
+        "paypal_capture_id",
+        "paypal_status",
+        "verified_amount_minor",
+        "verified_currency",
+        "verification_hash"
+      ],
+      "title": "VerifiedPayPalCapture",
+      "type": "object"
+    }
+  },
+  "title": "AgentPay Nexus Canonical Contracts"
+}

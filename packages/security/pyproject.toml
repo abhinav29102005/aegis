@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nexus-security"
+version = "0.1.0"
+description = "Environment configuration, tenant isolation, HMAC signing, and hash-chain verification for AgentPay Nexus"
+requires-python = ">=3.12"
+dependencies = [
+    "nexus-contracts",
+    "pydantic>=2.9.0,<3.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["security*"]

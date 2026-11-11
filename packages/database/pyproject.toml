@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nexus-database"
+version = "0.1.0"
+description = "SQLAlchemy 2.0 models, Alembic migrations, atomic budget reservations, outbox, and tenant-scoped repository"
+requires-python = ">=3.12"
+dependencies = [
+    "nexus-contracts",
+    "nexus-security",
+    "sqlalchemy>=2.0.35,<3.0.0",
+    "alembic>=1.13.0,<2.0.0",
+    "psycopg[binary]>=3.2.0,<4.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["database*"]
