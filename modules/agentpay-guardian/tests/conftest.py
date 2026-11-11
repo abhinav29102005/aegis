@@ -540,3 +540,4 @@ def paypal_client() -> MockPayPalClient:
 @pytest.fixture
 def guardian_service(repo: InMemoryLedgerRepository, paypal_client: MockPayPalClient) -> GuardianService:
     return GuardianService(repo=repo, paypal_client=paypal_client)
+

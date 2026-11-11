@@ -128,3 +128,4 @@ class CheckoutResponse(BaseModel):
 class ApprovalActionResponse(BaseModel):
     payment_intent: PaymentIntent
     approval: ApprovalRecord
+

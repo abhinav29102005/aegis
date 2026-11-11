@@ -148,3 +148,4 @@ class PurchasingCopilot:
             "Agent payment capture prohibited: PayPal capture requires deterministic "
             "verified checkout and human or policy approval."
         )
+
