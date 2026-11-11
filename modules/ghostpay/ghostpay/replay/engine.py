@@ -20,7 +20,13 @@ from contracts import (
 )
 
 from ghostpay.anomalies.detector import detect_anomalies
+from ghostpay.errors import OverrideValidationError, ReplayExecutionForbiddenError
 from ghostpay.provenance.verifier import verify_provenance_and_integrity
+from ghostpay.replay.registry import (
+    DEFAULT_POLICY_VERSION,
+    register_policy_evaluator,
+    resolve_policy_evaluator,
+)
 from ghostpay.timelines.builder import build_timeline
 
 
@@ -33,9 +39,10 @@ def evaluate_deterministic_policy(
     approval_record: ApprovalRecord | None = None,
     evaluation_time: datetime | None = None,
 ) -> tuple[DecisionOutcome, list[DecisionReasonCode], list[str]]:
-    """Deterministic policy rules engine recomputing authorization outcome."""
+    """Deterministic policy-v1 rules engine recomputing authorization outcome."""
     reason_codes: list[DecisionReasonCode] = []
     violated_constraints: list[str] = []
+    # Never fall back to wall-clock time during forensic evaluation.
     eval_time = evaluation_time or quote.created_at
 
     # 1. Spending passport status & expiration check
@@ -85,19 +92,19 @@ def evaluate_deterministic_policy(
         else:
             escalate_unknown = True
 
-    # 4. Merchant category allowlist
+    # 4. Merchant category allowlist (both recorded merchant and proposal categories must conform)
     if passport.allowed_categories:
         merchant_cat = (merchant.category or "").strip().upper()
+        proposal_cat = (proposal.merchant_category or "").strip().upper()
         allowed_cats = [c.strip().upper() for c in passport.allowed_categories]
-        if merchant_cat not in allowed_cats and proposal.merchant_category.strip().upper() not in allowed_cats:
+        if merchant_cat not in allowed_cats or proposal_cat not in allowed_cats:
             reason_codes.append(DecisionReasonCode.DENIED_CATEGORY_NOT_ALLOWED)
-            violated_constraints.append(f"category {merchant.category} not in allowed_categories")
+            violated_constraints.append(
+                f"category ({merchant.category}/{proposal.merchant_category}) not in allowed_categories"
+            )
 
     # 5. Human approval threshold & approval record validation
-    has_deny = any(
-        code.value.startswith("DENIED_")
-        for code in reason_codes
-    )
+    has_deny = any(code.value.startswith("DENIED_") for code in reason_codes)
     requires_approval = amount >= passport.human_approval_threshold_minor
 
     if not has_deny:
@@ -105,7 +112,8 @@ def evaluate_deterministic_policy(
             if approval_record is None:
                 reason_codes.append(DecisionReasonCode.ESCALATED_REQUIRES_HUMAN_APPROVAL)
                 violated_constraints.append(
-                    f"amount_minor {amount} requires human approval (threshold {passport.human_approval_threshold_minor})"
+                    f"amount_minor {amount} requires human approval "
+                    f"(threshold {passport.human_approval_threshold_minor})"
                 )
             else:
                 if approval_record.status == ApprovalStatus.EXPIRED or (
@@ -147,21 +155,40 @@ def evaluate_deterministic_policy(
     return outcome, reason_codes, violated_constraints
 
 
+register_policy_evaluator(DEFAULT_POLICY_VERSION, evaluate_deterministic_policy)
+
+
 class ReplayEngine:
-    """Forensic policy & authorization replay engine."""
+    """Read-only forensic policy & authorization replay engine."""
 
     @classmethod
     def replay(cls, request: ReplayRequest) -> ReplayResult:
-        """Deterministically replay a transaction, recomputing policy, provenance, and timeline."""
-        # 1. Enforce tenancy & verify provenance, event hash-chain, evidence integrity
+        """Deterministically replay a transaction without mutating state or executing payments."""
+        # 1. Baseline replay must never silently ignore counterfactual overrides
+        if request.counterfactual_overrides:
+            raise OverrideValidationError(
+                "Baseline replay cannot execute with nonempty counterfactual_overrides. "
+                "Use /ghostpay/simulate or simulate_counterfactual() for what-if simulations.",
+                errors=[
+                    {
+                        "field": "counterfactual_overrides",
+                        "message": "Nonempty counterfactual_overrides are forbidden in baseline replay.",
+                    }
+                ],
+            )
+
+        # 2. Enforce tenancy & verify provenance, event hash-chain, evidence integrity
         integrity_valid, missing_evidence, integrity_errors = verify_provenance_and_integrity(request)
 
-        # 2. Reconstruct deterministic event timeline
+        # 3. Resolve exact requested policy evaluator (fail closed on unsupported versions)
+        executed_policy_version, policy_evaluator = resolve_policy_evaluator(request.policy_version)
+
+        # 4. Reconstruct deterministic event timeline
         timeline = build_timeline(request.events, request.evidence_records)
 
-        # 3. Deterministically recompute policy outcome
+        # 5. Deterministically recompute policy outcome (never using wall-clock time)
         eval_time = request.evaluation_time or request.recorded_decision.decided_at
-        recomputed_outcome, recomputed_reasons, new_violated_constraints = evaluate_deterministic_policy(
+        recomputed_outcome, recomputed_reasons, new_violated_constraints = policy_evaluator(
             proposal=request.proposal,
             quote=request.quote_snapshot,
             passport=request.recorded_passport,
@@ -174,32 +201,49 @@ class ReplayEngine:
         original_outcome = original_decision.outcome
         original_reasons = original_decision.reason_codes
 
-        # 4. Check authorization drift
-        outcome_changed = (recomputed_outcome != original_outcome)
-        reasons_changed = (set(recomputed_reasons) != set(original_reasons))
-        drift_detected = outcome_changed or reasons_changed
+        # 6. Check policy-version consistency against recorded artifacts
+        version_mismatches: list[str] = []
+        if original_decision.policy_version != executed_policy_version:
+            version_mismatches.append(
+                f"POLICY_VERSION_MISMATCH: executed={executed_policy_version} != "
+                f"recorded_decision.policy_version={original_decision.policy_version}"
+            )
+        if request.recorded_passport.policy_version != executed_policy_version:
+            version_mismatches.append(
+                f"POLICY_VERSION_MISMATCH: executed={executed_policy_version} != "
+                f"recorded_passport.policy_version={request.recorded_passport.policy_version}"
+            )
 
-        # 5. Compute changed constraints
+        # 7. Check authorization drift
+        outcome_changed = recomputed_outcome != original_outcome
+        reasons_changed = set(recomputed_reasons) != set(original_reasons)
+        drift_detected = outcome_changed or reasons_changed or bool(version_mismatches)
+
+        # 8. Compute changed constraints
         changed_constraints: list[str] = []
         if outcome_changed:
-            changed_constraints.append(f"OUTCOME_CHANGED: {original_outcome.value} -> {recomputed_outcome.value}")
-        for c in new_violated_constraints:
-            if c not in original_decision.violated_constraints:
-                changed_constraints.append(f"VIOLATED_CONSTRAINT: {c}")
+            changed_constraints.append(
+                f"OUTCOME_CHANGED: {original_outcome.value} -> {recomputed_outcome.value}"
+            )
+        changed_constraints.extend(version_mismatches)
+        for constraint in new_violated_constraints:
+            if constraint not in original_decision.violated_constraints:
+                changed_constraints.append(f"VIOLATED_CONSTRAINT: {constraint}")
         for code in recomputed_reasons:
             if code not in original_reasons:
                 changed_constraints.append(f"NEW_REASON_CODE: {code.value}")
 
-        # 6. Detect anomalies
+        # 9. Detect anomalies
         anomalies = detect_anomalies(
             request,
             original_decision=original_decision,
             recomputed_outcome=recomputed_outcome,
             recomputed_reason_codes=recomputed_reasons,
             integrity_errors=integrity_errors,
+            executed_policy_version=executed_policy_version,
         )
 
-        # 7. Determine consistency status with canonical priority:
+        # 10. Determine consistency status with canonical priority:
         # INTEGRITY_FAILURE > INCOMPLETE_EVIDENCE > DRIFT_DETECTED > CONSISTENT
         if not integrity_valid:
             consistency_status = "INTEGRITY_FAILURE"
@@ -210,9 +254,10 @@ class ReplayEngine:
         else:
             consistency_status = "CONSISTENT"
 
-        # 8. Deterministic explanation
+        # 11. Deterministic explanation (bounded cleanly to <= 2000 chars)
         explanation = (
-            f"Deterministic replay completed for correlation_id={request.correlation_id}. "
+            f"Deterministic replay completed for correlation_id={request.correlation_id} "
+            f"using policy_version={executed_policy_version}. "
             f"Original outcome: {original_outcome.value} ({[r.value for r in original_reasons]}). "
             f"Recomputed outcome: {recomputed_outcome.value} ({[r.value for r in recomputed_reasons]}). "
             f"Consistency status: {consistency_status}. "
@@ -220,17 +265,17 @@ class ReplayEngine:
             f"Integrity valid: {integrity_valid}. "
             f"Missing evidence count: {len(missing_evidence)}. "
             f"Anomalies detected: {len(anomalies)}."
-        )
+        )[:2000]
 
-        # 9. Evidence references
+        # 12. Evidence references
         evidence_references = [ev.id for ev in request.evidence_records]
 
-        return ReplayResult(
+        result = ReplayResult(
             replay_id=uuid4(),
             tenant_id=request.tenant_id,
             correlation_id=request.correlation_id,
             payment_intent_id=request.payment_intent.id,
-            policy_version=request.policy_version,
+            policy_version=executed_policy_version,
             timeline=timeline,
             original_outcome=original_outcome,
             recomputed_outcome=recomputed_outcome,
@@ -246,3 +291,8 @@ class ReplayEngine:
             consistency_status=consistency_status,
             executed_payment=False,
         )
+        if result.executed_payment is not False:
+            raise ReplayExecutionForbiddenError(
+                "Replay invariant violated: executed_payment must always remain False."
+            )
+        return result

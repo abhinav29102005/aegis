@@ -1,54 +1,58 @@
 # GhostPay (`modules/ghostpay/`)
 
 **Branch:** `feature/ghostpay`
-**Status:** Implemented and Verified (Forensic and Simulation Engine for AgentPay Nexus)
+**Status:** Hardened, Tested, and Integration-Ready (Forensic & Simulation Engine for AgentPay Nexus)
 
 ## Overview
-GhostPay provides deterministic authorization replay, what-if counterfactual policy simulation, anomaly detection, provenance verification, and deterministic event timeline reconstruction for autonomous agent spending.
+GhostPay provides deterministic authorization replay, strictly validated counterfactual policy simulation, anomaly detection, provenance verification, and deterministic event timeline reconstruction for autonomous agent spending.
 
 ## Core Responsibilities & Components
 ```text
 modules/ghostpay/
 ├── ghostpay/
 │   ├── __init__.py
-│   ├── replay/          # Deterministic policy & authorization replay engine (`ReplayEngine`)
-│   ├── counterfactual/  # Non-mutating counterfactual policy simulation (`simulate_counterfactual`)
-│   ├── anomalies/       # Authorization drift & anomaly detection (merchant substitution, amount spike, expired passport, quote mismatch)
-│   ├── provenance/      # Evidence completeness & hash-chain/content-hash integrity verification
+│   ├── errors.py        # Domain exceptions (OverrideValidationError, UnsupportedPolicyVersionError, ReplayExecutionForbiddenError)
+│   ├── repository.py    # Read-only GhostPayReplayRepository Protocol for DB handoff
+│   ├── replay/          # Policy version registry (registry.py) & deterministic ReplayEngine (engine.py)
+│   ├── counterfactual/  # Strict Pydantic v2 override validator (validator.py) & non-mutating simulator (simulator.py)
+│   ├── anomalies/       # Authorization drift, currency, policy-version, & forensic anomaly detection
+│   ├── provenance/      # Evidence completeness, correlation binding, & hash-chain integrity verification
 │   ├── timelines/       # Deterministic event timeline reconstruction (`build_timeline`)
 │   └── api/             # FastAPI APIRouter (`prefix="/ghostpay"`, `create_ghostpay_router(...)` + `router`)
-├── tests/               # 10 mandatory forensics & determinism scenarios + API tests
+├── tests/               # 10 core scenarios + API tests + comprehensive hardening regression suite
+├── GHOSTPAY_HARDENING_REPORT.md
 ├── README.md
 └── pyproject.toml
 ```
 
-## Forensic & Determinism Invariants
-1. **Replay Contract**: `ReplayEngine.replay(request: ReplayRequest) -> ReplayResult` deterministically reconstructs `timeline`, `original_outcome`, `recomputed_outcome`, `original_reason_codes`, `recomputed_reason_codes`, `changed_constraints`, `drift_detected`, `explanation`, `evidence_references`, `missing_evidence`, `anomalies`, `integrity_valid`, `consistency_status` (`CONSISTENT`, `DRIFT_DETECTED`, `INTEGRITY_FAILURE`, `INCOMPLETE_EVIDENCE`), and `executed_payment=False`.
-2. **Deterministic Rules Only**: Recomputing authorization outcomes is 100% deterministic without delegating decisions to an LLM or fabricating missing evidence.
-3. **Read-Only Guarantee**: Counterfactual overrides (`per_tx_limit_minor`, `total_budget_minor`, `allowed_merchant_ids`, `allow_unknown_merchants`, `human_approval_threshold_minor`, `passport_status`, `expires_at`, `merchant_override`, `amount_override_minor`) operate on isolated copies and NEVER mutate `request` or trigger payments (`executed_payment=False`).
-4. **Integrity & Tenant Security**:
-   - Multi-tenant isolation is strictly enforced via `assert_same_tenant` across all nested entities, raising `TenantIsolationError` on cross-tenant access.
-   - Event hash chains are verified via `verify_financial_event_chain`, and evidence digests are verified via `compute_payload_hash`. Tampered records produce `integrity_valid=False` and `consistency_status="INTEGRITY_FAILURE"`.
-   - Timeline events are deterministically sorted by `(sequence_number, occurred_at, str(id))`.
-   - Missing required artifacts (`QUOTE`, `POLICY_DECISION`, `PAYPAL_CAPTURE` when `SUCCEEDED`) are reported explicitly in `missing_evidence` (`INCOMPLETE_EVIDENCE`).
+## Supported Policy Versions
+- **`policy-v1`** (default and only registered evaluator):
+  - Enforces `SpendingPassport` status (`ACTIVE`) and UTC expiration vs `evaluation_time` (or `recorded_decision.decided_at` / `quote.created_at`, never wall-clock time).
+  - Enforces `per_tx_limit_minor`, `available_budget_minor`, and `daily_limit_minor`.
+  - Enforces merchant allowlists (`allowed_merchant_ids`, `allow_unknown_merchants`) and strict category allowlists (`merchant.category` & `proposal.merchant_category`).
+  - Enforces `human_approval_threshold_minor` and `ApprovalRecord` expiry/merchant/amount/quote-hash binding.
+- Unsupported `policy_version` values fail closed with `UnsupportedPolicyVersionError` (HTTP **422**).
+- Policy-version mismatches against `recorded_decision.policy_version` or `recorded_passport.policy_version` are flagged (`POLICY_VERSION_MISMATCH`) and cannot silently return `CONSISTENT`.
 
-## Mandatory Test Suite (`tests/`)
-1. Identical inputs and policy version produce identical results (`CONSISTENT`).
-2. Merchant substitution changes authorization outcome (`DRIFT_DETECTED`).
-3. Amount increase above limit changes authorization outcome (`DRIFT_DETECTED`).
-4. Expired passport prevents eligibility (`DENY`, `DENIED_PASSPORT_EXPIRED`).
-5. Counterfactual policies do not mutate original records (`executed_payment=False`).
-6. Missing evidence is explicitly reported (`missing_evidence` populated, `INCOMPLETE_EVIDENCE`).
-7. Event ordering is deterministic even when input `events` are shuffled.
-8. Cross-tenant evidence/record access is denied (`TenantIsolationError`).
-9. Tampered event or evidence records fail integrity checks (`integrity_valid=False`, `INTEGRITY_FAILURE`).
-10. Replay does not trigger payment execution (`executed_payment=False`).
+## Counterfactual Overrides & Baseline Replay Semantics
+- **Baseline replay** (`POST /ghostpay/replay`, `ReplayEngine.replay`): reconstructs recorded policy evaluation only and rejects nonempty `counterfactual_overrides` with `OverrideValidationError` (HTTP **422**).
+- **Counterfactual simulation** (`POST /ghostpay/simulate`, `POST /ghostpay/counterfactual`, `simulate_counterfactual`):
+  - Validates overrides against an explicit allowlist (`ALLOWED_OVERRIDE_FIELDS`): `per_tx_limit_minor`, `total_budget_minor`, `daily_limit_minor`, `allowed_merchant_ids`, `allow_unknown_merchants`, `allowed_categories`, `human_approval_threshold_minor`, `passport_status`, `expires_at`, `merchant_override`, `amount_override_minor`, `currency_override`.
+  - Rejects unknown fields and immutable identity/evidence/execution fields (`tenant_id`, `payment_intent_id`, `correlation_id`, `events`, `evidence_records`, `recorded_decision`, `executed_payment`, `paypal_order_id`, `paypal_capture_id`, `quote_hash`, etc.) with HTTP **422**.
+  - Reconstructs affected Pydantic contracts via `Model.model_validate(...)` (never unvalidated `model_copy(update=...)`).
+  - Returns baseline-vs-hypothetical comparison inside `ReplayResult.changed_constraints` and `ReplayResult.explanation` (without mutating original inputs).
+
+## Security, Read-Only Safety & Database Status
+- **Tenant Isolation**: `assert_same_tenant` is enforced across `ReplayRequest`, all nested contract records, events, evidence records, `TimelineRequest`, and counterfactual `merchant_override`s (violations raise `TenantIsolationError` → HTTP **403**).
+- **Authentication Boundary**: Raw `X-Tenant-Id` header fallback is restricted to `APP_ENV` in `{development, dev, test, testing, local}`. Outside dev/test environments, endpoints require authenticated tenant context from trusted middleware (`request.state.authenticated_tenant_id` or `create_ghostpay_router(tenant_resolver=...)`), failing closed with HTTP **401** otherwise.
+- **Zero Payment Execution**: GhostPay has zero runtime imports from `paypal` or `database` execution clients and enforces `executed_payment=False` on every path.
+- **Database Persistence Status**: The current GhostPay API is **stateless** and accepts complete `ReplayRequest` payloads. `ghostpay.repository.GhostPayReplayRepository` defines the exact read-only `Protocol` (`load_replay_request(tenant_id, correlation_id) -> ReplayRequest | None`) for wiring into `packages/database` (`LedgerRepository`) inside `services/api/`.
 
 ## Running Verification & Tests
 ```bash
-# Run pytest on ghostpay tests
+# Run all GhostPay tests
 PYTHONPATH=modules/ghostpay uv run pytest modules/ghostpay/tests -v
 
-# Run ruff check on ghostpay
+# Run Ruff lint checks
 uv run ruff check modules/ghostpay
 ```

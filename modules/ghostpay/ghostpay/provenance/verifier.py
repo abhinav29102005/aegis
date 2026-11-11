@@ -145,18 +145,29 @@ def verify_provenance_and_integrity(
 
     errors: list[str] = []
 
-    # Step 2: Verify financial event hash chain
+    # Step 2: Verify financial event hash chain and correlation binding
     chain_ok, chain_errors = verify_financial_event_chain(request.events)
     if not chain_ok:
         errors.extend(chain_errors)
+    for ev in request.events:
+        if ev.correlation_id != request.correlation_id:
+            errors.append(
+                f"Correlation mismatch on FinancialEvent {ev.id}: "
+                f"expected {request.correlation_id}, got {ev.correlation_id}"
+            )
 
     # Step 3: Verify quote snapshot binding hash
     quote_ok, quote_err = verify_quote_snapshot_integrity(request.quote_snapshot)
     if not quote_ok and quote_err:
         errors.append(quote_err)
 
-    # Step 4: Verify each evidence record digest
+    # Step 4: Verify each evidence record digest and correlation binding
     for ev in request.evidence_records:
+        if ev.correlation_id != request.correlation_id:
+            errors.append(
+                f"Correlation mismatch on EvidenceRecord {ev.id}: "
+                f"expected {request.correlation_id}, got {ev.correlation_id}"
+            )
         ev_ok, ev_err = verify_evidence_digest(ev)
         if not ev_ok and ev_err:
             errors.append(ev_err)
