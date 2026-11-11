@@ -30,40 +30,16 @@ def verify_evidence_digest(ev: EvidenceRecord) -> tuple[bool, str | None]:
         return True, None
 
     # 2. Normalized metadata envelope hash (from DocumentIngestionService)
-    envelope_hash = compute_payload_hash({
-        "source_type": ev.source_type.value,
-        "source_ref": ev.source_ref,
-        "title": ev.title,
-        "content": ev.content,
-    })
+    envelope_hash = compute_payload_hash(
+        {
+            "source_type": ev.source_type.value,
+            "source_ref": ev.source_ref,
+            "title": ev.title,
+            "content": ev.content,
+        }
+    )
     if hmac.compare_digest(envelope_hash, ev.content_hash):
         return True, None
-
-    # 3. Canonical fixture & artifact hashes
-    content = ev.content or {}
-    if ev.source_type == EvidenceSourceType.QUOTE:
-        if "quote_hash" in content and "amount_minor" in content:
-            h = compute_payload_hash({"quote_hash": content["quote_hash"], "amount_minor": content["amount_minor"]})
-            if hmac.compare_digest(h, ev.content_hash):
-                return True, None
-    elif ev.source_type == EvidenceSourceType.PAYPAL_CAPTURE:
-        if "capture_id" in content and "status" in content:
-            h = compute_payload_hash({"capture_id": content["capture_id"], "status": content["status"]})
-            if hmac.compare_digest(h, ev.content_hash):
-                return True, None
-    elif ev.source_type == EvidenceSourceType.CARRIER_TRACKING:
-        if "tracking_number" in content and "status" in content:
-            h = compute_payload_hash({"tracking_number": content["tracking_number"], "status": content["status"]})
-            if hmac.compare_digest(h, ev.content_hash):
-                return True, None
-    elif (
-        ev.source_type == EvidenceSourceType.CUSTOMER_MESSAGE
-        and "msg_id" in content
-        and "status" in content
-    ):
-        h = compute_payload_hash({"msg_id": content["msg_id"], "status": content["status"]})
-        if hmac.compare_digest(h, ev.content_hash):
-            return True, None
 
     return False, (
         f"Tampered content_hash on EvidenceRecord {ev.id}: "
@@ -90,7 +66,12 @@ def verify_quote_snapshot_integrity(quote: QuoteSnapshot) -> tuple[bool, str | N
 def check_missing_evidence(request: ReplayRequest) -> list[str]:
     """Detect missing required transaction artifacts without fabricating missing evidence."""
     missing: list[str] = []
-    present_types = {e.source_type for e in request.evidence_records}
+    present_types = {
+        e.source_type
+        for e in request.evidence_records
+        if e.payment_intent_id == request.payment_intent.id
+        and e.correlation_id == request.correlation_id
+    }
 
     # 1. QUOTE artifact: must be in evidence_records
     if EvidenceSourceType.QUOTE not in present_types:
@@ -121,13 +102,21 @@ def enforce_request_tenancy(request: ReplayRequest) -> None:
     assert_same_tenant(expected, request.payment_intent.tenant_id, "payment_intent")
     assert_same_tenant(expected, request.proposal.tenant_id, "proposal")
     assert_same_tenant(expected, request.quote_snapshot.tenant_id, "quote_snapshot")
-    assert_same_tenant(expected, request.recorded_passport.tenant_id, "recorded_passport")
-    assert_same_tenant(expected, request.recorded_merchant.tenant_id, "recorded_merchant")
+    assert_same_tenant(
+        expected, request.recorded_passport.tenant_id, "recorded_passport"
+    )
+    assert_same_tenant(
+        expected, request.recorded_merchant.tenant_id, "recorded_merchant"
+    )
 
     if request.recorded_decision is not None:
-        assert_same_tenant(expected, request.recorded_decision.tenant_id, "recorded_decision")
+        assert_same_tenant(
+            expected, request.recorded_decision.tenant_id, "recorded_decision"
+        )
     if request.approval_record is not None:
-        assert_same_tenant(expected, request.approval_record.tenant_id, "approval_record")
+        assert_same_tenant(
+            expected, request.approval_record.tenant_id, "approval_record"
+        )
 
     for ev in request.events:
         assert_same_tenant(expected, ev.tenant_id, f"financial_event_{ev.id}")
@@ -138,12 +127,20 @@ def enforce_request_tenancy(request: ReplayRequest) -> None:
 
 def verify_provenance_and_integrity(
     request: ReplayRequest,
+    *,
+    hypothetical: bool = False,
 ) -> tuple[bool, list[str], list[str]]:
     """Perform comprehensive provenance, hash-chain, and evidence completeness verification."""
     # Step 1: Enforce tenancy (raises TenantIsolationError on mismatch)
     enforce_request_tenancy(request)
 
-    errors: list[str] = []
+    errors = verify_record_bindings(request, hypothetical=hypothetical)
+    if request.events:
+        ordered = sorted(request.events, key=lambda event: event.sequence_number)
+        if [event.sequence_number for event in ordered] != list(
+            range(1, len(ordered) + 1)
+        ):
+            errors.append("Event chain must be complete and contiguous from sequence 1")
 
     # Step 2: Verify financial event hash chain
     chain_ok, chain_errors = verify_financial_event_chain(request.events)
@@ -163,6 +160,136 @@ def verify_provenance_and_integrity(
 
     # Step 5: Check missing evidence
     missing = check_missing_evidence(request)
+    if not request.events:
+        missing.append("FINANCIAL_EVENTS")
 
-    integrity_valid = (len(errors) == 0)
+    integrity_valid = len(errors) == 0
     return integrity_valid, missing, errors
+
+
+def verify_record_bindings(
+    request: ReplayRequest, *, hypothetical: bool = False
+) -> list[str]:
+    """Check record identity independently from hypothetical policy/amount changes."""
+    errors: list[str] = []
+    intent = request.payment_intent
+    decision = request.recorded_decision
+    checks = [
+        (intent.correlation_id, request.correlation_id, "intent correlation"),
+        (intent.proposal_id, request.proposal.id, "intent proposal"),
+        (intent.passport_id, request.recorded_passport.id, "intent passport"),
+        (intent.quote_snapshot_id, request.quote_snapshot.id, "intent quote"),
+        (intent.agent_id, request.proposal.agent_id, "intent agent"),
+        (
+            request.proposal.passport_id,
+            request.recorded_passport.id,
+            "proposal passport",
+        ),
+        (
+            request.recorded_passport.agent_id,
+            request.proposal.agent_id,
+            "passport agent",
+        ),
+        (
+            request.proposal.correlation_id,
+            request.correlation_id,
+            "proposal correlation",
+        ),
+        (
+            request.quote_snapshot.correlation_id,
+            request.correlation_id,
+            "quote correlation",
+        ),
+        (request.quote_snapshot.proposal_id, request.proposal.id, "quote proposal"),
+        (decision.payment_intent_id, intent.id, "decision payment"),
+        (decision.correlation_id, request.correlation_id, "decision correlation"),
+        (decision.proposal_id, request.proposal.id, "decision proposal"),
+        (decision.passport_id, request.recorded_passport.id, "decision passport"),
+        (decision.quote_snapshot_id, request.quote_snapshot.id, "decision quote"),
+    ]
+    if not hypothetical:
+        checks.extend(
+            [
+                (intent.merchant_id, request.recorded_merchant.id, "intent merchant"),
+                (request.proposal.merchant_id, intent.merchant_id, "proposal merchant"),
+                (
+                    request.quote_snapshot.merchant_id,
+                    intent.merchant_id,
+                    "quote merchant",
+                ),
+                (request.proposal.amount_minor, intent.amount_minor, "proposal amount"),
+                (
+                    request.quote_snapshot.amount_minor,
+                    intent.amount_minor,
+                    "quote amount",
+                ),
+                (request.proposal.currency, intent.currency, "proposal currency"),
+                (request.quote_snapshot.currency, intent.currency, "quote currency"),
+                (
+                    request.quote_snapshot.quote_hash,
+                    intent.quote_hash,
+                    "intent quote hash",
+                ),
+                (decision.quote_hash, intent.quote_hash, "decision quote hash"),
+            ]
+        )
+        for evidence in request.evidence_records:
+            if evidence.source_type == EvidenceSourceType.QUOTE:
+                for field, expected in (
+                    ("quote_hash", intent.quote_hash),
+                    ("amount_minor", intent.amount_minor),
+                    ("merchant_id", str(intent.merchant_id)),
+                ):
+                    checks.append(
+                        (
+                            evidence.content.get(field),
+                            expected,
+                            f"quote evidence {field}",
+                        )
+                    )
+    if intent.authorization_decision_id is not None:
+        checks.append(
+            (intent.authorization_decision_id, decision.id, "intent decision")
+        )
+    approval = request.approval_record
+    if approval is not None:
+        checks.extend(
+            [
+                (approval.payment_intent_id, intent.id, "approval payment"),
+                (approval.decision_id, decision.id, "approval decision"),
+                (
+                    approval.correlation_id,
+                    request.correlation_id,
+                    "approval correlation",
+                ),
+                (approval.bound_currency, intent.currency, "approval currency"),
+                (approval.bound_merchant_id, intent.merchant_id, "approval merchant"),
+                (approval.bound_amount_minor, intent.amount_minor, "approval amount"),
+                (approval.bound_quote_hash, intent.quote_hash, "approval quote"),
+            ]
+        )
+    for record in [*request.events, *request.evidence_records]:
+        checks.extend(
+            [
+                (record.payment_intent_id, intent.id, f"record {record.id} payment"),
+                (
+                    record.correlation_id,
+                    request.correlation_id,
+                    f"record {record.id} correlation",
+                ),
+            ]
+        )
+    for actual, expected, label in checks:
+        if actual != expected:
+            errors.append(f"Record binding mismatch: {label}")
+    for evidence in request.evidence_records:
+        if evidence.source_type == EvidenceSourceType.PAYPAL_CAPTURE and (
+            evidence.content.get("status") != "COMPLETED"
+            or not evidence.content.get("capture_id")
+        ):
+            errors.append("Capture evidence is missing a completed capture reference")
+    if len({e.id for e in request.events}) != len(request.events):
+        errors.append("Duplicate financial event IDs")
+    if len({e.id for e in request.evidence_records}) != len(request.evidence_records):
+        errors.append("Duplicate evidence IDs")
+    return errors

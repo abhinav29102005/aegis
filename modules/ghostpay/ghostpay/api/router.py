@@ -13,7 +13,7 @@ from contracts import (
     ReplayTimelineEntry,
 )
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from security import TenantIsolationError, assert_same_tenant
 from security.settings import DEFAULT_TENANT_UUID
 
@@ -52,9 +52,18 @@ def _resolve_tenant_id(
 
 def _raise_http_for_domain_error(exc: Exception) -> None:
     if isinstance(exc, (TenantIsolationError, PermissionError)):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)
+        ) from exc
+    if isinstance(exc, ValidationError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid counterfactual input",
+        ) from exc
     if isinstance(exc, ValueError):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
     raise exc
 
 
@@ -84,7 +93,9 @@ def create_ghostpay_router() -> APIRouter:
         tenant_id: Annotated[UUID, Depends(_resolve_tenant_id)],
     ) -> ReplayResult:
         try:
-            assert_same_tenant(tenant_id, payload.request.tenant_id, "simulation_request")
+            assert_same_tenant(
+                tenant_id, payload.request.tenant_id, "simulation_request"
+            )
             return simulate_counterfactual(payload.request, payload.overrides)
         except Exception as exc:
             _raise_http_for_domain_error(exc)
@@ -96,7 +107,9 @@ def create_ghostpay_router() -> APIRouter:
         tenant_id: Annotated[UUID, Depends(_resolve_tenant_id)],
     ) -> ReplayResult:
         try:
-            assert_same_tenant(tenant_id, payload.request.tenant_id, "counterfactual_request")
+            assert_same_tenant(
+                tenant_id, payload.request.tenant_id, "counterfactual_request"
+            )
             return simulate_counterfactual(payload.request, payload.overrides)
         except Exception as exc:
             _raise_http_for_domain_error(exc)
@@ -111,7 +124,12 @@ def create_ghostpay_router() -> APIRouter:
             for ev in payload.events:
                 assert_same_tenant(tenant_id, ev.tenant_id, f"financial_event_{ev.id}")
             for rec in payload.evidence_records:
-                assert_same_tenant(tenant_id, rec.tenant_id, f"evidence_record_{rec.id}")
+                assert_same_tenant(
+                    tenant_id, rec.tenant_id, f"evidence_record_{rec.id}"
+                )
+            scopes = {(event.correlation_id, event.payment_intent_id) for event in payload.events}
+            if len(scopes) > 1:
+                raise ValueError("Timeline requires a single transaction chain")
             return build_timeline(payload.events, payload.evidence_records)
         except Exception as exc:
             _raise_http_for_domain_error(exc)

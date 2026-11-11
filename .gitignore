@@ -31,6 +31,7 @@ playwright-report/
 # Environment & Secrets
 .env
 .env.local
+.env.*
 .env.*.local
 !.env.example
 

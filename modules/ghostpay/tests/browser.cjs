@@ -1,0 +1,55 @@
+/* Run against the deployed container with Playwright installed in the Node environment. */
+const { chromium } = require('playwright');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+(async () => {
+  const base = process.env.GHOSTPAY_TEST_URL || 'http://127.0.0.1:8765';
+  const token = fs.readFileSync(process.env.GHOSTPAY_TEST_TOKEN_FILE, 'utf8').trim();
+  const browser = await chromium.launch({headless: true, executablePath: process.env.GHOSTPAY_BROWSER_EXECUTABLE || undefined});
+  let checks = 0;
+  const check = condition => {assert.ok(condition); checks++;};
+  try {
+    const page = await browser.newPage({viewport: {width: 1280, height: 900}});
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.goto(base);
+    await page.locator('#sample').click();
+    await page.waitForFunction(() => document.querySelector('#message').textContent === 'Authentication required');
+    check(await page.locator('#results').isHidden());
+    await page.locator('#token').fill(token);
+    await page.locator('#sample').click();
+    await page.waitForFunction(() => document.querySelector('#record').value.length > 100);
+    const original = await page.locator('#record').inputValue();
+    check((await page.locator('#source').textContent()).includes('SYNTHETIC'));
+    await page.locator('#replay').click();
+    await page.waitForFunction(() => !document.querySelector('#results').hidden);
+    check((await page.locator('#verdict').textContent()).includes('CONSISTENT'));
+    check((await page.locator('#timeline li').count()) === 4);
+    await page.locator('#limit').fill('3000');
+    await page.locator('#simulate').click();
+    await page.waitForFunction(() => document.querySelector('#mode').textContent.includes('SIMULATION') && !document.querySelector('#results').hidden);
+    check((await page.locator('#verdict').textContent()).includes('DENY'));
+    check((await page.locator('#mode').textContent()).includes('NO PAYMENT EXECUTED'));
+    check((await page.locator('#record').inputValue()) === original);
+    const downloaded = page.waitForEvent('download');
+    await page.locator('#export').click();
+    check((await downloaded).suggestedFilename() === 'ghostpay-result.json');
+    const corrupt = JSON.parse(original);
+    corrupt.evidence_records[0].content.amount_minor = 1;
+    await page.locator('#record').fill(JSON.stringify(corrupt));
+    check(await page.locator('#results').isHidden());
+    await page.locator('#replay').click();
+    await page.waitForFunction(() => !document.querySelector('#results').hidden);
+    check((await page.locator('#verdict').textContent()).includes('INTEGRITY_FAILURE'));
+    await page.setViewportSize({width: 390, height: 844});
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+    await page.locator('#record').fill('invalid json');
+    await page.locator('#replay').click();
+    await page.waitForFunction(() => document.querySelector('#message').textContent !== 'Working…');
+    check(await page.locator('#results').isHidden());
+    await page.reload();
+    check((await page.locator('#token').inputValue()) === '');
+    check(errors.length === 0);
+    console.log(`Browser acceptance passed: ${checks} checks, desktop/mobile, real service/container, synthetic records`);
+  } finally {await browser.close();}
+})().catch(error => {console.error(error); process.exitCode = 1;});

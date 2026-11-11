@@ -65,7 +65,9 @@ def _format_event_summary(event: FinancialEvent) -> str:
         cap_id = p.get("capture_id", event.actor_id)
         status = p.get("status")
         amount = p.get("amount_minor")
-        return f"PayPal capture verified: {cap_id} status={status} amount_minor={amount}."
+        return (
+            f"PayPal capture verified: {cap_id} status={status} amount_minor={amount}."
+        )
     if t == FinancialEventType.PAYMENT_FAILED:
         code = p.get("failure_code")
         return f"Payment failed with code={code}."
@@ -83,30 +85,50 @@ def _correlate_evidence_ids(
     matched: list[UUID] = []
     p = event.payload or {}
 
-    for ev in evidence_records:
+    for ev in sorted(evidence_records, key=lambda item: str(item.id)):
+        if ev.tenant_id != event.tenant_id or ev.correlation_id != event.correlation_id:
+            continue
         # Match by direct payment intent association
-        if event.payment_intent_id and ev.payment_intent_id and event.payment_intent_id != ev.payment_intent_id:
+        if event.payment_intent_id != ev.payment_intent_id:
             continue
 
         # Match specific event types to corresponding evidence source types
         if (
-            (event.event_type == FinancialEventType.PROPOSAL_CREATED and ev.source_type == EvidenceSourceType.PROPOSAL)
-            or (
-                event.event_type == FinancialEventType.POLICY_EVALUATED
-                and ev.source_type in (EvidenceSourceType.POLICY_DECISION, EvidenceSourceType.QUOTE)
+            (
+                event.event_type == FinancialEventType.PROPOSAL_CREATED
+                and ev.source_type == EvidenceSourceType.PROPOSAL
             )
             or (
-                event.event_type in (
+                event.event_type == FinancialEventType.POLICY_EVALUATED
+                and ev.source_type
+                in (EvidenceSourceType.POLICY_DECISION, EvidenceSourceType.QUOTE)
+            )
+            or (
+                event.event_type
+                in (
                     FinancialEventType.HUMAN_APPROVED,
                     FinancialEventType.HUMAN_REJECTED,
                     FinancialEventType.APPROVAL_REQUESTED,
                 )
                 and ev.source_type == EvidenceSourceType.HUMAN_APPROVAL
             )
-            or (event.event_type == FinancialEventType.PAYPAL_ORDER_CREATED and ev.source_type == EvidenceSourceType.PAYPAL_ORDER)
-            or (event.event_type == FinancialEventType.PAYPAL_CAPTURE_VERIFIED and ev.source_type == EvidenceSourceType.PAYPAL_CAPTURE)
-            or (event.event_type == FinancialEventType.PAYPAL_WEBHOOK_RECEIVED and ev.source_type == EvidenceSourceType.PAYPAL_WEBHOOK)
-            or ("quote_hash" in p and ev.source_type == EvidenceSourceType.QUOTE and ev.content.get("quote_hash") == p["quote_hash"])
+            or (
+                event.event_type == FinancialEventType.PAYPAL_ORDER_CREATED
+                and ev.source_type == EvidenceSourceType.PAYPAL_ORDER
+            )
+            or (
+                event.event_type == FinancialEventType.PAYPAL_CAPTURE_VERIFIED
+                and ev.source_type == EvidenceSourceType.PAYPAL_CAPTURE
+            )
+            or (
+                event.event_type == FinancialEventType.PAYPAL_WEBHOOK_RECEIVED
+                and ev.source_type == EvidenceSourceType.PAYPAL_WEBHOOK
+            )
+            or (
+                "quote_hash" in p
+                and ev.source_type == EvidenceSourceType.QUOTE
+                and ev.content.get("quote_hash") == p["quote_hash"]
+            )
         ):
             matched.append(ev.id)
 
@@ -124,7 +146,9 @@ def build_timeline(
 
     ev_list = list(evidence_records or [])
     # Sort deterministically
-    sorted_events = sorted(events, key=lambda e: (e.sequence_number, e.occurred_at, str(e.id)))
+    sorted_events = sorted(
+        events, key=lambda e: (e.sequence_number, e.occurred_at, str(e.id))
+    )
 
     timeline: list[ReplayTimelineEntry] = []
     expected_prev: str | None = None
@@ -145,8 +169,8 @@ def build_timeline(
             occurred_at_iso=ev.occurred_at.isoformat(),
         )
         hash_ok = hmac.compare_digest(recomputed, ev.event_hash)
-        prev_ok = (ev.previous_event_hash == expected_prev)
-        mono_ok = (idx == 0 or ev.sequence_number > sorted_events[idx - 1].sequence_number)
+        prev_ok = ev.previous_event_hash == expected_prev
+        mono_ok = ev.sequence_number == idx + 1
         entry_integrity = hash_ok and prev_ok and mono_ok
 
         expected_prev = ev.event_hash

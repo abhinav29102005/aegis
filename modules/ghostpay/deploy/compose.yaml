@@ -1,0 +1,21 @@
+services:
+  ghostpay:
+    build:
+      context: ../../..
+      dockerfile: modules/ghostpay/deploy/Dockerfile
+    environment:
+      GHOSTPAY_TOKENS: ${GHOSTPAY_TOKENS:?Set a private token-to-tenant JSON map}
+      GHOSTPAY_SNAPSHOT_DIR: ${GHOSTPAY_SNAPSHOT_DIR:-}
+    ports:
+      - "127.0.0.1:${GHOSTPAY_PORT:-8000}:8000"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 128

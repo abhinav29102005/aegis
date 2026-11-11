@@ -1,0 +1,15 @@
+**
+!pyproject.toml
+!uv.lock
+!packages/
+!packages/**
+!modules/
+!modules/**
+**/tests/
+**/__pycache__/
+**/*.pyc
+**/*.egg-info/
+**/build/
+**/dist/
+**/.env*
+**/.git/

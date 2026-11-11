@@ -7,17 +7,16 @@ from uuid import uuid4
 
 from contracts import (
     ApprovalRecord,
-    ApprovalStatus,
     DecisionOutcome,
     DecisionReasonCode,
     Merchant,
-    PassportStatus,
     PurchaseProposal,
     QuoteSnapshot,
     ReplayRequest,
     ReplayResult,
     SpendingPassport,
 )
+from guardian.policies.engine import PolicyEngine
 
 from ghostpay.anomalies.detector import detect_anomalies
 from ghostpay.provenance.verifier import verify_provenance_and_integrity
@@ -34,117 +33,16 @@ def evaluate_deterministic_policy(
     evaluation_time: datetime | None = None,
 ) -> tuple[DecisionOutcome, list[DecisionReasonCode], list[str]]:
     """Deterministic policy rules engine recomputing authorization outcome."""
-    reason_codes: list[DecisionReasonCode] = []
-    violated_constraints: list[str] = []
-    eval_time = evaluation_time or quote.created_at
-
-    # 1. Spending passport status & expiration check
-    if passport.status == PassportStatus.EXPIRED:
-        reason_codes.append(DecisionReasonCode.DENIED_PASSPORT_EXPIRED)
-        violated_constraints.append("PASSPORT_STATUS_EXPIRED")
-    elif passport.status == PassportStatus.REVOKED:
-        reason_codes.append(DecisionReasonCode.DENIED_PASSPORT_REVOKED)
-        violated_constraints.append("PASSPORT_STATUS_REVOKED")
-    elif passport.status != PassportStatus.ACTIVE:
-        reason_codes.append(DecisionReasonCode.DENIED_AGENT_SUSPENDED)
-        violated_constraints.append("PASSPORT_STATUS_SUSPENDED")
-
-    if eval_time > passport.expires_at:
-        if DecisionReasonCode.DENIED_PASSPORT_EXPIRED not in reason_codes:
-            reason_codes.append(DecisionReasonCode.DENIED_PASSPORT_EXPIRED)
-        violated_constraints.append("PASSPORT_EXPIRED_BY_DATE")
-
-    # 2. Transaction limits and budget
-    amount = proposal.amount_minor
-    if amount > passport.per_tx_limit_minor:
-        reason_codes.append(DecisionReasonCode.DENIED_EXCEEDS_PER_TX_LIMIT)
-        violated_constraints.append(
-            f"amount_minor {amount} exceeds per_tx_limit_minor {passport.per_tx_limit_minor}"
-        )
-
-    if amount > passport.available_budget_minor:
-        reason_codes.append(DecisionReasonCode.DENIED_EXCEEDS_PASSPORT_BUDGET)
-        violated_constraints.append(
-            f"amount_minor {amount} exceeds available_budget_minor {passport.available_budget_minor}"
-        )
-
-    if passport.daily_limit_minor > 0 and amount > passport.daily_limit_minor:
-        reason_codes.append(DecisionReasonCode.DENIED_EXCEEDS_DAILY_LIMIT)
-        violated_constraints.append(
-            f"amount_minor {amount} exceeds daily_limit_minor {passport.daily_limit_minor}"
-        )
-
-    # 3. Merchant allowlist
-    is_in_allowlist = merchant.id in passport.allowed_merchant_ids
-    escalate_unknown = False
-
-    if not is_in_allowlist:
-        if not passport.allow_unknown_merchants:
-            reason_codes.append(DecisionReasonCode.DENIED_MERCHANT_NOT_ALLOWLISTED)
-            violated_constraints.append(f"merchant {merchant.id} not in allowed_merchant_ids")
-        else:
-            escalate_unknown = True
-
-    # 4. Merchant category allowlist
-    if passport.allowed_categories:
-        merchant_cat = (merchant.category or "").strip().upper()
-        allowed_cats = [c.strip().upper() for c in passport.allowed_categories]
-        if merchant_cat not in allowed_cats and proposal.merchant_category.strip().upper() not in allowed_cats:
-            reason_codes.append(DecisionReasonCode.DENIED_CATEGORY_NOT_ALLOWED)
-            violated_constraints.append(f"category {merchant.category} not in allowed_categories")
-
-    # 5. Human approval threshold & approval record validation
-    has_deny = any(
-        code.value.startswith("DENIED_")
-        for code in reason_codes
+    # Replay the initial authorization decision, not subsequent approval consumption.
+    # Use Guardian's public deterministic policy interface to prevent rule drift.
+    decision = PolicyEngine(policy_version="policy-v1").evaluate(
+        proposal=proposal,
+        passport=passport,
+        merchant=merchant,
+        quote=quote,
+        now=evaluation_time or quote.created_at,
     )
-    requires_approval = amount >= passport.human_approval_threshold_minor
-
-    if not has_deny:
-        if requires_approval:
-            if approval_record is None:
-                reason_codes.append(DecisionReasonCode.ESCALATED_REQUIRES_HUMAN_APPROVAL)
-                violated_constraints.append(
-                    f"amount_minor {amount} requires human approval (threshold {passport.human_approval_threshold_minor})"
-                )
-            else:
-                if approval_record.status == ApprovalStatus.EXPIRED or (
-                    approval_record.expires_at and eval_time > approval_record.expires_at
-                ):
-                    reason_codes.append(DecisionReasonCode.DENIED_APPROVAL_EXPIRED)
-                    violated_constraints.append("APPROVAL_RECORD_EXPIRED")
-                elif (
-                    approval_record.bound_merchant_id != merchant.id
-                    or approval_record.bound_amount_minor != amount
-                    or approval_record.bound_quote_hash != quote.quote_hash
-                ):
-                    reason_codes.append(DecisionReasonCode.DENIED_APPROVAL_MISMATCH)
-                    violated_constraints.append("APPROVAL_RECORD_MISMATCH")
-                elif approval_record.status == ApprovalStatus.REJECTED:
-                    reason_codes.append(DecisionReasonCode.DENIED_APPROVAL_MISMATCH)
-                    violated_constraints.append("APPROVAL_RECORD_REJECTED")
-                elif approval_record.status in (ApprovalStatus.APPROVED, ApprovalStatus.CONSUMED):
-                    pass
-                else:
-                    reason_codes.append(DecisionReasonCode.ESCALATED_REQUIRES_HUMAN_APPROVAL)
-                    violated_constraints.append("APPROVAL_RECORD_PENDING")
-        elif escalate_unknown:
-            reason_codes.append(DecisionReasonCode.ESCALATED_UNKNOWN_MERCHANT)
-            violated_constraints.append("UNKNOWN_MERCHANT_ESCALATION")
-
-    # 6. Outcome resolution
-    has_denied = any(code.value.startswith("DENIED_") for code in reason_codes)
-    has_escalated = any(code.value.startswith("ESCALATED_") for code in reason_codes)
-
-    if has_denied:
-        outcome = DecisionOutcome.DENY
-    elif has_escalated:
-        outcome = DecisionOutcome.ESCALATE
-    else:
-        outcome = DecisionOutcome.ALLOW
-        reason_codes = [DecisionReasonCode.OK_WITHIN_POLICY]
-
-    return outcome, reason_codes, violated_constraints
+    return decision.outcome, decision.reason_codes, decision.violated_constraints
 
 
 class ReplayEngine:
@@ -153,21 +51,45 @@ class ReplayEngine:
     @classmethod
     def replay(cls, request: ReplayRequest) -> ReplayResult:
         """Deterministically replay a transaction, recomputing policy, provenance, and timeline."""
+        return cls._replay(request, hypothetical=False)
+
+    @classmethod
+    def _replay(cls, request: ReplayRequest, *, hypothetical: bool) -> ReplayResult:
+        request = ReplayRequest.model_validate(request.model_dump())
+        versions = {
+            request.policy_version,
+            request.recorded_decision.policy_version,
+            request.recorded_passport.policy_version,
+        }
+        if versions != {"policy-v1"}:
+            raise ValueError(
+                "Unsupported or mismatched policy version; supported: policy-v1"
+            )
         # 1. Enforce tenancy & verify provenance, event hash-chain, evidence integrity
-        integrity_valid, missing_evidence, integrity_errors = verify_provenance_and_integrity(request)
+        integrity_valid, missing_evidence, integrity_errors = (
+            verify_provenance_and_integrity(request, hypothetical=hypothetical)
+        )
 
         # 2. Reconstruct deterministic event timeline
         timeline = build_timeline(request.events, request.evidence_records)
 
         # 3. Deterministically recompute policy outcome
         eval_time = request.evaluation_time or request.recorded_decision.decided_at
-        recomputed_outcome, recomputed_reasons, new_violated_constraints = evaluate_deterministic_policy(
-            proposal=request.proposal,
-            quote=request.quote_snapshot,
-            passport=request.recorded_passport,
-            merchant=request.recorded_merchant,
-            approval_record=request.approval_record,
-            evaluation_time=eval_time,
+        if eval_time < max(
+            request.proposal.created_at,
+            request.quote_snapshot.created_at,
+            request.recorded_passport.created_at,
+        ):
+            raise ValueError("Evaluation time predates the supplied historical records")
+        recomputed_outcome, recomputed_reasons, new_violated_constraints = (
+            evaluate_deterministic_policy(
+                proposal=request.proposal,
+                quote=request.quote_snapshot,
+                passport=request.recorded_passport,
+                merchant=request.recorded_merchant,
+                approval_record=request.approval_record,
+                evaluation_time=eval_time,
+            )
         )
 
         original_decision = request.recorded_decision
@@ -175,14 +97,16 @@ class ReplayEngine:
         original_reasons = original_decision.reason_codes
 
         # 4. Check authorization drift
-        outcome_changed = (recomputed_outcome != original_outcome)
-        reasons_changed = (set(recomputed_reasons) != set(original_reasons))
+        outcome_changed = recomputed_outcome != original_outcome
+        reasons_changed = set(recomputed_reasons) != set(original_reasons)
         drift_detected = outcome_changed or reasons_changed
 
         # 5. Compute changed constraints
         changed_constraints: list[str] = []
         if outcome_changed:
-            changed_constraints.append(f"OUTCOME_CHANGED: {original_outcome.value} -> {recomputed_outcome.value}")
+            changed_constraints.append(
+                f"OUTCOME_CHANGED: {original_outcome.value} -> {recomputed_outcome.value}"
+            )
         for c in new_violated_constraints:
             if c not in original_decision.violated_constraints:
                 changed_constraints.append(f"VIOLATED_CONSTRAINT: {c}")
@@ -212,7 +136,7 @@ class ReplayEngine:
 
         # 8. Deterministic explanation
         explanation = (
-            f"Deterministic replay completed for correlation_id={request.correlation_id}. "
+            f"{'Hypothetical simulation' if hypothetical else 'Initial authorization replay'} completed for correlation_id={request.correlation_id}. "
             f"Original outcome: {original_outcome.value} ({[r.value for r in original_reasons]}). "
             f"Recomputed outcome: {recomputed_outcome.value} ({[r.value for r in recomputed_reasons]}). "
             f"Consistency status: {consistency_status}. "
@@ -223,7 +147,15 @@ class ReplayEngine:
         )
 
         # 9. Evidence references
-        evidence_references = [ev.id for ev in request.evidence_records]
+        evidence_references = sorted(
+            {
+                ev.id
+                for ev in request.evidence_records
+                if ev.payment_intent_id == request.payment_intent.id
+                and ev.correlation_id == request.correlation_id
+            },
+            key=str,
+        )
 
         return ReplayResult(
             replay_id=uuid4(),

@@ -11,8 +11,8 @@ AgentPay Nexus unifies **AgentPay Guardian**, **GhostPay**, and **DisputeOS** on
 | PostgreSQL ORM, Alembic & Atomic Ledger | `packages/database/` | `main` | Implemented & tested |
 | Isolated PayPal Sandbox Client | `packages/paypal/` | `main` | Implemented & tested |
 | **DisputeOS** | `modules/disputeos/` | `feature/disputeos` (integrated) | Implemented & tested |
-| **AgentPay Guardian** | `modules/agentpay-guardian/` | `feature/guardian` | Scaffolded for team handoff |
-| **GhostPay** | `modules/ghostpay/` | `feature/ghostpay` | Scaffolded for team handoff |
+| **AgentPay Guardian** | `modules/agentpay-guardian/` | `feature/guardian` (integrated) | Implemented & tested |
+| **GhostPay** | `modules/ghostpay/` | `feature/ghostpay` (integrated) | Implemented & tested |
 | Unified FastAPI & Worker | `services/api/`, `services/worker/` | `integration/nexus` | Scaffolded for team handoff |
 | Unified Next.js Dashboard | `apps/web/` | `integration/nexus` | Scaffolded for team handoff |
 
@@ -58,3 +58,10 @@ make migrate
 
 See [docs/TEAM_HANDOFF.md](docs/TEAM_HANDOFF.md) and [research/repositories/REUSE_MATRIX.md](research/repositories/REUSE_MATRIX.md) for detailed module contracts and open-source licensing notes.
 
+
+## Standalone GhostPay service
+
+GhostPay includes a tenant-authenticated, read-only forensic console and API with
+Docker deployment support. See [GhostPay deployment](modules/ghostpay/DEPLOYMENT.md)
+and [verification status](modules/ghostpay/STATUS.md). Public server deployment
+and live Sandbox acceptance are separate from local container verification.

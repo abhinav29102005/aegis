@@ -53,7 +53,7 @@ def test_2_merchant_substitution_changes_authorization_outcome() -> None:
     res = ReplayEngine.replay(sub_req)
 
     assert res.drift_detected is True
-    assert res.consistency_status == "DRIFT_DETECTED"
+    assert res.consistency_status == "INTEGRITY_FAILURE"
     assert res.original_outcome == DecisionOutcome.ALLOW
     assert res.recomputed_outcome == DecisionOutcome.DENY
     assert DecisionReasonCode.DENIED_MERCHANT_NOT_ALLOWLISTED in res.recomputed_reason_codes
@@ -86,7 +86,7 @@ def test_3_amount_increase_above_limit_changes_authorization_outcome() -> None:
     res = ReplayEngine.replay(high_req)
 
     assert res.drift_detected is True
-    assert res.consistency_status == "DRIFT_DETECTED"
+    assert res.consistency_status == "INTEGRITY_FAILURE"
     assert res.original_outcome == DecisionOutcome.ALLOW
     assert res.recomputed_outcome == DecisionOutcome.DENY
     assert DecisionReasonCode.DENIED_EXCEEDS_PER_TX_LIMIT in res.recomputed_reason_codes

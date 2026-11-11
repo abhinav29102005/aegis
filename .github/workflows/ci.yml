@@ -34,7 +34,7 @@ jobs:
             PYTHONPATH=modules/ghostpay uv run pytest modules/ghostpay/tests -v
           fi
       - name: Lint Python with Ruff
-        run: uv run ruff check packages modules/disputeos
+        run: uv run ruff check packages modules/disputeos modules/ghostpay
 
   secret-scan:
     runs-on: ubuntu-latest
@@ -47,3 +47,24 @@ jobs:
             exit 1
           fi
 
+  ghostpay-container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build GhostPay runtime image
+        run: docker build -f modules/ghostpay/deploy/Dockerfile -t ghostpay:ci .
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install acceptance dependencies
+        run: uv sync --frozen --python 3.12
+      - name: Exercise runtime trust boundaries
+        env:
+          GHOSTPAY_TEST_IMAGE: ghostpay:ci
+        run: uv run python modules/ghostpay/tests/container_smoke.py
+      - name: Remove acceptance container
+        if: always()
+        run: |
+          if [ -f /tmp/ghostpay-acceptance/container-id ]; then
+            docker rm -f "$(cat /tmp/ghostpay-acceptance/container-id)"
+          fi

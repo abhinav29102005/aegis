@@ -61,19 +61,21 @@ def _chain_event(
     previous_event_hash: str | None,
     occurred_at: datetime,
 ) -> FinancialEvent:
-    event_hash = compute_payload_hash({
-        "id": str(event_id),
-        "tenant_id": str(tenant_id),
-        "correlation_id": str(correlation_id),
-        "payment_intent_id": str(payment_intent_id),
-        "sequence_number": sequence_number,
-        "event_type": event_type.value,
-        "actor_type": actor_type,
-        "actor_id": actor_id,
-        "payload": payload,
-        "previous_event_hash": previous_event_hash,
-        "occurred_at": occurred_at.isoformat(),
-    })
+    event_hash = compute_payload_hash(
+        {
+            "id": str(event_id),
+            "tenant_id": str(tenant_id),
+            "correlation_id": str(correlation_id),
+            "payment_intent_id": str(payment_intent_id),
+            "sequence_number": sequence_number,
+            "event_type": event_type.value,
+            "actor_type": actor_type,
+            "actor_id": actor_id,
+            "payload": payload,
+            "previous_event_hash": previous_event_hash,
+            "occurred_at": occurred_at.isoformat(),
+        }
+    )
     return FinancialEvent(
         id=event_id,
         tenant_id=tenant_id,
@@ -168,7 +170,14 @@ def build_authorized_39_purchase_fixture() -> dict[str, Any]:
     reservation_id = UUID("aaaa6666-6666-4000-8000-000000000001")
     attempt_id = UUID("aaaa7777-7777-4000-8000-000000000001")
 
-    line_items = [{"sku": "API-PRO-MO", "name": "CloudCompute Monthly API Tier", "qty": 1, "unit_amount_minor": 3900}]
+    line_items = [
+        {
+            "sku": "API-PRO-MO",
+            "name": "CloudCompute Monthly API Tier",
+            "qty": 1,
+            "unit_amount_minor": 3900,
+        }
+    ]
     q_hash = compute_quote_hash(
         merchant_id=MERCHANT_SANDBOX_CLOUD_ID,
         amount_minor=3900,
@@ -263,7 +272,13 @@ def build_authorized_39_purchase_fixture() -> dict[str, Any]:
             paypal_status="COMPLETED",
             verified_amount_minor=3900,
             verified_currency="USD",
-            verification_hash=compute_payload_hash({"capture_id": "PAYPAL-CAP-DEMO-A-001", "status": "COMPLETED", "amount_minor": 3900}),
+            verification_hash=compute_payload_hash(
+                {
+                    "capture_id": "PAYPAL-CAP-DEMO-A-001",
+                    "status": "COMPLETED",
+                    "amount_minor": 3900,
+                }
+            ),
             verified_at=BASE_TIME + timedelta(minutes=2),
         ),
         state=PaymentState.SUCCEEDED,
@@ -339,7 +354,11 @@ def build_authorized_39_purchase_fixture() -> dict[str, Any]:
         event_type=FinancialEventType.PAYPAL_CAPTURE_VERIFIED,
         actor_type="PAYPAL_EXECUTOR",
         actor_id="PAYPAL-CAP-DEMO-A-001",
-        payload={"paypal_order_id": "PAYPAL-ORDER-DEMO-A-001", "status": "COMPLETED", "amount_minor": 3900},
+        payload={
+            "paypal_order_id": "PAYPAL-ORDER-DEMO-A-001",
+            "status": "COMPLETED",
+            "amount_minor": 3900,
+        },
         previous_event_hash=e3.event_hash,
         occurred_at=BASE_TIME + timedelta(minutes=2),
     )
@@ -352,8 +371,18 @@ def build_authorized_39_purchase_fixture() -> dict[str, Any]:
         source_type=EvidenceSourceType.QUOTE,
         source_ref=f"quote:{quote_id}",
         title="Bound Quote Snapshot ($39.00)",
-        content={"merchant_id": str(MERCHANT_SANDBOX_CLOUD_ID), "amount_minor": 3900, "quote_hash": q_hash},
-        content_hash=compute_payload_hash({"quote_hash": q_hash, "amount_minor": 3900}),
+        content={
+            "merchant_id": str(MERCHANT_SANDBOX_CLOUD_ID),
+            "amount_minor": 3900,
+            "quote_hash": q_hash,
+        },
+        content_hash=compute_payload_hash(
+            {
+                "merchant_id": str(MERCHANT_SANDBOX_CLOUD_ID),
+                "amount_minor": 3900,
+                "quote_hash": q_hash,
+            }
+        ),
         is_synthetic=False,
         collected_at=BASE_TIME + timedelta(minutes=1),
     )
@@ -365,8 +394,18 @@ def build_authorized_39_purchase_fixture() -> dict[str, Any]:
         source_type=EvidenceSourceType.PAYPAL_CAPTURE,
         source_ref="paypal:PAYPAL-CAP-DEMO-A-001",
         title="Verified PayPal Capture Receipt",
-        content={"paypal_order_id": "PAYPAL-ORDER-DEMO-A-001", "capture_id": "PAYPAL-CAP-DEMO-A-001", "status": "COMPLETED"},
-        content_hash=compute_payload_hash({"capture_id": "PAYPAL-CAP-DEMO-A-001", "status": "COMPLETED"}),
+        content={
+            "paypal_order_id": "PAYPAL-ORDER-DEMO-A-001",
+            "capture_id": "PAYPAL-CAP-DEMO-A-001",
+            "status": "COMPLETED",
+        },
+        content_hash=compute_payload_hash(
+            {
+                "paypal_order_id": "PAYPAL-ORDER-DEMO-A-001",
+                "capture_id": "PAYPAL-CAP-DEMO-A-001",
+                "status": "COMPLETED",
+            }
+        ),
         is_synthetic=False,
         collected_at=BASE_TIME + timedelta(minutes=2),
     )
@@ -423,7 +462,15 @@ def build_synthetic_dispute_fixture() -> dict[str, Any]:
             "delivered_at": "2026-11-11T14:20:00Z",
             "signed_by": "RECEPTION",
         },
-        content_hash=compute_payload_hash({"tracking_number": "77441122", "status": "DELIVERED"}),
+        content_hash=compute_payload_hash(
+            {
+                "carrier": "FEDEX",
+                "tracking_number": "77441122",
+                "status": "DELIVERED",
+                "delivered_at": "2026-11-11T14:20:00Z",
+                "signed_by": "RECEPTION",
+            }
+        ),
         is_synthetic=True,
         collected_at=BASE_TIME + timedelta(days=1),
     )
@@ -440,7 +487,12 @@ def build_synthetic_dispute_fixture() -> dict[str, Any]:
             "sender": "support@sandbox-store.cloudcompute.example",
             "message": "We confirmed warehouse dispatch was delayed and item was not delivered on Nov 11.",
         },
-        content_hash=compute_payload_hash({"msg_id": "MSG-901", "status": "UNDELIVERED"}),
+        content_hash=compute_payload_hash(
+            {
+                "sender": "support@sandbox-store.cloudcompute.example",
+                "message": "We confirmed warehouse dispatch was delayed and item was not delivered on Nov 11.",
+            }
+        ),
         is_synthetic=True,
         collected_at=BASE_TIME + timedelta(days=1, hours=2),
     )
@@ -468,4 +520,3 @@ def build_synthetic_dispute_fixture() -> dict[str, Any]:
         "dispute_case": dispute_case,
         "all_evidence": all_evidence,
     }
-
