@@ -537,3 +537,4 @@ class DisputeAnalysis(NexusBaseModel):
     @classmethod
     def _utc_analyzed(cls, v: datetime) -> datetime:
         return _normalize_utc(v)  # type: ignore[return-value]
+

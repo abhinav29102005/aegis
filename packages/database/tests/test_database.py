@@ -140,3 +140,4 @@ def test_cross_tenant_access_denied_and_event_chain_persisted(tmp_path: Path) ->
         ok, errs = verify_financial_event_chain(events)
         assert ok and errs == []
         assert len(repo.list_pending_outbox()) == 2
+

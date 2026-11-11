@@ -1119,3 +1119,4 @@ class LedgerRepository:
             generated_with_llm=row.generated_with_llm,
             analyzed_at=_ensure_utc(row.analyzed_at),  # type: ignore[arg-type]
         )
+

@@ -73,3 +73,4 @@ All temporary research clones were placed strictly outside tracked source direct
   - Feature-flagged (`PAYPAL_DISPUTES_API_ENABLED=false` by default) because sandbox accounts require explicit Disputes scope/permissions and synthetic disputes cannot be submitted to PayPal.
 - **PayPal Webhook Signature Verification**: `POST /v1/notifications/verify-webhook-signature`
   - Verified server-side using `PAYPAL_WEBHOOK_ID` and incoming `PAYPAL-TRANSMISSION-*` headers.
+

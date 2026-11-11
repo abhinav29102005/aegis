@@ -12,3 +12,4 @@ Thank you for contributing to **AgentPay Nexus — The Financial Digital Twin fo
 3. Never commit secrets, `.env` files, or real PayPal credentials.
 4. All financial state changes must preserve tenant isolation, deterministic policy evaluation, and append-only event integrity.
 5. Run all backend tests (`uv run pytest`) and frontend checks (`npm run lint && npm run typecheck`) before opening a pull request.
+

@@ -44,3 +44,4 @@ def compute_quote_hash(
         "currency": currency.upper(),
         "line_items": line_items or [],
     })
+

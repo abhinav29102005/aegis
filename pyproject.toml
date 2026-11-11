@@ -44,3 +44,4 @@ testpaths = [
     "packages/database/tests",
     "packages/paypal/tests",
 ]
+

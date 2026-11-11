@@ -35,3 +35,4 @@ def create_session_factory(engine: Engine) -> sessionmaker[Session]:
 def init_db(engine: Engine) -> None:
     """Create all tables (used for local SQLite test setups; Postgres uses Alembic)."""
     Base.metadata.create_all(bind=engine)
+

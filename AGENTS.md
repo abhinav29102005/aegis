@@ -18,3 +18,4 @@
 2. **Do not fabricate evidence or test results**: Report missing evidence explicitly; report unrun or credential-gated checks as `NOT VERIFIED`.
 3. **Keep module boundaries clean**: Modules communicate through `packages/contracts` models and explicit service interfaces.
 4. **Never commit secrets**: Load all keys from environment variables documented in `.env.example`.
+

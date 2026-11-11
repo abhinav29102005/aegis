@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: agentpay-nexus-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-agentpay}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agentpay_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-agentpay_nexus}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agentpay} -d ${POSTGRES_DB:-agentpay_nexus}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+

@@ -470,3 +470,4 @@ def build_synthetic_dispute_fixture() -> dict[str, Any]:
         "dispute_case": dispute_case,
         "all_evidence": all_evidence,
     }
+

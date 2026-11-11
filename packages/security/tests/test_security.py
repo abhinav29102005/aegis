@@ -39,3 +39,4 @@ def test_financial_event_chain_verification_and_tamper_detection() -> None:
     ok_bad, bad_errors = verify_financial_event_chain([fx["events"][0], tampered, fx["events"][2]])
     assert not ok_bad
     assert len(bad_errors) >= 1
+

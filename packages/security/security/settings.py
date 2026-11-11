@@ -57,3 +57,4 @@ class NexusSettings:
 @lru_cache(maxsize=1)
 def get_settings() -> NexusSettings:
     return NexusSettings()
+

@@ -61,3 +61,4 @@ def test_authorized_and_synthetic_dispute_fixtures_validate() -> None:
     demo_c = build_synthetic_dispute_fixture()
     assert demo_c["dispute_case"].is_synthetic is True
     assert len(demo_c["all_evidence"]) == 4
+

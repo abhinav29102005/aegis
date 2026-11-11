@@ -92,3 +92,4 @@ def verify_financial_event_chain(events: Sequence[FinancialEvent]) -> tuple[bool
         expected_prev = ev.event_hash
 
     return len(errors) == 0, errors
+

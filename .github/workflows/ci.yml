@@ -1,0 +1,49 @@
+name: AgentPay Nexus CI
+
+on:
+  push:
+    branches: [main, integration/nexus, "feature/*"]
+  pull_request:
+    branches: [main, integration/nexus]
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install workspace dependencies
+        run: uv sync --python 3.12
+      - name: Run shared package tests
+        run: uv run pytest packages/contracts/tests packages/security/tests packages/database/tests packages/paypal/tests -v
+      - name: Run DisputeOS module tests
+        run: |
+          if [ -d "modules/disputeos/tests" ]; then
+            PYTHONPATH=modules/disputeos uv run pytest modules/disputeos/tests -v
+          fi
+      - name: Run Guardian module tests (if implemented)
+        run: |
+          if [ -d "modules/agentpay-guardian/tests" ] && [ -n "$(find modules/agentpay-guardian/tests -name 'test_*.py' 2>/dev/null)" ]; then
+            PYTHONPATH=modules/agentpay-guardian uv run pytest modules/agentpay-guardian/tests -v
+          fi
+      - name: Run GhostPay module tests (if implemented)
+        run: |
+          if [ -d "modules/ghostpay/tests" ] && [ -n "$(find modules/ghostpay/tests -name 'test_*.py' 2>/dev/null)" ]; then
+            PYTHONPATH=modules/ghostpay uv run pytest modules/ghostpay/tests -v
+          fi
+      - name: Lint Python with Ruff
+        run: uv run ruff check packages modules/disputeos
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for accidental committed secrets or .env files
+        run: |
+          if git ls-files | grep -E '^\.env(\.|$)' | grep -v '\.env\.example$'; then
+            echo "ERROR: .env file committed to git!"
+            exit 1
+          fi
+

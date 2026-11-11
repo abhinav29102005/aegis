@@ -12,3 +12,4 @@ Please report security issues privately to the maintainers rather than opening a
 4. **Timeout Safety**: PayPal timeouts transition intents to `PENDING_PROVIDER` until reconciled via `GET /v2/checkout/orders/{id}` or verified webhooks.
 5. **Tenant Isolation**: Every financial record, replay request, evidence item, and dispute case is scoped by `tenant_id` and fails closed on mismatch.
 6. **Human-in-the-Loop Disputes**: DisputeOS drafts grounded reports and requires explicit human approval before any external submission. `PAYPAL_DISPUTES_API_ENABLED` defaults to `false`.
+

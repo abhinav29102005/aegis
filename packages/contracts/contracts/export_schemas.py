@@ -63,3 +63,4 @@ if __name__ == "__main__":
     default_out = Path(__file__).resolve().parent.parent / "schemas" / "contracts.schema.json"
     export_all_schemas(default_out)
     print(f"Exported schemas to {default_out}")
+

@@ -16,3 +16,4 @@ def assert_same_tenant(expected_tenant_id: UUID, actual_tenant_id: UUID, resourc
             f"Cross-tenant access denied for {resource}: "
             f"expected {expected_tenant_id}, got {actual_tenant_id}"
         )
+
