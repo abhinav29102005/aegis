@@ -21,7 +21,12 @@ from database import (
     create_session_factory,
     init_db,
 )
-from security import Role, TenantIsolationError, hash_password
+from security import (
+    Role,
+    TenantIsolationError,
+    hash_password,
+    verify_financial_event_chain,
+)
 
 
 def _make_session(tmp_path: Path):
@@ -149,7 +154,231 @@ def test_outbox_backoff_and_dead_letter_requeue(tmp_path: Path) -> None:
     assert dead.status == "DEAD_LETTER"
     assert dead.dead_lettered_at is not None
 
-    requeued = platform.requeue_dead_letter_outbox(org.id, outbox_id)
+    requeued = platform.requeue_dead_letter_outbox(org.id, outbox_id, now=t0 + timedelta(seconds=16))
     assert requeued.status == "PENDING"
-    published = platform.mark_outbox_published(outbox_id, now=t0 + timedelta(seconds=20))
+    assert requeued.attempts == 0
+    assert requeued.locked_at is None
+    assert requeued.lease_expires_at is None
+    assert requeued.locked_by is None
+    assert requeued.last_error is None
+
+    published = platform.mark_outbox_delivered(outbox_id, now=t0 + timedelta(seconds=20))
     assert published.status == "PUBLISHED"
+    assert published.locked_at is None
+    assert published.lease_expires_at is None
+    assert published.locked_by is None
+
+
+def test_outbox_lease_reclamation_and_pending_capture_attempts(tmp_path: Path) -> None:
+    session = _make_session(tmp_path)
+    ledger = LedgerRepository(session)
+    platform = PlatformRepository(session)
+    org = platform.create_organization(name="Lease Org", slug="lease-org")
+
+    ledger.append_financial_event(
+        tenant_id=org.id,
+        correlation_id=uuid4(),
+        payment_intent_id=None,
+        event_type=FinancialEventType.PROPOSAL_CREATED,
+        actor_type="SYSTEM",
+        actor_id="test",
+        payload={"step": 1},
+        also_enqueue_outbox=True,
+    )
+    session.commit()
+
+    t0 = datetime(2026, 11, 12, 12, 0, tzinfo=UTC)
+    claimed_a = platform.claim_due_outbox_events(limit=10, now=t0, worker_id="worker-a", lease_seconds=30)
+    assert len(claimed_a) == 1
+    assert claimed_a[0].status == "PROCESSING"
+    assert claimed_a[0].locked_by == "worker-a"
+    assert claimed_a[0].locked_at is not None
+    assert claimed_a[0].lease_expires_at is not None
+
+    # Active lease is NOT reclaimed before expiry
+    assert (
+        platform.claim_due_outbox_events(
+            limit=10, now=t0 + timedelta(seconds=20), worker_id="worker-b", lease_seconds=30
+        )
+        == []
+    )
+
+    # Expired lease IS reclaimed by worker-b
+    reclaimed_b = platform.claim_due_outbox_events(
+        limit=10, now=t0 + timedelta(seconds=31), worker_id="worker-b", lease_seconds=45
+    )
+    assert len(reclaimed_b) == 1
+    assert reclaimed_b[0].id == claimed_a[0].id
+    assert reclaimed_b[0].locked_by == "worker-b"
+
+    # list_pending_capture_attempts returns empty cleanly when none exist
+    assert platform.list_pending_capture_attempts(limit=10, for_update_skip_locked=True) == []
+
+
+def test_ghostpay_traces_agent_dna_llm_logs_and_paypal_webhook_dedup(tmp_path: Path) -> None:
+    session = _make_session(tmp_path)
+    platform = PlatformRepository(session)
+    org = platform.create_organization(name="GhostPay Org", slug="ghostpay-org")
+
+    t1 = platform.save_ghostpay_trace(
+        tenant_id=org.id,
+        trace_id="trace-1",
+        agent_id="agent-alpha",
+        payload_json={"amount_minor": 1500, "merchant": "aws"},
+        recorded_decision_json={"outcome": "ALLOW"},
+        correlation_id="corr-1",
+    )
+    platform.save_ghostpay_trace(
+        tenant_id=org.id,
+        trace_id="trace-2",
+        agent_id="agent-beta",
+        payload_json={"amount_minor": 9900, "merchant": "stripe"},
+        recorded_decision_json=None,
+        correlation_id="corr-2",
+    )
+    assert t1.trace_id == "trace-1"
+    loaded = platform.get_ghostpay_trace(org.id, "trace-1")
+    assert loaded is not None
+    assert loaded.recorded_decision_json == {"outcome": "ALLOW"}
+    assert len(platform.list_ghostpay_traces(org.id, agent_id="agent-alpha")) == 1
+    assert len(platform.list_ghostpay_traces(org.id, limit=1, offset=1)) == 1
+
+    dna = platform.save_agent_dna_profile(
+        org.id, "agent-alpha", {"avg_amount_minor": 1500, "risk_score": 0.12}
+    )
+    assert dna.profile_json["risk_score"] == 0.12
+    dna_updated = platform.save_agent_dna_profile(
+        org.id, "agent-alpha", {"avg_amount_minor": 2000, "risk_score": 0.15}
+    )
+    assert dna_updated.id == dna.id
+    got_dna = platform.get_agent_dna_profile(org.id, "agent-alpha")
+    assert got_dna is not None and got_dna.profile_json["avg_amount_minor"] == 2000
+
+    log = platform.log_llm_invocation(
+        tenant_id=org.id,
+        correlation_id="corr-1",
+        module="disputeos",
+        provider="openai",
+        model="gpt-4o-mini",
+        prompt_tokens=300,
+        completion_tokens=120,
+        estimated_cost_usd_micros=420,
+    )
+    assert log.estimated_cost_usd_micros == 420
+    assert len(platform.list_llm_invocations(org.id, module="disputeos")) == 1
+
+    assert platform.record_paypal_webhook_once("WH-EVT-1", "PAYMENT.CAPTURE.COMPLETED", "CAP-1", "h1") is True
+    assert platform.record_paypal_webhook_once("WH-EVT-1", "PAYMENT.CAPTURE.COMPLETED", "CAP-1", "h1") is False
+
+
+def test_invitations_verification_billing_metering_and_gdpr_erasure(tmp_path: Path) -> None:
+    session = _make_session(tmp_path)
+    ledger = LedgerRepository(session)
+    platform = PlatformRepository(session)
+    org = platform.create_organization(name="SaaS Org", slug="saas-org")
+
+    owner = platform.create_user(
+        email="owner@saas.ai",
+        full_name="Owner User",
+        password_hash=hash_password("Pass123!Strong", iterations=10_000),
+    )
+    platform.add_membership(tenant_id=org.id, user_id=owner.id, role=Role.OWNER)
+
+    # Email verification + MFA
+    t0 = datetime(2026, 11, 12, 12, 0, tzinfo=UTC)
+    platform.create_email_verification(
+        user_id=owner.id,
+        email=owner.email,
+        token_hash="verif-hash-1",
+        expires_at=t0 + timedelta(hours=24),
+    )
+    platform.verify_email_token("verif-hash-1", now=t0 + timedelta(hours=1))
+    assert platform.get_user(owner.id).email_verified is True  # type: ignore[union-attr]
+
+    platform.set_user_mfa(owner.id, enabled=True, mfa_secret_encrypted="enc-totp-secret")
+    assert platform.get_user(owner.id).mfa_enabled is True  # type: ignore[union-attr]
+
+    # Org invitation + acceptance
+    invitee = platform.create_user(
+        email="alice@saas.ai",
+        full_name="Alice Analyst",
+        password_hash=hash_password("AlicePass!2026", iterations=10_000),
+    )
+    inv = platform.create_org_invitation(
+        tenant_id=org.id,
+        email="alice@saas.ai",
+        role=Role.AUDITOR,
+        token_hash="inv-hash-1",
+        expires_at=t0 + timedelta(days=7),
+        invited_by_user_id=owner.id,
+    )
+    assert inv.status == "PENDING"
+    accepted = platform.accept_org_invitation("inv-hash-1", user_id=invitee.id, now=t0 + timedelta(hours=2))
+    assert accepted.status == "ACCEPTED"
+    assert platform.get_membership(org.id, invitee.id) is not None
+
+    # Billing & usage metering
+    sub = platform.upsert_billing_subscription(
+        tenant_id=org.id,
+        plan="PRO",
+        status="ACTIVE",
+        stripe_customer_id="cus_123",
+        stripe_subscription_id="sub_123",
+        monthly_tx_quota=5000,
+    )
+    assert sub.plan == "PRO"
+    assert sub.monthly_tx_quota == 5000
+    assert platform.get_billing_subscription(org.id) is not None
+
+    platform.increment_usage_meter(tenant_id=org.id, period_ym="2026-11", metric="payments_authorized", amount=3)
+    platform.increment_usage_meter(tenant_id=org.id, period_ym="2026-11", metric="payments_authorized", amount=2)
+    assert platform.get_usage_meter(org.id, period_ym="2026-11", metric="payments_authorized") == 5
+    assert len(platform.list_usage_meters(org.id, period_ym="2026-11")) == 1
+
+    # Seed immutable financial event & API key for Alice, then execute GDPR erasure
+    corr = uuid4()
+    ledger.append_financial_event(
+        tenant_id=org.id,
+        correlation_id=corr,
+        payment_intent_id=None,
+        event_type=FinancialEventType.PROPOSAL_CREATED,
+        actor_type="USER",
+        actor_id=str(invitee.id),
+        payload={"amount_minor": 1200},
+    )
+    key_row, _ = platform.create_api_key(
+        tenant_id=org.id,
+        name="alice-key",
+        pepper="pepper-1",
+        user_id=invitee.id,
+        role=Role.AUDITOR,
+    )
+    platform.create_org_invitation(
+        tenant_id=org.id,
+        email="alice@saas.ai",
+        role=Role.OPERATOR,
+        token_hash="inv-hash-pending-alice",
+        expires_at=t0 + timedelta(days=7),
+        invited_by_user_id=owner.id,
+    )
+
+    erasure = platform.execute_user_erasure(
+        tenant_id=org.id,
+        user_id=invitee.id,
+        requested_by=str(owner.id),
+    )
+    assert erasure.status == "COMPLETED"
+    assert erasure.details_json["ledger_preserved"] is True
+
+    erased_user = platform.get_user(invitee.id)
+    assert erased_user is not None
+    assert erased_user.erased_at is not None
+    assert erased_user.full_name == "ERASED_USER"
+    assert erased_user.email.startswith("erased-")
+    assert erased_user.is_active is False
+
+    # Financial ledger remains intact and hash-chain valid!
+    events = ledger.list_events(org.id, correlation_id=corr)
+    ok, errs = verify_financial_event_chain(events)
+    assert ok and errs == []
+    assert session.get(type(key_row), key_row.id).status == "REVOKED"  # type: ignore[union-attr]

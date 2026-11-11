@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main, integration/nexus]
 
+permissions:
+  contents: read
+  security-events: write
+
 jobs:
   backend:
     runs-on: ubuntu-latest
@@ -23,56 +27,133 @@ jobs:
           --health-interval=5s
           --health-timeout=5s
           --health-retries=5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=5
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           python-version: "3.12"
       - name: Install Python workspace dependencies
-        run: uv sync --python 3.12
+        run: uv sync --frozen --python 3.12
       - name: Lint Python workspace with Ruff
         run: uv run ruff check packages modules services
+      - name: Audit Python dependencies with pip-audit
+        continue-on-error: true
+        run: |
+          uv export --frozen --no-emit-workspace --no-hashes -o /tmp/aegis-reqs.txt
+          uv run pip-audit -r /tmp/aegis-reqs.txt --desc
       - name: Verify Alembic migrations against PostgreSQL 16
         env:
           DATABASE_URL: postgresql+psycopg://aegis:aegis_test_password@localhost:5432/aegis_test
         run: cd packages/database && uv run alembic upgrade head && uv run alembic downgrade base && uv run alembic upgrade head
-      - name: Run full Python & PostgreSQL test suite
+      - name: Run full Python & PostgreSQL test suite with coverage
         env:
           AEGIS_TEST_POSTGRES_URL: postgresql+psycopg://aegis:aegis_test_password@localhost:5432/aegis_test
-        run: uv run pytest -v
+          REDIS_URL: redis://localhost:6379/0
+        run: uv run pytest -v --cov=packages --cov=modules --cov=services --cov-report=term-missing
 
   typescript-sdk:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version: "22"
-      - name: Typecheck & test @aegis-platform/sdk
+      - name: Audit, typecheck & test @aegis-platform/sdk
         working-directory: packages/sdk-typescript
-        run: npm install --no-audit --no-fund && npm run typecheck && npm test
+        run: |
+          npm install --no-audit --no-fund
+          npm audit --omit=dev --audit-level=high
+          npm run typecheck
+          npm test
 
   web-frontend:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version: "22"
-      - name: Typecheck, lint, test & build apps/web
+      - name: Audit, typecheck, lint, test & build apps/web
         working-directory: apps/web
         env:
           NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
           NEXT_PUBLIC_APP_NAME: AEGIS
-        run: npm install --no-audit --no-fund && npm run typecheck && npm run lint && npm test && npm run build
+        run: |
+          npm install --no-audit --no-fund
+          npm audit --omit=dev --audit-level=critical
+          npm run typecheck
+          npm run lint
+          npm test
+          npm run build
 
-  secret-scan:
+  security-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
       - name: Check for accidental committed secrets or .env files
         run: |
           if git ls-files | grep -E '^\.env(\.|$)' | grep -v '\.env\.example$'; then
             echo "ERROR: .env file committed to git!"
             exit 1
           fi
+      - name: Scan git history for leaked secrets with Gitleaks
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build API and Worker container images for vulnerability scanning
+        run: |
+          docker build -t aegis-api:ci -f services/api/Dockerfile .
+          docker build -t aegis-worker:ci -f services/worker/Dockerfile .
+      - name: Scan API image with Trivy
+        uses: aquasecurity/trivy-action@6c175e9c4083a92bbca2f9724c8a5e33bc2d97a5 # v0.30.0
+        with:
+          image-ref: aegis-api:ci
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+      - name: Scan Worker image with Trivy
+        uses: aquasecurity/trivy-action@6c175e9c4083a92bbca2f9724c8a5e33bc2d97a5 # v0.30.0
+        with:
+          image-ref: aegis-worker:ci
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+
+  compose-smoke:
+    needs: [backend]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Boot Postgres, Redis, migrate, API, and Worker via Docker Compose
+        run: docker compose up -d --build postgres redis migrate api worker
+      - name: Verify API readiness endpoint
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8000/ready; then
+              echo ""
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose logs api migrate postgres
+          exit 1
+      - name: Verify Worker healthcheck and recent heartbeat
+        run: |
+          docker compose exec -T worker python -m aegis_worker.main --healthcheck
+          docker compose ps
+      - name: Tear down Compose smoke stack
+        if: always()
+        run: docker compose down -v --remove-orphans

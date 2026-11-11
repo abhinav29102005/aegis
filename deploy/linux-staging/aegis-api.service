@@ -1,0 +1,18 @@
+[Unit]
+Description=AEGIS Platform Production Stack (Linux VPS)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/aegis/agentpay-nexus
+EnvironmentFile=/etc/aegis/.env
+ExecStart=/usr/bin/docker compose -f docker-compose.yml -f deploy/linux-staging/docker-compose.prod.yml --env-file /etc/aegis/.env up -d --remove-orphans
+ExecStop=/usr/bin/docker compose -f docker-compose.yml -f deploy/linux-staging/docker-compose.prod.yml --env-file /etc/aegis/.env down
+ExecReload=/usr/bin/docker compose -f docker-compose.yml -f deploy/linux-staging/docker-compose.prod.yml --env-file /etc/aegis/.env up -d --build --remove-orphans
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

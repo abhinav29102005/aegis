@@ -1,0 +1,196 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "targets": [
+        {
+          "expr": "sum(rate(aegis_http_requests_total{status_code=~\"5..\"}[5m])) / clamp_min(sum(rate(aegis_http_requests_total[5m])), 1)",
+          "legendFormat": "5xx Ratio",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(aegis_http_requests_total{status_code=~\"4..\"}[5m])) / clamp_min(sum(rate(aegis_http_requests_total[5m])), 1)",
+          "legendFormat": "4xx Ratio",
+          "refId": "B"
+        }
+      ],
+      "title": "API Error Rate (4xx / 5xx)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, route) (rate(aegis_http_request_duration_seconds_bucket{route=~\"/v1/guardian/.*\"}[5m])))",
+          "legendFormat": "p95 {{route}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Guardian Checkout & Capture p95 Latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 7 },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "sum(aegis_outbox_pending)",
+          "legendFormat": "Pending",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(aegis_outbox_dead_letters)",
+          "legendFormat": "Dead-Letter",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(aegis_outbox_stalled_leases)",
+          "legendFormat": "Stalled Leases",
+          "refId": "C"
+        }
+      ],
+      "title": "Transactional Outbox Queue Health",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 7 },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "sum(rate(aegis_db_connection_errors_total[5m]))",
+          "legendFormat": "DB Connection Errors/s",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(aegis_http_requests_total{status_code=\"429\"}[5m]))",
+          "legendFormat": "Rate-Limited (429)/s",
+          "refId": "B"
+        }
+      ],
+      "title": "Database Errors & Rate-Limit Rejections",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 14 },
+      "id": 5,
+      "targets": [
+        {
+          "expr": "sum by (provider) (increase(aegis_llm_estimated_cost_usd_total[1h]))",
+          "legendFormat": "{{provider}} 1h USD",
+          "refId": "A"
+        }
+      ],
+      "title": "Hourly LLM Estimated Cost by Provider",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 14 },
+      "id": 6,
+      "targets": [
+        {
+          "expr": "max(time() - aegis_worker_last_heartbeat_timestamp_seconds)",
+          "legendFormat": "Worker Heartbeat Age (s)",
+          "refId": "A"
+        }
+      ],
+      "title": "Outbox Worker Heartbeat Staleness",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["aegis", "payments", "governance", "observability"],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timezone": "utc",
+  "title": "AEGIS Platform — Operator Observability",
+  "uid": "aegis-operator-obs",
+  "version": 1
+}

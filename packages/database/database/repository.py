@@ -34,7 +34,8 @@ from contracts import (
     assert_payment_transition,
 )
 from security import assert_same_tenant, compute_financial_event_hash
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from database.orm import (
@@ -53,6 +54,7 @@ from database.orm import (
     PurchaseProposalRow,
     QuoteSnapshotRow,
     SpendingPassportRow,
+    SpendingPassportSnapshotRow,
     TenantRow,
 )
 
@@ -80,6 +82,13 @@ class LedgerRepository:
 
     def __init__(self, session: Session) -> None:
         self.session = session
+
+    def _is_postgres(self) -> bool:
+        try:
+            bind = self.session.get_bind()
+        except SQLAlchemyError:
+            bind = self.session.bind
+        return bind is not None and bind.dialect.name == "postgresql"
 
     # ------------------------------------------------------------------
     # Tenants, Agents, Merchants, Passports
@@ -116,9 +125,13 @@ class LedgerRepository:
             assert_same_tenant(agent.tenant_id, row.tenant_id, "agent")
         return self._to_agent(row)
 
-    def list_agents(self, tenant_id: UUID) -> list[AgentIdentity]:
+    def list_agents(self, tenant_id: UUID, *, limit: int = 50, offset: int = 0) -> list[AgentIdentity]:
         rows = self.session.scalars(
-            select(AgentRow).where(AgentRow.tenant_id == tenant_id).order_by(AgentRow.created_at.desc())
+            select(AgentRow)
+            .where(AgentRow.tenant_id == tenant_id)
+            .order_by(AgentRow.created_at.desc())
+            .offset(offset)
+            .limit(limit)
         ).all()
         return [self._to_agent(r) for r in rows]
 
@@ -149,9 +162,13 @@ class LedgerRepository:
             assert_same_tenant(merchant.tenant_id, row.tenant_id, "merchant")
         return self._to_merchant(row)
 
-    def list_merchants(self, tenant_id: UUID) -> list[Merchant]:
+    def list_merchants(self, tenant_id: UUID, *, limit: int = 50, offset: int = 0) -> list[Merchant]:
         rows = self.session.scalars(
-            select(MerchantRow).where(MerchantRow.tenant_id == tenant_id).order_by(MerchantRow.created_at.desc())
+            select(MerchantRow)
+            .where(MerchantRow.tenant_id == tenant_id)
+            .order_by(MerchantRow.created_at.desc())
+            .offset(offset)
+            .limit(limit)
         ).all()
         return [self._to_merchant(r) for r in rows]
 
@@ -162,7 +179,7 @@ class LedgerRepository:
         assert_same_tenant(tenant_id, row.tenant_id, "merchant")
         return self._to_merchant(row)
 
-    def create_passport(self, passport: SpendingPassport) -> SpendingPassport:
+    def create_passport(self, passport: SpendingPassport, *, created_by: str | None = None) -> SpendingPassport:
         row = self.session.get(SpendingPassportRow, passport.id)
         if row is None:
             row = SpendingPassportRow(
@@ -186,15 +203,55 @@ class LedgerRepository:
             )
             self.session.add(row)
             self.session.flush()
-        else:
-            assert_same_tenant(passport.tenant_id, row.tenant_id, "spending_passport")
+            model = self._to_passport(row)
+            self.save_passport_snapshot(
+                tenant_id=row.tenant_id,
+                passport_id=row.id,
+                version=1,
+                policy_version=row.policy_version,
+                snapshot_json=model.model_dump(mode="json"),
+                created_by=created_by,
+            )
+            return model
+        assert_same_tenant(passport.tenant_id, row.tenant_id, "spending_passport")
         return self._to_passport(row)
 
-    def list_passports(self, tenant_id: UUID) -> list[SpendingPassport]:
+    def save_passport(self, passport: SpendingPassport, *, created_by: str | None = None) -> SpendingPassport:
+        """Create or update a SpendingPassport and auto-record an immutable versioned snapshot."""
+        row = self.session.get(SpendingPassportRow, passport.id)
+        if row is None:
+            return self.create_passport(passport, created_by=created_by)
+        assert_same_tenant(passport.tenant_id, row.tenant_id, "spending_passport")
+        row.policy_version = passport.policy_version
+        row.total_budget_minor = passport.total_budget_minor
+        row.per_tx_limit_minor = passport.per_tx_limit_minor
+        row.daily_limit_minor = passport.daily_limit_minor
+        row.human_approval_threshold_minor = passport.human_approval_threshold_minor
+        row.allowed_merchant_ids = [str(m) for m in passport.allowed_merchant_ids]
+        row.allowed_categories = list(passport.allowed_categories)
+        row.allow_unknown_merchants = passport.allow_unknown_merchants
+        row.status = passport.status.value
+        row.expires_at = passport.expires_at
+        self.session.flush()
+        model = self._to_passport(row)
+        next_version = self._next_passport_snapshot_version(row.tenant_id, row.id)
+        self.save_passport_snapshot(
+            tenant_id=row.tenant_id,
+            passport_id=row.id,
+            version=next_version,
+            policy_version=row.policy_version,
+            snapshot_json=model.model_dump(mode="json"),
+            created_by=created_by,
+        )
+        return model
+
+    def list_passports(self, tenant_id: UUID, *, limit: int = 50, offset: int = 0) -> list[SpendingPassport]:
         rows = self.session.scalars(
             select(SpendingPassportRow)
             .where(SpendingPassportRow.tenant_id == tenant_id)
             .order_by(SpendingPassportRow.created_at.desc())
+            .offset(offset)
+            .limit(limit)
         ).all()
         return [self._to_passport(r) for r in rows]
 
@@ -237,6 +294,7 @@ class LedgerRepository:
         allowed_merchant_ids: list[UUID] | None = None,
         allowed_categories: list[str] | None = None,
         allow_unknown_merchants: bool | None = None,
+        created_by: str | None = None,
     ) -> SpendingPassport:
         row = self.session.get(SpendingPassportRow, passport_id)
         if row is None:
@@ -257,7 +315,104 @@ class LedgerRepository:
         if allow_unknown_merchants is not None:
             row.allow_unknown_merchants = allow_unknown_merchants
         self.session.flush()
-        return self._to_passport(row)
+        model = self._to_passport(row)
+        next_version = self._next_passport_snapshot_version(tenant_id, passport_id)
+        self.save_passport_snapshot(
+            tenant_id=tenant_id,
+            passport_id=passport_id,
+            version=next_version,
+            policy_version=row.policy_version,
+            snapshot_json=model.model_dump(mode="json"),
+            created_by=created_by,
+        )
+        return model
+
+    def _next_passport_snapshot_version(self, tenant_id: UUID, passport_id: UUID) -> int:
+        max_ver = self.session.scalar(
+            select(func.max(SpendingPassportSnapshotRow.version)).where(
+                SpendingPassportSnapshotRow.tenant_id == tenant_id,
+                SpendingPassportSnapshotRow.passport_id == passport_id,
+            )
+        )
+        return int(max_ver or 0) + 1
+
+    def save_passport_snapshot(
+        self,
+        tenant_id: UUID,
+        passport_id: UUID,
+        version: int,
+        policy_version: str,
+        snapshot_json: dict[str, Any],
+        created_by: str | None = None,
+    ) -> str:
+        """Persist an immutable versioned snapshot of a SpendingPassport's policy state."""
+        snap_id = uuid4()
+        row = SpendingPassportSnapshotRow(
+            id=snap_id,
+            tenant_id=tenant_id,
+            passport_id=passport_id,
+            version=version,
+            policy_version=policy_version,
+            snapshot_json=dict(snapshot_json),
+            created_at=_utc_now(),
+            created_by=created_by,
+        )
+        self.session.add(row)
+        self.session.flush()
+        return str(snap_id)
+
+    def get_latest_passport_snapshot(
+        self, tenant_id: UUID, passport_id: UUID
+    ) -> dict[str, Any] | None:
+        """Return the latest immutable passport snapshot for a passport."""
+        row = self.session.scalar(
+            select(SpendingPassportSnapshotRow)
+            .where(
+                SpendingPassportSnapshotRow.tenant_id == tenant_id,
+                SpendingPassportSnapshotRow.passport_id == passport_id,
+            )
+            .order_by(
+                SpendingPassportSnapshotRow.version.desc(),
+                SpendingPassportSnapshotRow.created_at.desc(),
+            )
+            .limit(1)
+        )
+        return self._to_passport_snapshot_dict(row) if row is not None else None
+
+    def get_passport_snapshot_for_decision(
+        self, tenant_id: UUID, decision_id: UUID
+    ) -> dict[str, Any] | None:
+        """Return the passport snapshot bound to an authorization decision (with point-in-time fallback)."""
+        dec_row = self.session.get(AuthorizationDecisionRow, decision_id)
+        if dec_row is None:
+            return None
+        assert_same_tenant(tenant_id, dec_row.tenant_id, "authorization_decision")
+        if dec_row.passport_snapshot_id:
+            try:
+                snap_uuid = UUID(str(dec_row.passport_snapshot_id))
+            except ValueError:
+                snap_uuid = None
+            if snap_uuid is not None:
+                snap_row = self.session.get(SpendingPassportSnapshotRow, snap_uuid)
+                if snap_row is not None:
+                    assert_same_tenant(tenant_id, snap_row.tenant_id, "spending_passport_snapshot")
+                    return self._to_passport_snapshot_dict(snap_row)
+        snap_row = self.session.scalar(
+            select(SpendingPassportSnapshotRow)
+            .where(
+                SpendingPassportSnapshotRow.tenant_id == tenant_id,
+                SpendingPassportSnapshotRow.passport_id == dec_row.passport_id,
+                SpendingPassportSnapshotRow.created_at <= dec_row.decided_at,
+            )
+            .order_by(
+                SpendingPassportSnapshotRow.version.desc(),
+                SpendingPassportSnapshotRow.created_at.desc(),
+            )
+            .limit(1)
+        )
+        if snap_row is not None:
+            return self._to_passport_snapshot_dict(snap_row)
+        return self.get_latest_passport_snapshot(tenant_id, dec_row.passport_id)
 
     # ------------------------------------------------------------------
     # Proposals, Quotes, Intents, Decisions, Approvals
@@ -436,6 +591,7 @@ class LedgerRepository:
         return self._to_intent(row)
 
     def save_decision(self, decision: AuthorizationDecision) -> AuthorizationDecision:
+        snap_id = getattr(decision, "passport_snapshot_id", None)
         row = AuthorizationDecisionRow(
             id=decision.id,
             tenant_id=decision.tenant_id,
@@ -452,6 +608,7 @@ class LedgerRepository:
             requires_human_approval=decision.requires_human_approval,
             explanation=decision.explanation,
             policy_inputs=decision.policy_inputs,
+            passport_snapshot_id=str(snap_id) if snap_id is not None else None,
             decided_at=decision.decided_at,
         )
         self.session.add(row)
@@ -719,7 +876,13 @@ class LedgerRepository:
         also_enqueue_outbox: bool = True,
     ) -> FinancialEvent:
         """Append a hash-chained immutable FinancialEvent + optional transactional outbox entry."""
-        last = self.session.scalar(
+        is_pg = self._is_postgres()
+        if is_pg:
+            # Serialize sequence allocation per tenant so concurrent appends never collide on seq=1 or seq=N+1.
+            self.session.scalar(
+                select(TenantRow.id).where(TenantRow.id == tenant_id).with_for_update()
+            )
+        last_stmt = (
             select(FinancialEventRow)
             .where(
                 FinancialEventRow.tenant_id == tenant_id,
@@ -728,6 +891,9 @@ class LedgerRepository:
             .order_by(FinancialEventRow.sequence_number.desc())
             .limit(1)
         )
+        if is_pg:
+            last_stmt = last_stmt.with_for_update()
+        last = self.session.scalar(last_stmt)
         seq = (last.sequence_number + 1) if last else 1
         prev_hash = last.event_hash if last else None
         ev_id = uuid4()
@@ -801,12 +967,13 @@ class LedgerRepository:
             stmt = stmt.limit(limit)
         return [self._to_event(r) for r in self.session.scalars(stmt).all()]
 
-    def list_pending_outbox(self, limit: int = 50) -> list[OutboxEventRow]:
+    def list_pending_outbox(self, limit: int = 50, *, offset: int = 0) -> list[OutboxEventRow]:
         return list(
             self.session.scalars(
                 select(OutboxEventRow)
                 .where(OutboxEventRow.status == "PENDING")
                 .order_by(OutboxEventRow.created_at.asc())
+                .offset(offset)
                 .limit(limit)
             ).all()
         )
@@ -832,9 +999,19 @@ class LedgerRepository:
                 collected_at=evidence.collected_at,
             )
             self.session.add(row)
-            self.session.flush()
         else:
             assert_same_tenant(evidence.tenant_id, row.tenant_id, "evidence_record")
+            row.correlation_id = evidence.correlation_id
+            row.payment_intent_id = evidence.payment_intent_id
+            row.dispute_case_id = evidence.dispute_case_id
+            row.source_type = evidence.source_type.value
+            row.source_ref = evidence.source_ref
+            row.title = evidence.title
+            row.content = evidence.content
+            row.content_hash = evidence.content_hash
+            row.is_synthetic = evidence.is_synthetic
+            row.collected_at = evidence.collected_at
+        self.session.flush()
         return self._to_evidence(row)
 
     def list_evidence(
@@ -844,6 +1021,8 @@ class LedgerRepository:
         correlation_id: UUID | None = None,
         payment_intent_id: UUID | None = None,
         dispute_case_id: UUID | None = None,
+        limit: int = 100,
+        offset: int = 0,
     ) -> list[EvidenceRecord]:
         stmt = select(EvidenceRecordRow).where(EvidenceRecordRow.tenant_id == tenant_id)
         if correlation_id is not None:
@@ -852,11 +1031,16 @@ class LedgerRepository:
             stmt = stmt.where(EvidenceRecordRow.payment_intent_id == payment_intent_id)
         if dispute_case_id is not None:
             stmt = stmt.where(EvidenceRecordRow.dispute_case_id == dispute_case_id)
-        stmt = stmt.order_by(EvidenceRecordRow.collected_at.asc())
+        stmt = stmt.order_by(EvidenceRecordRow.collected_at.asc()).offset(offset).limit(limit)
         return [self._to_evidence(r) for r in self.session.scalars(stmt).all()]
 
     def save_dispute_case(self, case: DisputeCase) -> DisputeCase:
         row = self.session.get(DisputeCaseRow, case.id)
+        response_due_by = _ensure_utc(getattr(case, "response_due_by", None))
+        resolved_at = _ensure_utc(getattr(case, "resolved_at", None))
+        resolution_outcome = getattr(case, "resolution_outcome", None)
+        external_status = getattr(case, "external_status", None)
+
         if row is None:
             row = DisputeCaseRow(
                 id=case.id,
@@ -876,18 +1060,33 @@ class LedgerRepository:
                 approved_by=case.approved_by,
                 approved_at=case.approved_at,
                 response_payload_hash=case.response_payload_hash,
+                response_due_by=response_due_by,
+                resolved_at=resolved_at,
+                resolution_outcome=resolution_outcome,
+                external_status=external_status,
                 opened_at=case.opened_at,
                 updated_at=case.updated_at,
             )
             self.session.add(row)
         else:
             assert_same_tenant(case.tenant_id, row.tenant_id, "dispute_case")
+            row.paypal_dispute_id = case.paypal_dispute_id
+            row.source_type = case.source_type.value
+            row.is_synthetic = case.is_synthetic
+            row.reason = case.reason
+            row.buyer_claim = case.buyer_claim
+            row.amount_minor = case.amount_minor
+            row.currency = case.currency
             row.status = case.status.value
             row.evidence_ids = [str(eid) for eid in case.evidence_ids]
             row.human_approved_for_submission = case.human_approved_for_submission
             row.approved_by = case.approved_by
             row.approved_at = case.approved_at
             row.response_payload_hash = case.response_payload_hash
+            row.response_due_by = response_due_by
+            row.resolved_at = resolved_at
+            row.resolution_outcome = resolution_outcome
+            row.external_status = external_status
             row.updated_at = _utc_now()
         self.session.flush()
         return self._to_dispute_case(row)
@@ -899,11 +1098,15 @@ class LedgerRepository:
         assert_same_tenant(tenant_id, row.tenant_id, "dispute_case")
         return self._to_dispute_case(row)
 
-    def list_dispute_cases(self, tenant_id: UUID) -> list[DisputeCase]:
+    def list_dispute_cases(
+        self, tenant_id: UUID, *, limit: int = 50, offset: int = 0
+    ) -> list[DisputeCase]:
         rows = self.session.scalars(
             select(DisputeCaseRow)
             .where(DisputeCaseRow.tenant_id == tenant_id)
             .order_by(DisputeCaseRow.opened_at.desc())
+            .offset(offset)
+            .limit(limit)
         ).all()
         return [self._to_dispute_case(r) for r in rows]
 
@@ -1059,7 +1262,23 @@ class LedgerRepository:
         )
 
     @staticmethod
+    def _to_passport_snapshot_dict(row: SpendingPassportSnapshotRow) -> dict[str, Any]:
+        return {
+            "id": str(row.id),
+            "tenant_id": str(row.tenant_id),
+            "passport_id": str(row.passport_id),
+            "version": row.version,
+            "policy_version": row.policy_version,
+            "snapshot_json": dict(row.snapshot_json or {}),
+            "created_at": _ensure_utc(row.created_at).isoformat() if row.created_at else None,
+            "created_by": row.created_by,
+        }
+
+    @staticmethod
     def _to_decision(row: AuthorizationDecisionRow) -> AuthorizationDecision:
+        extra: dict[str, Any] = {}
+        if "passport_snapshot_id" in AuthorizationDecision.model_fields:
+            extra["passport_snapshot_id"] = row.passport_snapshot_id
         return AuthorizationDecision(
             id=row.id,
             tenant_id=row.tenant_id,
@@ -1077,6 +1296,7 @@ class LedgerRepository:
             explanation=row.explanation,
             policy_inputs=row.policy_inputs,
             decided_at=_ensure_utc(row.decided_at),  # type: ignore[arg-type]
+            **extra,
         )
 
     @staticmethod
@@ -1173,6 +1393,16 @@ class LedgerRepository:
 
     @staticmethod
     def _to_dispute_case(row: DisputeCaseRow) -> DisputeCase:
+        extra: dict[str, Any] = {}
+        fields = DisputeCase.model_fields
+        if "response_due_by" in fields:
+            extra["response_due_by"] = _ensure_utc(row.response_due_by)
+        if "resolved_at" in fields:
+            extra["resolved_at"] = _ensure_utc(row.resolved_at)
+        if "resolution_outcome" in fields:
+            extra["resolution_outcome"] = row.resolution_outcome
+        if "external_status" in fields:
+            extra["external_status"] = row.external_status
         return DisputeCase(
             id=row.id,
             tenant_id=row.tenant_id,
@@ -1193,6 +1423,7 @@ class LedgerRepository:
             response_payload_hash=row.response_payload_hash,
             opened_at=_ensure_utc(row.opened_at),  # type: ignore[arg-type]
             updated_at=_ensure_utc(row.updated_at),  # type: ignore[arg-type]
+            **extra,
         )
 
     @staticmethod
