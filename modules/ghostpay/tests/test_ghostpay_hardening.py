@@ -539,3 +539,4 @@ def test_router_mounts_under_v1_and_generates_valid_openapi_schema() -> None:
     )
     assert isinstance(raw_req, ReplayRequest)
     assert hasattr(GhostPayReplayRepository, "load_replay_request")
+

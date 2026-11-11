@@ -35,3 +35,4 @@ class UnsupportedPolicyVersionError(GhostPayError, ValueError):
 
 class ReplayExecutionForbiddenError(GhostPayError, RuntimeError):
     """Fail-closed safeguard if replay or simulation attempts non-read-only execution."""
+

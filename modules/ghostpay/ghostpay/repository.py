@@ -24,3 +24,4 @@ class GhostPayReplayRepository(Protocol):
     ) -> ReplayRequest | None:
         """Load tenant-scoped persisted records for ``correlation_id`` or return None if absent."""
         ...
+
