@@ -7,6 +7,7 @@ members = [
     "agentpay-guardian",
     "agentpay-nexus",
     "disputeos",
+    "ghostpay",
     "nexus-contracts",
     "nexus-database",
     "nexus-paypal",
@@ -42,6 +43,7 @@ dependencies = [
     { name = "agentpay-guardian" },
     { name = "disputeos" },
     { name = "fastapi" },
+    { name = "ghostpay" },
     { name = "httpx" },
     { name = "langgraph" },
     { name = "nexus-contracts" },
@@ -64,6 +66,7 @@ requires-dist = [
     { name = "agentpay-guardian", editable = "modules/agentpay-guardian" },
     { name = "disputeos", editable = "modules/disputeos" },
     { name = "fastapi", specifier = ">=0.115.0,<1.0.0" },
+    { name = "ghostpay", editable = "modules/ghostpay" },
     { name = "httpx", specifier = ">=0.27.0,<1.0.0" },
     { name = "langgraph", specifier = ">=0.2.0,<1.0.0" },
     { name = "nexus-contracts", editable = "packages/contracts" },
@@ -261,6 +264,25 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/60/39/7435269dcabb3c1b4ce1b9b03b40dae919415c258e1caa27160c22f55b9a/fastapi-0.162.4.tar.gz", hash = "sha256:4abdb1ef367090678d8bc664631df432ae7a1bfe7709c37547d3606e667650e3", size = 529374, upload-time = "2026-11-10T17:51:17.96Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3f/6b/0537ac682ac728dbe91f75c16683a985d11812f9930f21a35b756d6df629/fastapi-0.162.4-py3-none-any.whl", hash = "sha256:f093bc306d3958278d30ffd14f3834ca3d9b144fbb898ab5c9b652cf6e75f869", size = 151685, upload-time = "2026-11-10T17:51:16.562Z" },
+]
+
+[[package]]
+name = "ghostpay"
+version = "0.1.0"
+source = { editable = "modules/ghostpay" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "nexus-contracts" },
+    { name = "nexus-security" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115.0,<1.0.0" },
+    { name = "nexus-contracts", editable = "packages/contracts" },
+    { name = "nexus-security", editable = "packages/security" },
+    { name = "pydantic", specifier = ">=2.9.0,<3.0.0" },
 ]
 
 [[package]]

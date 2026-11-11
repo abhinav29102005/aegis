@@ -33,8 +33,10 @@ jobs:
           if [ -d "modules/ghostpay/tests" ] && [ -n "$(find modules/ghostpay/tests -name 'test_*.py' 2>/dev/null)" ]; then
             PYTHONPATH=modules/ghostpay uv run pytest modules/ghostpay/tests -v
           fi
+      - name: Run full workspace tests
+        run: uv run pytest -v
       - name: Lint Python with Ruff
-        run: uv run ruff check packages modules/disputeos
+        run: uv run ruff check packages modules/disputeos modules/agentpay-guardian modules/ghostpay
 
   secret-scan:
     runs-on: ubuntu-latest
