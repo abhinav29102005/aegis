@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hmac
 from dataclasses import dataclass, field
-from uuid import UUID
 
 from contracts import (
     EvidenceRecord,
@@ -14,11 +13,12 @@ from contracts import (
     compute_payload_hash,
     compute_quote_hash,
 )
-from ghostpay.domain.models import PaymentTrace
 from security import (
     assert_same_tenant,
     verify_financial_event_chain,
 )
+
+from ghostpay.domain.models import PaymentTrace
 
 
 @dataclass

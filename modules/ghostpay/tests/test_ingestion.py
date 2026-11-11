@@ -2,19 +2,12 @@
 
 from __future__ import annotations
 
-from uuid import uuid4
-
 import pytest
-from contracts import (
-    FinancialEvent,
-    FinancialEventType,
-    compute_payload_hash,
-)
 from contracts.fixtures import (
-    AGENT_PROCUREMENT_ID,
     TENANT_ALPHA_ID,
     TENANT_BETA_ID,
 )
+
 from ghostpay.domain.exceptions import CrossTenantAccessError, IntegrityError
 from ghostpay.ingestion.adapter import TraceIngestionAdapter
 from ghostpay.ingestion.validation import TraceValidator

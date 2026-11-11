@@ -2,120 +2,99 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from collections.abc import Mapping
 from typing import Any
-from uuid import UUID
 
-from contracts import (
-    Merchant,
-    PassportStatus,
-    ReplayRequest,
-    ReplayResult,
-    compute_quote_hash,
+from contracts import ReplayRequest, ReplayResult
+
+from ghostpay.counterfactual.validator import (
+    apply_validated_counterfactual_overrides,
 )
-
+from ghostpay.errors import OverrideValidationError, ReplayExecutionForbiddenError
+from ghostpay.provenance.verifier import enforce_request_tenancy
 from ghostpay.replay.engine import ReplayEngine
+from ghostpay.replay.registry import resolve_policy_evaluator
 
 
 def simulate_counterfactual(
     request: ReplayRequest,
-    overrides: dict[str, Any] | None = None,
+    overrides: Mapping[str, Any] | None = None,
 ) -> ReplayResult:
-    """Simulate what-if policy or environment changes without mutating original request or records.
+    """Simulate what-if policy changes on isolated validated copies without mutating originals.
 
-    Supported overrides:
-    - per_tx_limit_minor: int
-    - total_budget_minor: int
-    - allowed_merchant_ids: list[UUID | str]
+    Supported override keys (strictly allowlisted & Pydantic v2 validated):
+    - per_tx_limit_minor: int (>= 0)
+    - total_budget_minor: int (>= 0)
+    - daily_limit_minor: int (>= 0)
+    - allowed_merchant_ids: list[UUID]
     - allow_unknown_merchants: bool
-    - human_approval_threshold_minor: int
+    - allowed_categories: list[str]
+    - human_approval_threshold_minor: int (>= 0)
     - passport_status: PassportStatus | str
-    - expires_at: datetime | str
-    - merchant_override: Merchant | dict | UUID | str
-    - amount_override_minor: int
+    - expires_at: datetime | ISO-8601 str
+    - merchant_override: Merchant | dict | UUID | UUID str (same tenant enforced)
+    - amount_override_minor: int (> 0)
+    - currency_override: str (3-letter ISO code)
     """
-    # 1. Deep clone the request to guarantee zero mutation of caller inputs
-    cloned = request.model_copy(deep=True)
+    if overrides is not None and not isinstance(overrides, Mapping):
+        raise OverrideValidationError(
+            "Counterfactual overrides must be a mapping/dict.",
+            errors=[{"field": "overrides", "message": "Expected mapping/dict payload."}],
+        )
 
-    # 2. Merge dictionary overrides
+    # 1. Fail closed on tenant isolation & policy version before applying overrides
+    enforce_request_tenancy(request)
+    resolve_policy_evaluator(request.policy_version)
+
+    # 2. Merge dictionary overrides safely without mutating caller objects
     effective_overrides: dict[str, Any] = {
-        **cloned.counterfactual_overrides,
-        **(overrides or {}),
+        **request.counterfactual_overrides,
+        **dict(overrides or {}),
     }
 
-    # 3. Apply passport overrides to cloned object
-    passport_updates: dict[str, Any] = {}
-    if "per_tx_limit_minor" in effective_overrides:
-        passport_updates["per_tx_limit_minor"] = int(effective_overrides["per_tx_limit_minor"])
-    if "total_budget_minor" in effective_overrides:
-        passport_updates["total_budget_minor"] = int(effective_overrides["total_budget_minor"])
-    if "allowed_merchant_ids" in effective_overrides:
-        raw_m_ids = effective_overrides["allowed_merchant_ids"]
-        passport_updates["allowed_merchant_ids"] = [
-            m if isinstance(m, UUID) else UUID(str(m)) for m in raw_m_ids
-        ]
-    if "allow_unknown_merchants" in effective_overrides:
-        passport_updates["allow_unknown_merchants"] = bool(effective_overrides["allow_unknown_merchants"])
-    if "human_approval_threshold_minor" in effective_overrides:
-        passport_updates["human_approval_threshold_minor"] = int(effective_overrides["human_approval_threshold_minor"])
-    if "passport_status" in effective_overrides:
-        raw_status = effective_overrides["passport_status"]
-        passport_updates["status"] = (
-            raw_status if isinstance(raw_status, PassportStatus) else PassportStatus(str(raw_status))
+    # 3. Validate overrides and reconstruct isolated hypothetical ReplayRequest
+    hypothetical_request, _validated, applied_fields = apply_validated_counterfactual_overrides(
+        request,
+        effective_overrides,
+    )
+
+    # 4. Evaluate baseline (unmodified recorded policy) vs hypothetical (with overrides)
+    baseline_request = request.model_copy(deep=True, update={"counterfactual_overrides": {}})
+    baseline_result = ReplayEngine.replay(baseline_request)
+    hypothetical_result = ReplayEngine.replay(hypothetical_request)
+
+    # 5. Annotate baseline vs hypothetical comparison inside frozen ReplayResult contract
+    comparison_constraints = list(hypothetical_result.changed_constraints)
+    baseline_vs_hypothetical = (
+        f"COUNTERFACTUAL_COMPARISON: baseline_recomputed={baseline_result.recomputed_outcome.value} "
+        f"-> hypothetical={hypothetical_result.recomputed_outcome.value} "
+        f"(recorded={baseline_result.original_outcome.value}, overrides={applied_fields})"
+    )
+    comparison_constraints.insert(0, baseline_vs_hypothetical)
+
+    explanation = (
+        f"Counterfactual simulation (read-only, executed_payment=False) for "
+        f"correlation_id={request.correlation_id} using policy_version={hypothetical_result.policy_version}. "
+        f"Applied overrides={applied_fields}. "
+        f"Recorded outcome={baseline_result.original_outcome.value}; "
+        f"baseline recomputed={baseline_result.recomputed_outcome.value}; "
+        f"hypothetical outcome={hypothetical_result.recomputed_outcome.value} "
+        f"({[r.value for r in hypothetical_result.recomputed_reason_codes]}). "
+        f"Status={hypothetical_result.consistency_status}, drift_detected={hypothetical_result.drift_detected}."
+    )[:2000]
+
+    final_result = hypothetical_result.model_copy(
+        update={
+            "changed_constraints": comparison_constraints,
+            "explanation": explanation,
+            "executed_payment": False,
+        }
+    )
+
+    # 6. Safety invariant: counterfactual simulation NEVER executes a payment
+    if final_result.executed_payment is not False:
+        raise ReplayExecutionForbiddenError(
+            "Counterfactual simulation invariant violated: executed_payment must remain False."
         )
-    if "expires_at" in effective_overrides:
-        raw_exp = effective_overrides["expires_at"]
-        if isinstance(raw_exp, str):
-            exp_dt = datetime.fromisoformat(raw_exp)
-        else:
-            exp_dt = raw_exp
-        passport_updates["expires_at"] = exp_dt
 
-    if passport_updates:
-        cloned_passport = cloned.recorded_passport.model_copy(update=passport_updates)
-        cloned = cloned.model_copy(update={"recorded_passport": cloned_passport})
-
-    # 4. Apply merchant override to cloned object
-    if "merchant_override" in effective_overrides:
-        m_val = effective_overrides["merchant_override"]
-        if isinstance(m_val, Merchant):
-            cloned_merchant = m_val
-        elif isinstance(m_val, dict):
-            cloned_merchant = cloned.recorded_merchant.model_copy(update=m_val)
-        elif isinstance(m_val, UUID):
-            cloned_merchant = cloned.recorded_merchant.model_copy(update={"id": m_val})
-        else:
-            cloned_merchant = cloned.recorded_merchant.model_copy(update={"id": UUID(str(m_val))})
-        cloned = cloned.model_copy(update={"recorded_merchant": cloned_merchant})
-
-    # 5. Apply amount override to cloned object
-    if "amount_override_minor" in effective_overrides:
-        new_amount = int(effective_overrides["amount_override_minor"])
-        cloned_proposal = cloned.proposal.model_copy(update={"amount_minor": new_amount})
-        new_q_hash = compute_quote_hash(
-            merchant_id=cloned.quote_snapshot.merchant_id,
-            amount_minor=new_amount,
-            currency=cloned.quote_snapshot.currency,
-            line_items=cloned.quote_snapshot.line_items,
-        )
-        cloned_quote = cloned.quote_snapshot.model_copy(update={
-            "amount_minor": new_amount,
-            "quote_hash": new_q_hash,
-        })
-        cloned_intent = cloned.payment_intent.model_copy(update={
-            "amount_minor": new_amount,
-            "quote_hash": new_q_hash,
-        })
-        cloned = cloned.model_copy(update={
-            "proposal": cloned_proposal,
-            "quote_snapshot": cloned_quote,
-            "payment_intent": cloned_intent,
-        })
-
-    # 6. Replay cloned request
-    result = ReplayEngine.replay(cloned)
-
-    # 7. Invariant: counterfactual simulation NEVER triggers payment execution
-    assert result.executed_payment is False, "Counterfactual simulation invariant violated: executed_payment must be False"
-
-    return result
+    return final_result

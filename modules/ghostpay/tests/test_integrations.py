@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from contracts import PaymentState
-from contracts.fixtures import build_authorized_39_purchase_fixture
+
 from ghostpay.domain.service import GhostPayService
 from ghostpay.integrations.disputeos import export_to_disputeos
 from ghostpay.integrations.guardian import GuardianTraceAdapter

@@ -20,6 +20,7 @@ def detect_anomalies(
     recomputed_outcome: DecisionOutcome,
     recomputed_reason_codes: list[Any],
     integrity_errors: list[str] | None = None,
+    executed_policy_version: str | None = None,
 ) -> list[str]:
     """Detect anomalies including merchant substitution, amount spikes, expired passports, and quote mismatches."""
     anomalies: list[str] = []
@@ -78,6 +79,10 @@ def detect_anomalies(
         anomalies.append(
             f"QUOTE_MISMATCH: Proposal currency ({proposal.currency}) differs from quote currency ({quote.currency})."
         )
+    if quote.currency != passport.currency:
+        anomalies.append(
+            f"CURRENCY_MISMATCH: Quote currency ({quote.currency}) differs from passport currency ({passport.currency})."
+        )
     if intent.quote_hash and quote.quote_hash and intent.quote_hash != quote.quote_hash:
         anomalies.append(
             f"QUOTE_MISMATCH: Payment intent quote hash ({intent.quote_hash}) does not match quote snapshot ({quote.quote_hash})."
@@ -109,7 +114,20 @@ def detect_anomalies(
             f"AUTHORIZATION_DRIFT: Reason codes changed from {[r.value for r in original_decision.reason_codes]} to {[r.value for r in recomputed_reason_codes]}."
         )
 
-    # 6. Integrity failure anomalies
+    # 6. Policy version mismatch detection
+    active_policy_version = executed_policy_version or request.policy_version
+    if original_decision.policy_version != active_policy_version:
+        anomalies.append(
+            f"POLICY_VERSION_MISMATCH: Replayed under '{active_policy_version}', "
+            f"recorded_decision used '{original_decision.policy_version}'."
+        )
+    if passport.policy_version != active_policy_version:
+        anomalies.append(
+            f"POLICY_VERSION_MISMATCH: Replayed under '{active_policy_version}', "
+            f"recorded_passport specifies '{passport.policy_version}'."
+        )
+
+    # 7. Integrity failure anomalies
     if integrity_errors:
         for err in integrity_errors:
             anomalies.append(f"INTEGRITY_VIOLATION: {err}")

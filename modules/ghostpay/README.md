@@ -1,15 +1,15 @@
 # GhostPay (`modules/ghostpay/`)
 
 **Subsystem:** Forensic Intelligence, Policy Time Machine & Agent DNA  
-**Package:** `agentpay-ghostpay`  
+**Package:** `agentpay-ghostpay` (`ghostpay`)  
 **Branch:** `feature/ghostpay`  
-**Status:** Implemented & Verified (47/47 Tests Passing)
+**Status:** Hardened, Reconciled & Integration-Ready
 
 ---
 
 ## 1. Subsystem Architecture
 
-GhostPay is the forensic digital twin and behavioral intelligence subsystem of AgentPay Nexus. It consumes financial evidence emitted by AgentPay Guardian, reconstructs deterministic event timelines, replays transactions against counterfactual policies, and analyzes autonomous purchasing agent behavior without ever possessing financial execution authority.
+GhostPay is the forensic digital twin and behavioral intelligence subsystem of **AEGIS (AgentPay Nexus)**. It provides deterministic authorization replay, strictly validated counterfactual policy simulation (`PolicyTimeMachine`), Agent DNA behavioral profiling, anomaly detection, provenance verification, and deterministic timeline reconstruction without ever possessing financial execution authority.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -64,7 +64,14 @@ GhostPay is the forensic digital twin and behavioral intelligence subsystem of A
 ```text
 modules/ghostpay/
 ├── ghostpay/
-│   ├── __init__.py               # Top-level exports and legacy facade
+│   ├── __init__.py               # Combined hardened + Policy Time Machine & Agent DNA exports
+│   ├── errors.py                 # OverrideValidationError, UnsupportedPolicyVersionError, ReplayExecutionForbiddenError
+│   ├── repository.py             # Read-only GhostPayReplayRepository Protocol for DB handoff
+│   ├── replay/                   # Policy version registry (registry.py) & deterministic ReplayEngine (engine.py)
+│   ├── counterfactual/           # Strict Pydantic v2 override validator (validator.py) & non-mutating simulator
+│   ├── anomalies/                # Authorization drift, currency, policy-version, & forensic anomaly detection
+│   ├── provenance/               # Evidence completeness, correlation binding, & hash-chain integrity verification
+│   ├── timelines/                # Deterministic event timeline reconstruction (`build_timeline`)
 │   ├── testing.py                # Isolated test trace and baseline generation utilities
 │   ├── domain/
 │   │   ├── exceptions.py         # GhostPayError, IntegrityError, CrossTenantAccessError, etc.

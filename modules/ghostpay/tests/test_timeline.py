@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contracts.fixtures import build_authorized_39_purchase_fixture
+
 from ghostpay.forensics.provenance import build_provenance_graph
 from ghostpay.forensics.timeline import build_timeline
 from ghostpay.testing import make_test_trace

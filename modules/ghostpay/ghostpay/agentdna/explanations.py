@@ -8,7 +8,7 @@ from ghostpay.agentdna.detector import AgentDNAAnomalyResult
 def format_agent_dna_explanation(result: AgentDNAAnomalyResult) -> str:
     """Format an interpretable summary of Agent DNA behavioral evaluation."""
     if result.status == "INSUFFICIENT_HISTORY":
-        return f"Agent DNA: Insufficient historical transactions to establish a reliable baseline. (Score: 0.0)"
+        return "Agent DNA: Insufficient historical transactions to establish a reliable baseline. (Score: 0.0)"
 
     if not result.is_anomaly:
         return f"Agent DNA: Normal transaction behavior. Conforms with historical baseline. (Score: {result.anomaly_score})"

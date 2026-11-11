@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from contracts import (
@@ -18,6 +18,7 @@ from contracts import (
     ReplayTimelineEntry,
     SpendingPassport,
 )
+
 from ghostpay.agentdna.detector import AgentDNAAnomalyResult, AgentDNADetector
 from ghostpay.agentdna.explanations import format_agent_dna_explanation
 from ghostpay.agentdna.profiles import AgentBehaviorProfile, build_agent_profile

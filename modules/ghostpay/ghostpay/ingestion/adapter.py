@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
 from uuid import UUID, uuid4
 
 from contracts import (
@@ -15,6 +14,7 @@ from contracts import (
     QuoteSnapshot,
     SpendingPassport,
 )
+
 from ghostpay.domain.exceptions import (
     IntegrityError,
 )

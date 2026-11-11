@@ -2,20 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Any
 from uuid import UUID
 
 from contracts import (
     EvidenceRecord,
     FinancialEvent,
     PaymentIntent,
-    compute_payload_hash,
-)
-from ghostpay.domain.exceptions import (
-    CrossTenantAccessError,
-    IntegrityError,
 )
 from security import compute_financial_event_hash
+
+from ghostpay.domain.exceptions import (
+    CrossTenantAccessError,
+)
 
 
 class TraceValidator:

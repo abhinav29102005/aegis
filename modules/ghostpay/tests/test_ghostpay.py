@@ -13,9 +13,11 @@ from contracts.fixtures import (
     TENANT_BETA_ID,
     build_authorized_39_purchase_fixture,
 )
-from ghostpay.counterfactual import simulate_counterfactual
-from ghostpay.replay import ReplayEngine
 from security import TenantIsolationError
+
+from ghostpay.counterfactual import simulate_counterfactual
+from ghostpay.errors import OverrideValidationError
+from ghostpay.replay import ReplayEngine
 
 
 def test_1_identical_inputs_and_policy_version_produce_identical_results() -> None:
@@ -164,8 +166,9 @@ def test_counterfactual_all_nine_supported_overrides_individually() -> None:
     assert res3.recomputed_outcome == DecisionOutcome.DENY
     assert DecisionReasonCode.DENIED_MERCHANT_NOT_ALLOWLISTED in res3.recomputed_reason_codes
 
-    # 4. allow_unknown_merchants + unapproved merchant: escalates instead of denied
-    unapproved_req = req.model_copy(update={"recorded_merchant": unknown_merchant})
+    # 4. allow_unknown_merchants + unapproved merchant in allowed category: escalates instead of denied
+    unapproved_software_merchant = unknown_merchant.model_copy(update={"category": "SOFTWARE"})
+    unapproved_req = req.model_copy(update={"recorded_merchant": unapproved_software_merchant})
     res4 = simulate_counterfactual(unapproved_req, {"allow_unknown_merchants": True})
     assert res4.recomputed_outcome == DecisionOutcome.ESCALATE
     assert DecisionReasonCode.ESCALATED_UNKNOWN_MERCHANT in res4.recomputed_reason_codes
@@ -195,11 +198,15 @@ def test_counterfactual_all_nine_supported_overrides_individually() -> None:
     assert res9.recomputed_outcome == DecisionOutcome.DENY
     assert DecisionReasonCode.DENIED_EXCEEDS_PER_TX_LIMIT in res9.recomputed_reason_codes
 
-    # Check direct request.counterfactual_overrides also works in ReplayEngine.replay
+    # Baseline ReplayEngine.replay rejects nonempty counterfactual_overrides; simulation applies them
     direct_req = req.model_copy(update={"counterfactual_overrides": {"per_tx_limit_minor": 1000}})
-    res_direct = ReplayEngine.replay(direct_req)
+    with pytest.raises(OverrideValidationError):
+        ReplayEngine.replay(direct_req)
+
+    res_direct = simulate_counterfactual(direct_req)
     assert res_direct.recomputed_outcome == DecisionOutcome.DENY
     assert DecisionReasonCode.DENIED_EXCEEDS_PER_TX_LIMIT in res_direct.recomputed_reason_codes
+    assert res_direct.executed_payment is False
 
 
 def test_6_missing_evidence_is_explicitly_reported() -> None:

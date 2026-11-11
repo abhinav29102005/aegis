@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-from uuid import UUID
-
 from contracts import (
     ApprovalRecord,
     AuthorizationDecision,
@@ -15,6 +12,7 @@ from contracts import (
     QuoteSnapshot,
     SpendingPassport,
 )
+
 from ghostpay.domain.models import PaymentTrace
 from ghostpay.ingestion.adapter import TraceIngestionAdapter
 

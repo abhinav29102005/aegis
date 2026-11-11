@@ -7,8 +7,9 @@ from typing import Any
 from uuid import UUID
 
 from contracts import EvidenceRecord
-from ghostpay.domain.models import InvestigationReport, PaymentTrace
 from pydantic import BaseModel, Field
+
+from ghostpay.domain.models import InvestigationReport, PaymentTrace
 
 
 def _utc_now() -> datetime:

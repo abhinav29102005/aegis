@@ -3,22 +3,19 @@
 from __future__ import annotations
 
 import pytest
-from contracts import DecisionOutcome, PaymentState
+from contracts import DecisionOutcome
 from contracts.fixtures import (
-    AGENT_PROCUREMENT_ID,
-    MERCHANT_SANDBOX_CLOUD_ID,
     MERCHANT_UNKNOWN_ID,
     TENANT_ALPHA_ID,
     TENANT_BETA_ID,
     build_authorized_39_purchase_fixture,
 )
-from ghostpay.agentdna.detector import AgentDNADetector
-from ghostpay.agentdna.profiles import build_agent_profile
+
 from ghostpay.domain.exceptions import CrossTenantAccessError
 from ghostpay.domain.service import GhostPayService
+from ghostpay.testing import make_test_trace
 from ghostpay.timemachine.policies import CounterfactualPolicy
 from ghostpay.timemachine.replay import PolicyTimeMachine
-from ghostpay.testing import make_test_trace
 
 
 def test_tenant_isolation_on_investigations(service: GhostPayService) -> None:
@@ -77,7 +74,7 @@ def test_adversarial_evaluation_matrix() -> None:
     correct_evaluations = 0
     total_evaluations = len(scenarios)
 
-    for name, overrides, expected in scenarios:
+    for _name, overrides, expected in scenarios:
         s_req = req.model_copy(update={"counterfactual_overrides": overrides})
         res = PolicyTimeMachine.replay(s_req)
         if res.recomputed_outcome == expected:

@@ -20,6 +20,7 @@ from contracts import (
     SpendingPassport,
     compute_quote_hash,
 )
+
 from ghostpay.domain.exceptions import IllegalSideEffectError
 from ghostpay.domain.models import PaymentTrace
 from ghostpay.forensics.anomalies import detect_anomalies

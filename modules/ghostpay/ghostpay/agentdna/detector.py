@@ -5,8 +5,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from ghostpay.agentdna.profiles import AgentBehaviorProfile
 from pydantic import BaseModel, Field
+
+from ghostpay.agentdna.profiles import AgentBehaviorProfile
 
 if TYPE_CHECKING:
     from ghostpay.domain.models import PaymentTrace

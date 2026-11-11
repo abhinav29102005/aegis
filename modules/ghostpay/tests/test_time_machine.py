@@ -2,26 +2,21 @@
 
 from __future__ import annotations
 
-from uuid import uuid4
-
 import pytest
 from contracts import (
     DecisionOutcome,
     DecisionReasonCode,
     ReplayRequest,
-    ReplayResult,
 )
 from contracts.fixtures import (
-    MERCHANT_SANDBOX_CLOUD_ID,
     MERCHANT_UNKNOWN_ID,
-    build_authorized_39_purchase_fixture,
 )
+
 from ghostpay.domain.exceptions import IllegalSideEffectError
+from ghostpay.testing import make_test_trace
 from ghostpay.timemachine.comparison import compare_policies
 from ghostpay.timemachine.policies import CounterfactualPolicy
-from ghostpay.timemachine.recommendations import generate_safeguard_recommendations
 from ghostpay.timemachine.replay import PolicyTimeMachine
-from ghostpay.testing import make_test_trace
 
 
 def test_t07_original_allowed_purchase_becomes_denied_under_stricter_limit(
@@ -111,7 +106,8 @@ def test_t11_replaying_same_trace_and_policy_produces_identical_results(
     assert res1.recomputed_reason_codes == res2.recomputed_reason_codes
     assert res1.changed_constraints == res2.changed_constraints
     assert res1.consistency_status == res2.consistency_status
-    assert res1.executed_payment == res2.executed_payment == False
+    assert res1.executed_payment is False
+    assert res2.executed_payment is False
 
 
 def test_t12_replay_cannot_invoke_paypal_reserve_or_mutate_state() -> None:

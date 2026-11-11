@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Any
 from uuid import UUID, uuid4
 
 from contracts import (
-    ApprovalRecord,
-    ApprovalStatus,
     AuthorizationDecision,
     DecisionOutcome,
     DecisionReasonCode,
@@ -18,30 +15,22 @@ from contracts import (
     FinancialEventType,
     Merchant,
     PassportStatus,
-    PaymentAttempt,
     PaymentIntent,
     PaymentState,
-    PurchaseProposal,
     QuoteSnapshot,
-    ReplayRequest,
     SpendingPassport,
-    VerifiedPayPalCapture,
     compute_payload_hash,
     compute_quote_hash,
 )
 from contracts.fixtures import (
     AGENT_PROCUREMENT_ID,
-    BASE_TIME,
     MERCHANT_SANDBOX_CLOUD_ID,
-    MERCHANT_UNKNOWN_ID,
     PASSPORT_DEFAULT_ID,
     TENANT_ALPHA_ID,
-    TENANT_BETA_ID,
-    build_authorized_39_purchase_fixture,
-    build_base_entities,
 )
-from ghostpay.domain.models import PaymentTrace
 from security import compute_financial_event_hash
+
+from ghostpay.domain.models import PaymentTrace
 
 
 def make_test_trace(

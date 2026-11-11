@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from datetime import UTC, datetime
 
-import pytest
 from contracts import DecisionOutcome
 from contracts.fixtures import (
     AGENT_PROCUREMENT_ID,
@@ -13,6 +11,7 @@ from contracts.fixtures import (
     MERCHANT_UNKNOWN_ID,
     TENANT_ALPHA_ID,
 )
+
 from ghostpay.agentdna.detector import AgentDNADetector
 from ghostpay.agentdna.features import extract_agent_features
 from ghostpay.agentdna.profiles import build_agent_profile

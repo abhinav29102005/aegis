@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from uuid import uuid4
-
 import pytest
 from contracts import DecisionOutcome
 from contracts.fixtures import (
@@ -13,6 +11,7 @@ from contracts.fixtures import (
     build_authorized_39_purchase_fixture,
 )
 from fastapi import HTTPException
+
 from ghostpay.api.models import (
     AnalyzeAgentRequest,
     CreateInvestigationRequest,

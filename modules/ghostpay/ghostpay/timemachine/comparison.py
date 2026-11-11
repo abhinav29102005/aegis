@@ -6,9 +6,10 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from contracts import DecisionOutcome, ReplayRequest, ReplayResult
+from pydantic import BaseModel, Field
+
 from ghostpay.timemachine.policies import CounterfactualPolicy
 from ghostpay.timemachine.replay import PolicyTimeMachine
-from pydantic import BaseModel, Field
 
 
 class PolicyComparisonEntry(BaseModel):

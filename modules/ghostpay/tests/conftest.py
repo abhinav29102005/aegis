@@ -8,8 +8,6 @@ from uuid import UUID, uuid4
 
 import pytest
 from contracts import (
-    ApprovalRecord,
-    ApprovalStatus,
     AuthorizationDecision,
     DecisionOutcome,
     DecisionReasonCode,
@@ -19,35 +17,28 @@ from contracts import (
     FinancialEventType,
     Merchant,
     PassportStatus,
-    PaymentAttempt,
     PaymentIntent,
     PaymentState,
-    PurchaseProposal,
     QuoteSnapshot,
-    ReplayRequest,
     SpendingPassport,
-    VerifiedPayPalCapture,
     compute_payload_hash,
     compute_quote_hash,
 )
 from contracts.fixtures import (
     AGENT_PROCUREMENT_ID,
-    BASE_TIME,
     MERCHANT_SANDBOX_CLOUD_ID,
-    MERCHANT_UNKNOWN_ID,
     PASSPORT_DEFAULT_ID,
     TENANT_ALPHA_ID,
-    TENANT_BETA_ID,
     build_authorized_39_purchase_fixture,
     build_base_entities,
 )
-from ghostpay.agentdna.detector import AgentDNADetector
+from security import compute_financial_event_hash
+
 from ghostpay.domain.models import PaymentTrace
 from ghostpay.domain.service import GhostPayService
 from ghostpay.ingestion.adapter import TraceIngestionAdapter
 from ghostpay.integrations.guardian import GuardianTraceAdapter
-from ghostpay.testing import build_baseline_history, make_test_trace
-from security import compute_financial_event_hash
+from ghostpay.testing import build_baseline_history
 
 
 @pytest.fixture

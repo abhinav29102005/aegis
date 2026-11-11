@@ -7,8 +7,9 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from contracts import compute_payload_hash
-from ghostpay.agentdna.features import extract_agent_features
 from pydantic import BaseModel, Field, field_validator
+
+from ghostpay.agentdna.features import extract_agent_features
 
 if TYPE_CHECKING:
     from ghostpay.domain.models import PaymentTrace
