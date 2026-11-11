@@ -332,6 +332,9 @@ class OutboxEventRow(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING", index=True)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dead_lettered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -349,5 +352,163 @@ class IdempotencyRecordRow(Base):
     request_hash: Mapped[str] = mapped_column(String(128), nullable=False)
     response_payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     status_code: Mapped[int] = mapped_column(Integer, nullable=False, default=200)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+
+# ----------------------------------------------------------------------
+# AEGIS Multi-Tenant Auth, RBAC, Investigations, Artifacts & Webhooks
+# ----------------------------------------------------------------------
+class UserRow(Base):
+    __tablename__ = "users"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    full_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+
+class OrganizationMembershipRow(Base):
+    __tablename__ = "organization_memberships"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "user_id", name="uq_org_membership_tenant_user"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    tenant_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("tenants.id"), index=True, nullable=False)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id"), index=True, nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False, default="OPERATOR")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="ACTIVE")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+
+class ServiceAccountRow(Base):
+    __tablename__ = "service_accounts"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_service_account_tenant_name"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    tenant_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("tenants.id"), index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    role: Mapped[str] = mapped_column(String(32), nullable=False, default="AGENT_SERVICE")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="ACTIVE")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+
+class ApiKeyRow(Base):
+    __tablename__ = "api_keys"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    tenant_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("tenants.id"), index=True, nullable=False)
+    service_account_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("service_accounts.id"), index=True, nullable=True
+    )
+    user_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("users.id"), index=True, nullable=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    key_prefix: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    key_hash: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False, default="AGENT_SERVICE")
+    scopes: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="ACTIVE", index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+
+class AdminAuditLogRow(Base):
+    __tablename__ = "admin_audit_logs"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    tenant_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("tenants.id"), index=True, nullable=False)
+    actor_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    action: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    resource_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    resource_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    correlation_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    details: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, index=True, nullable=False)
+
+
+class ReplayInvestigationRow(Base):
+    __tablename__ = "replay_investigations"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    tenant_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("tenants.id"), index=True, nullable=False)
+    correlation_id: Mapped[UUID] = mapped_column(Uuid, index=True, nullable=False)
+    payment_intent_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("payment_intents.id"), index=True, nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    mode: Mapped[str] = mapped_column(String(32), nullable=False, default="REPLAY")
+    overrides: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    result_payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    consistency_status: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    drift_detected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    integrity_valid: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, index=True, nullable=False)
+
+
+class DisputeCaseMetadataRow(Base):
+    __tablename__ = "dispute_case_metadata"
+
+    dispute_case_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("dispute_cases.id"), primary_key=True
+    )
+    tenant_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("tenants.id"), index=True, nullable=False)
+    assigned_to: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    notes: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    retention_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+
+class EvidenceArtifactRow(Base):
+    __tablename__ = "evidence_artifacts"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    tenant_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("tenants.id"), index=True, nullable=False)
+    evidence_record_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("evidence_records.id"), index=True, nullable=False
+    )
+    storage_backend: Mapped[str] = mapped_column(String(64), nullable=False, default="LOCAL_OBJECT_STORE")
+    object_key: Mapped[str] = mapped_column(String(500), unique=True, nullable=False)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(128), nullable=False, default="application/octet-stream")
+    byte_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+
+class WebhookEndpointRow(Base):
+    __tablename__ = "webhook_endpoints"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    tenant_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("tenants.id"), index=True, nullable=False)
+    url: Mapped[str] = mapped_column(String(500), nullable=False)
+    description: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    signing_secret: Mapped[str] = mapped_column(String(128), nullable=False)
+    event_types: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="ACTIVE", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+
+class WebhookDeliveryRow(Base):
+    __tablename__ = "webhook_deliveries"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    tenant_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("tenants.id"), index=True, nullable=False)
+    endpoint_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("webhook_endpoints.id"), index=True, nullable=False)
+    outbox_event_id: Mapped[UUID | None] = mapped_column(Uuid, index=True, nullable=True)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    response_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
 

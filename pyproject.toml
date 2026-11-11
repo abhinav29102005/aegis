@@ -11,6 +11,9 @@ dependencies = [
     "disputeos",
     "agentpay-guardian",
     "ghostpay",
+    "aegis-api",
+    "aegis-worker",
+    "aegis-sdk",
     "fastapi>=0.115.0,<1.0.0",
     "uvicorn[standard]>=0.30.0,<1.0.0",
     "langgraph>=0.2.0,<1.0.0",
@@ -31,9 +34,12 @@ members = [
     "packages/security",
     "packages/database",
     "packages/paypal",
+    "packages/sdk-python",
     "modules/disputeos",
     "modules/agentpay-guardian",
     "modules/ghostpay",
+    "services/api",
+    "services/worker",
 ]
 
 [tool.uv.sources]
@@ -41,9 +47,12 @@ nexus-contracts = { workspace = true }
 nexus-security = { workspace = true }
 nexus-database = { workspace = true }
 nexus-paypal = { workspace = true }
+aegis-sdk = { workspace = true }
 disputeos = { workspace = true }
 agentpay-guardian = { workspace = true }
 ghostpay = { workspace = true }
+aegis-api = { workspace = true }
+aegis-worker = { workspace = true }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -53,8 +62,11 @@ testpaths = [
     "packages/security/tests",
     "packages/database/tests",
     "packages/paypal/tests",
+    "packages/sdk-python/tests",
     "modules/disputeos/tests",
     "modules/agentpay-guardian/tests",
     "modules/ghostpay/tests",
+    "services/api/tests",
+    "services/worker/tests",
 ]
 

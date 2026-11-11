@@ -22,6 +22,8 @@ node_modules/
 .next/
 out/
 .turbo/
+*.tsbuildinfo
+.aegis_data/
 npm-debug.log*
 yarn-debug.log*
 pnpm-debug.log*

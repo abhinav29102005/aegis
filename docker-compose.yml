@@ -1,22 +1,117 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: agentpay-nexus-postgres
+    container_name: aegis-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-agentpay}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agentpay_dev}
-      POSTGRES_DB: ${POSTGRES_DB:-agentpay_nexus}
+      POSTGRES_USER: ${POSTGRES_USER:-aegis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aegis_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-aegis_platform}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - aegis_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agentpay} -d ${POSTGRES_DB:-agentpay_nexus}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aegis} -d ${POSTGRES_DB:-aegis_platform}"]
       interval: 5s
       timeout: 5s
       retries: 5
 
-volumes:
-  postgres_data:
+  migrate:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    container_name: aegis-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-aegis}:${POSTGRES_PASSWORD:-aegis_dev_password}@postgres:5432/${POSTGRES_DB:-aegis_platform}
+    command: ["sh", "-c", "cd /app/packages/database && uv run --no-sync alembic upgrade head"]
+    restart: "no"
 
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    container_name: aegis-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3005,http://localhost:3000}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-aegis}:${POSTGRES_PASSWORD:-aegis_dev_password}@postgres:5432/${POSTGRES_DB:-aegis_platform}
+      NEXUS_SIGNING_SECRET: ${NEXUS_SIGNING_SECRET:-dev-only-change-in-production-signing-secret}
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-in-production-jwt-secret}
+      EVIDENCE_STORAGE_DIR: /var/lib/aegis/evidence
+      RATE_LIMIT_RPM: ${RATE_LIMIT_RPM:-240}
+      PAYPAL_MODE: ${PAYPAL_MODE:-sandbox}
+      PAYPAL_BASE_URL: ${PAYPAL_BASE_URL:-https://api-m.sandbox.paypal.com}
+      PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID:-}
+      PAYPAL_CLIENT_SECRET: ${PAYPAL_CLIENT_SECRET:-}
+      PAYPAL_WEBHOOK_ID: ${PAYPAL_WEBHOOK_ID:-}
+      PAYPAL_DISPUTES_API_ENABLED: ${PAYPAL_DISPUTES_API_ENABLED:-false}
+      LLM_PROVIDER: ${LLM_PROVIDER:-deterministic}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - aegis_evidence_data:/var/lib/aegis/evidence
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: services/worker/Dockerfile
+    container_name: aegis-worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-aegis}:${POSTGRES_PASSWORD:-aegis_dev_password}@postgres:5432/${POSTGRES_DB:-aegis_platform}
+      NEXUS_SIGNING_SECRET: ${NEXUS_SIGNING_SECRET:-dev-only-change-in-production-signing-secret}
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-in-production-jwt-secret}
+      WORKER_POLL_INTERVAL_SECONDS: ${WORKER_POLL_INTERVAL_SECONDS:-5}
+      PAYPAL_MODE: ${PAYPAL_MODE:-sandbox}
+      PAYPAL_BASE_URL: ${PAYPAL_BASE_URL:-https://api-m.sandbox.paypal.com}
+      PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID:-}
+      PAYPAL_CLIENT_SECRET: ${PAYPAL_CLIENT_SECRET:-}
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+        NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-AEGIS}
+    container_name: aegis-web
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+      NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-AEGIS}
+    ports:
+      - "${WEB_PORT:-3005}:3000"
+    restart: unless-stopped
+
+volumes:
+  aegis_postgres_data:
+  aegis_evidence_data:

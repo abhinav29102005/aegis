@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aegis-api"
+version = "0.1.0"
+description = "Unified FastAPI service for AEGIS — AgentPay Guardian, GhostPay, DisputeOS, Auth, and Webhooks"
+requires-python = ">=3.12"
+dependencies = [
+    "nexus-contracts",
+    "nexus-security",
+    "nexus-database",
+    "nexus-paypal",
+    "agentpay-guardian",
+    "ghostpay",
+    "disputeos",
+    "fastapi>=0.115.0,<1.0.0",
+    "uvicorn[standard]>=0.30.0,<1.0.0",
+    "python-multipart>=0.0.9,<1.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["aegis_api*"]

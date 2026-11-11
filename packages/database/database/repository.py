@@ -205,6 +205,60 @@ class LedgerRepository:
         assert_same_tenant(tenant_id, row.tenant_id, "spending_passport")
         return self._to_passport(row)
 
+    def update_agent_status(self, tenant_id: UUID, agent_id: UUID, status: str) -> AgentIdentity:
+        if status not in {"ACTIVE", "SUSPENDED", "REVOKED"}:
+            raise ValueError(f"Unsupported agent status: {status}")
+        row = self.session.get(AgentRow, agent_id)
+        if row is None:
+            raise ValueError(f"Agent {agent_id} not found")
+        assert_same_tenant(tenant_id, row.tenant_id, "agent")
+        row.status = status
+        self.session.flush()
+        return self._to_agent(row)
+
+    def update_merchant_allowlist(self, tenant_id: UUID, merchant_id: UUID, *, is_allowlisted: bool) -> Merchant:
+        row = self.session.get(MerchantRow, merchant_id)
+        if row is None:
+            raise ValueError(f"Merchant {merchant_id} not found")
+        assert_same_tenant(tenant_id, row.tenant_id, "merchant")
+        row.is_allowlisted = is_allowlisted
+        self.session.flush()
+        return self._to_merchant(row)
+
+    def update_passport_policy(
+        self,
+        tenant_id: UUID,
+        passport_id: UUID,
+        *,
+        status: PassportStatus | None = None,
+        per_tx_limit_minor: int | None = None,
+        daily_limit_minor: int | None = None,
+        human_approval_threshold_minor: int | None = None,
+        allowed_merchant_ids: list[UUID] | None = None,
+        allowed_categories: list[str] | None = None,
+        allow_unknown_merchants: bool | None = None,
+    ) -> SpendingPassport:
+        row = self.session.get(SpendingPassportRow, passport_id)
+        if row is None:
+            raise ValueError(f"SpendingPassport {passport_id} not found")
+        assert_same_tenant(tenant_id, row.tenant_id, "spending_passport")
+        if status is not None:
+            row.status = status.value
+        if per_tx_limit_minor is not None:
+            row.per_tx_limit_minor = per_tx_limit_minor
+        if daily_limit_minor is not None:
+            row.daily_limit_minor = daily_limit_minor
+        if human_approval_threshold_minor is not None:
+            row.human_approval_threshold_minor = human_approval_threshold_minor
+        if allowed_merchant_ids is not None:
+            row.allowed_merchant_ids = [str(m) for m in allowed_merchant_ids]
+        if allowed_categories is not None:
+            row.allowed_categories = list(allowed_categories)
+        if allow_unknown_merchants is not None:
+            row.allow_unknown_merchants = allow_unknown_merchants
+        self.session.flush()
+        return self._to_passport(row)
+
     # ------------------------------------------------------------------
     # Proposals, Quotes, Intents, Decisions, Approvals
     # ------------------------------------------------------------------
@@ -305,13 +359,51 @@ class LedgerRepository:
         assert_same_tenant(tenant_id, row.tenant_id, "payment_intent")
         return self._to_intent(row)
 
-    def list_intents(self, tenant_id: UUID) -> list[PaymentIntent]:
+    def list_intents(
+        self,
+        tenant_id: UUID,
+        *,
+        state: PaymentState | None = None,
+        agent_id: UUID | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[PaymentIntent]:
+        stmt = select(PaymentIntentRow).where(PaymentIntentRow.tenant_id == tenant_id)
+        if state is not None:
+            stmt = stmt.where(PaymentIntentRow.state == state.value)
+        if agent_id is not None:
+            stmt = stmt.where(PaymentIntentRow.agent_id == agent_id)
         rows = self.session.scalars(
-            select(PaymentIntentRow)
-            .where(PaymentIntentRow.tenant_id == tenant_id)
-            .order_by(PaymentIntentRow.created_at.desc())
+            stmt.order_by(PaymentIntentRow.created_at.desc()).offset(offset).limit(limit)
         ).all()
         return [self._to_intent(r) for r in rows]
+
+    def list_approvals(
+        self,
+        tenant_id: UUID,
+        *,
+        status: ApprovalStatus | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[ApprovalRecord]:
+        stmt = select(ApprovalRecordRow).where(ApprovalRecordRow.tenant_id == tenant_id)
+        if status is not None:
+            stmt = stmt.where(ApprovalRecordRow.status == status.value)
+        rows = self.session.scalars(
+            stmt.order_by(ApprovalRecordRow.created_at.desc()).offset(offset).limit(limit)
+        ).all()
+        return [self._to_approval(r) for r in rows]
+
+    def list_attempts_for_intent(self, tenant_id: UUID, intent_id: UUID) -> list[PaymentAttempt]:
+        rows = self.session.scalars(
+            select(PaymentAttemptRow)
+            .where(
+                PaymentAttemptRow.tenant_id == tenant_id,
+                PaymentAttemptRow.payment_intent_id == intent_id,
+            )
+            .order_by(PaymentAttemptRow.attempt_number.asc())
+        ).all()
+        return [self._to_attempt(r) for r in rows]
 
     def transition_intent(
         self,
@@ -691,13 +783,22 @@ class LedgerRepository:
         *,
         correlation_id: UUID | None = None,
         payment_intent_id: UUID | None = None,
+        event_type: FinancialEventType | None = None,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[FinancialEvent]:
         stmt = select(FinancialEventRow).where(FinancialEventRow.tenant_id == tenant_id)
         if correlation_id is not None:
             stmt = stmt.where(FinancialEventRow.correlation_id == correlation_id)
         if payment_intent_id is not None:
             stmt = stmt.where(FinancialEventRow.payment_intent_id == payment_intent_id)
+        if event_type is not None:
+            stmt = stmt.where(FinancialEventRow.event_type == event_type.value)
         stmt = stmt.order_by(FinancialEventRow.occurred_at.asc(), FinancialEventRow.sequence_number.asc())
+        if offset:
+            stmt = stmt.offset(offset)
+        if limit is not None:
+            stmt = stmt.limit(limit)
         return [self._to_event(r) for r in self.session.scalars(stmt).all()]
 
     def list_pending_outbox(self, limit: int = 50) -> list[OutboxEventRow]:

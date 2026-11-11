@@ -1,4 +1,4 @@
-name: AgentPay Nexus CI
+name: AEGIS Platform CI
 
 on:
   push:
@@ -7,36 +7,64 @@ on:
     branches: [main, integration/nexus]
 
 jobs:
-  backend-tests:
+  backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: aegis
+          POSTGRES_PASSWORD: aegis_test_password
+          POSTGRES_DB: aegis_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U aegis -d aegis_test"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=5
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
-      - name: Install workspace dependencies
+      - name: Install Python workspace dependencies
         run: uv sync --python 3.12
-      - name: Run shared package tests
-        run: uv run pytest packages/contracts/tests packages/security/tests packages/database/tests packages/paypal/tests -v
-      - name: Run DisputeOS module tests
-        run: |
-          if [ -d "modules/disputeos/tests" ]; then
-            PYTHONPATH=modules/disputeos uv run pytest modules/disputeos/tests -v
-          fi
-      - name: Run Guardian module tests (if implemented)
-        run: |
-          if [ -d "modules/agentpay-guardian/tests" ] && [ -n "$(find modules/agentpay-guardian/tests -name 'test_*.py' 2>/dev/null)" ]; then
-            PYTHONPATH=modules/agentpay-guardian uv run pytest modules/agentpay-guardian/tests -v
-          fi
-      - name: Run GhostPay module tests (if implemented)
-        run: |
-          if [ -d "modules/ghostpay/tests" ] && [ -n "$(find modules/ghostpay/tests -name 'test_*.py' 2>/dev/null)" ]; then
-            PYTHONPATH=modules/ghostpay uv run pytest modules/ghostpay/tests -v
-          fi
-      - name: Run full workspace tests
+      - name: Lint Python workspace with Ruff
+        run: uv run ruff check packages modules services
+      - name: Verify Alembic migrations against PostgreSQL 16
+        env:
+          DATABASE_URL: postgresql+psycopg://aegis:aegis_test_password@localhost:5432/aegis_test
+        run: cd packages/database && uv run alembic upgrade head && uv run alembic downgrade base && uv run alembic upgrade head
+      - name: Run full Python & PostgreSQL test suite
+        env:
+          AEGIS_TEST_POSTGRES_URL: postgresql+psycopg://aegis:aegis_test_password@localhost:5432/aegis_test
         run: uv run pytest -v
-      - name: Lint Python with Ruff
-        run: uv run ruff check packages modules/disputeos modules/agentpay-guardian modules/ghostpay
+
+  typescript-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Typecheck & test @aegis-platform/sdk
+        working-directory: packages/sdk-typescript
+        run: npm install --no-audit --no-fund && npm run typecheck && npm test
+
+  web-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Typecheck, lint, test & build apps/web
+        working-directory: apps/web
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+          NEXT_PUBLIC_APP_NAME: AEGIS
+        run: npm install --no-audit --no-fund && npm run typecheck && npm run lint && npm test && npm run build
 
   secret-scan:
     runs-on: ubuntu-latest
@@ -48,4 +76,3 @@ jobs:
             echo "ERROR: .env file committed to git!"
             exit 1
           fi
-

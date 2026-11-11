@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aegis-worker"
+version = "0.1.0"
+description = "Durable transactional outbox, webhook delivery, and PayPal reconciliation worker for AEGIS"
+requires-python = ">=3.12"
+dependencies = [
+    "nexus-contracts",
+    "nexus-security",
+    "nexus-database",
+    "nexus-paypal",
+    "agentpay-guardian",
+    "httpx>=0.27.0,<1.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["aegis_worker*"]

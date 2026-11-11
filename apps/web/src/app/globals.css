@@ -1,0 +1,105 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background-color: #090d16;
+  color: #e5edf7;
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  line-height: 1.5;
+}
+
+/* Visible keyboard focus ring across interactive controls */
+:is(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
+}
+
+/* Native <dialog> modal scroll containment & backdrop */
+dialog:modal {
+  overscroll-behavior: contain;
+  margin: auto;
+  max-height: 90dvh;
+}
+
+dialog::backdrop {
+  background: rgb(4 7 15 / 72%);
+  backdrop-filter: blur(4px);
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
+/* Post-interaction constraint validation indicator */
+input:user-invalid,
+textarea:user-invalid,
+select:user-invalid {
+  border-color: #f43f5e;
+}
+
+/* Responsive accessible table wrapper with sticky header */
+.table-wrapper {
+  overflow: auto;
+  max-inline-size: 100%;
+  max-block-size: min(560px, 75vh);
+  container-type: inline-size;
+  border: 1px solid #253149;
+  border-radius: 0.75rem;
+  background-color: #111827;
+}
+
+.aegis-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.875rem;
+}
+
+.aegis-table thead {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 2;
+  background-color: #161f31;
+}
+
+.aegis-table th {
+  text-align: start;
+  font-weight: 600;
+  color: #94a3b8;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #253149;
+  white-space: nowrap;
+}
+
+.aegis-table td {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #1e293b;
+  vertical-align: top;
+}
+
+.aegis-table tbody tr:hover {
+  background-color: rgb(30 41 59 / 45%);
+}
+
+@container (width < 640px) {
+  .aegis-table th,
+  .aegis-table td {
+    padding: 0.55rem 0.65rem;
+    font-size: 0.8125rem;
+  }
+}
+
+.visually-hidden {
+  position: absolute;
+  clip-path: inset(50%);
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  white-space: nowrap;
+}
