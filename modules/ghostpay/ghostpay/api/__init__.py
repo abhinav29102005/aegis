@@ -13,3 +13,4 @@ __all__ = [
     "create_ghostpay_router",
     "router",
 ]
+
