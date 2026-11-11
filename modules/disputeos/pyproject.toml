@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "disputeos"
+version = "0.1.0"
+description = "DisputeOS — Dispute case management, evidence graph, grounded AI summaries, and human-reviewed response drafts"
+requires-python = ">=3.12"
+dependencies = [
+    "nexus-contracts",
+    "nexus-security",
+    "nexus-paypal",
+    "fastapi>=0.115.0,<1.0.0",
+    "pydantic>=2.9.0,<3.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["disputeos*"]
