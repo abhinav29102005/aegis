@@ -41,6 +41,7 @@ playwright-report/
 *.sqlite
 *.sqlite3
 postgres-data/
+var/
 
 # OS & Editors
 .DS_Store
