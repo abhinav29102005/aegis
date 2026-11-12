@@ -15,9 +15,10 @@
 
 The P0 PostgreSQL concurrency deadlock on `POST /v1/guardian/proposals` has been **permanently resolved and verified** on `fix/rc1-guardian-deadlock` (see [`RC1_GUARDIAN_DEADLOCK_REMEDIATION.md`](./RC1_GUARDIAN_DEADLOCK_REMEDIATION.md)). However, AEGIS RC1 remains **NOT APPROVED for external beta** because two external environment gates remain unverified:
 
-1. **Live PayPal Sandbox Verification — `BLOCKED / NOT VERIFIED`**
-   - `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, and `PAYPAL_WEBHOOK_ID` are unset in the environment.
-   - Live OAuth token acquisition, Orders v2 capture, live webhook signature verification against `api-m.sandbox.paypal.com`, and live Disputes v1 API calls were not executed (`packages/paypal/tests/test_live_sandbox_optional.py::test_live_paypal_sandbox_oauth_and_order_roundtrip` skipped).
+1. **Live PayPal Sandbox Verification — `PARTIAL PASS` (OAuth + Order Creation `PASS`; Buyer Capture / Live Webhook / Disputes `NOT VERIFIED`)**
+   - `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, and `PAYPAL_WEBHOOK_ID` are configured in untracked local `.env`.
+   - `packages/paypal/tests/test_live_sandbox_optional.py::test_live_paypal_sandbox_oauth_and_order_roundtrip` **PASSED (`2.05s`; full `packages/paypal/tests/`: `12 passed in 3.52s`)** against `https://api-m.sandbox.paypal.com`.
+   - Interactive buyer-approved capture, live PayPal webhook delivery to `https://api-staging.abhinavkumarsingh.tech/v1/paypal/webhooks`, and live Disputes v1 API calls remain **`NOT VERIFIED`** until staging is live.
 2. **`POST /v1/guardian/proposals` Same-Tenant Burst Deadlock — `CLOSED / RESOLVED` (`fix/rc1-guardian-deadlock`)**
    - Previously failed with `psycopg.errors.DeadlockDetected` (`98.0%` load error rate; `test_parallel_payment_proposal_idempotency` intermittent failure).
    - Fixed by replacing `SELECT tenants.id ... FOR UPDATE` in `LedgerRepository.append_financial_event()` with `(tenant_id, correlation_id)`-scoped `pg_advisory_xact_lock`, adding `(tenant_id, idempotency_key)`-scoped `pg_advisory_xact_lock` in `GuardianService.submit_proposal()`, and adding an explicit `session.commit()` in `guardian_db.py`.
@@ -63,8 +64,7 @@ The P0 PostgreSQL concurrency deadlock on `POST /v1/guardian/proposals` has been
 - **Pre-GA Legal/Ops Blockers:** Placeholder legal/security emails, India DPDPA 2023 statutory disclosures in `PRIVACY_POLICY.md`/`DATA_PROCESSING_ADDENDUM.md`, standalone `NON_CUSTODIAL_PERIMETER.md` & sub-processor list, automated 30/60-day TTL purge jobs, `AEGIS_DATA_RESIDENCY` egress enforcement, and self-service org offboarding (`DELETE /orgs/current`).
 
 ### 3.5 PayPal Sandbox & Negative-Path Verification ([`RC1_PAYPAL_SANDBOX_VERIFICATION.md`](./RC1_PAYPAL_SANDBOX_VERIFICATION.md))
-- **Live Sandbox:** **`BLOCKED / NOT VERIFIED`** (`PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID` unset).
-- **PayPal Unit Tests (`packages/paypal/tests/`):** `11 passed, 1 skipped in 0.08s`.
+- **Live Sandbox (OAuth + Orders v2 Creation):** **`PASS`** (`packages/paypal/tests/`: **`12 passed in 3.52s`** with `.env` loaded; `test_live_paypal_sandbox_oauth_and_order_roundtrip` passed in `2.05s` against `https://api-m.sandbox.paypal.com`). Buyer-approved capture, live webhook delivery, and Disputes v1 remain `NOT VERIFIED`.
 - **Negative-Path Integration (`tests/integration/test_rc1_paypal_negative_paths.py`):** **`13 passed in 1.64s`** (HMAC timestamp/signature bounds, fail-closed PayPal webhook headers, replay deduplication, 5xx/timeout retries without secret leakage, `SyntheticSubmissionError` `403` guard).
 
 ### 3.6 Financial Invariants & Concurrency ([`RC1_FINANCIAL_INVARIANT_REPORT.md`](./RC1_FINANCIAL_INVARIANT_REPORT.md), [`RC1_GUARDIAN_DEADLOCK_REMEDIATION.md`](./RC1_GUARDIAN_DEADLOCK_REMEDIATION.md))

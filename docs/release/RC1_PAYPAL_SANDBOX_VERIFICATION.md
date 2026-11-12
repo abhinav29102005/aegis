@@ -1,39 +1,41 @@
 # RC1 PayPal Sandbox & Negative-Path Verification
 
-**Branch:** `release/rc1-c2-payments-ops-load`  
-**Scope:** PayPal Sandbox credential check, existing `packages/paypal` unit tests, and RC1 PayPal/webhook negative-path integration tests (`httpx.MockTransport`).
+**Branch:** `fix/rc1-guardian-deadlock`  
+**Scope:** PayPal Sandbox credential check, live Sandbox OAuth + Orders v2 creation (`api-m.sandbox.paypal.com`), `packages/paypal` unit tests, and RC1 PayPal/webhook negative-path integration tests (`httpx.MockTransport`).
 
 ## 1. Live PayPal Sandbox Verification Status
 
-**Status:** `BLOCKED / NOT VERIFIED`
+**Status:** **PARTIAL PASS — Live Sandbox OAuth + Order Creation VERIFIED (`test_live_paypal_sandbox_oauth_and_order_roundtrip` PASSED); Buyer Capture / Live Webhook Delivery / Disputes v1 NOT VERIFIED**
 
-Environment credential check (values never printed):
+Environment credential check (values never printed; stored in untracked local `.env`):
 
 ```text
-PAYPAL_CLIENT_ID: UNSET
-PAYPAL_CLIENT_SECRET: UNSET
-PAYPAL_WEBHOOK_ID: UNSET
+PAYPAL_MODE: sandbox
+PAYPAL_BASE_URL: https://api-m.sandbox.paypal.com
+PAYPAL_CLIENT_ID: SET
+PAYPAL_CLIENT_SECRET: SET
+PAYPAL_WEBHOOK_ID: SET (staging webhook https://api-staging.abhinavkumarsingh.tech/v1/paypal/webhooks)
 ```
 
-Because PayPal Sandbox credentials are not present in this environment, live OAuth token acquisition, live Orders v2 capture, live webhook signature verification against `api-m.sandbox.paypal.com`, and live Disputes v1 API calls were **not** executed. In `packages/paypal/tests/test_live_sandbox_optional.py`, `test_live_paypal_sandbox_oauth_and_order_roundtrip` was skipped by pytest (`PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET are not set; skipping live PayPal Sandbox test.`).
+With `.env` exported (`set -a && source .env && set +a`), `packages/paypal/tests/test_live_sandbox_optional.py::test_live_paypal_sandbox_oauth_and_order_roundtrip` **PASSED (`2.05s`)** against `https://api-m.sandbox.paypal.com` (live OAuth2 client-credentials token acquisition and live Sandbox Orders v2 creation). Interactive buyer-approved capture, live webhook delivery to `api-staging.abhinavkumarsingh.tech`, and live Disputes v1 API calls remain **`NOT VERIFIED`** until staging is live.
 
-## 2. Existing PayPal Unit Test Suite
+## 2. Existing PayPal Unit + Live Sandbox Suite
 
 Command:
 
 ```bash
-uv run pytest packages/paypal/tests/ -q
+set -a && source .env && set +a && uv run pytest packages/paypal/tests/ -q
 ```
 
 Observed output:
 
 ```text
-s...........                                                             [100%]
-11 passed, 1 skipped in 0.08s
+............                                                             [100%]
+12 passed in 3.52s
 ```
 
 - `11 passed` (`packages/paypal/tests/test_paypal.py`)
-- `1 skipped` (`packages/paypal/tests/test_live_sandbox_optional.py::test_live_paypal_sandbox_oauth_and_order_roundtrip`)
+- `1 passed` (`packages/paypal/tests/test_live_sandbox_optional.py::test_live_paypal_sandbox_oauth_and_order_roundtrip`)
 
 ## 3. RC1 PayPal & Webhook Negative-Path Integration Suite
 
