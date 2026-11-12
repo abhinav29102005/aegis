@@ -583,16 +583,6 @@ def approve_proposal(
 
     approver = auth.email or auth.actor_id or request.approver_id
     try:
-        if request.approved is False:
-            intent, approval = svc.reject_approval(
-                tenant_id=auth.tenant_id,
-                intent_id=intent_id,
-                approval_id=resolved_approval_id,
-                approver_id=approver,
-                comment=request.comment,
-            )
-            return ApprovalActionResponse(payment_intent=intent, approval=approval)
-
         intent, approval = svc.approve_and_consume(
             tenant_id=auth.tenant_id,
             intent_id=intent_id,

@@ -59,7 +59,12 @@ class MockHttpResponse:
 
 class MockHttpClient:
 
-    def post(self, url: str, data: dict[str, Any] | None = None):
+    def request(self, method: str, url: str, **kwargs: Any):
+        if method.upper() == "POST":
+            return self.post(url, **kwargs)
+        return self.get(url, **kwargs)
+
+    def post(self, url: str, data: dict[str, Any] | None = None, **kwargs: Any):
         if "capture" in url:
             return ImmediateAwaitable(
                 MockHttpResponse(200, {"id": "pi_123", "status": "succeeded", "charges": {"data": [{"id": "ch_123"}]}})
@@ -72,7 +77,7 @@ class MockHttpClient:
             MockHttpResponse(200, {"id": "pi_123", "status": "requires_capture", "client_secret": "sec_123"})
         )
 
-    def get(self, url: str):
+    def get(self, url: str, **kwargs: Any):
         return ImmediateAwaitable(
             MockHttpResponse(200, {"id": "pi_123", "status": "requires_capture", "amount": 5000, "currency": "usd"})
         )

@@ -90,7 +90,14 @@ class RetryingHTTPClient:
         try:
             for attempt in range(self.max_retries + 1):
                 try:
-                    resp = await client.request(method, path, **kwargs)
+                    if hasattr(client, "request"):
+                        resp = await client.request(method, path, **kwargs)
+                    elif method.upper() == "POST" and hasattr(client, "post"):
+                        resp = await client.post(path, **kwargs)
+                    elif method.upper() == "GET" and hasattr(client, "get"):
+                        resp = await client.get(path, **kwargs)
+                    else:
+                        resp = await client.request(method, path, **kwargs)
                 except httpx.TimeoutException as exc:
                     if attempt < self.max_retries:
                         await asyncio.sleep(self._retry_delay(attempt))

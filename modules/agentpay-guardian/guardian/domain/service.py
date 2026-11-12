@@ -565,6 +565,56 @@ class GuardianService:
         )
         return ready_intent, consumed_approval
 
+    def reject_approval(
+        self,
+        *,
+        tenant_id: UUID,
+        intent_id: UUID,
+        approval_id: UUID,
+        approver_id: str,
+        comment: str | None = None,
+    ) -> tuple[PaymentIntent, ApprovalRecord]:
+        intent = self.repo.get_intent(tenant_id, intent_id)
+        if intent is None:
+            raise IntentNotFoundError(f"PaymentIntent {intent_id} not found")
+
+        rejected_approval = self.approval_service.decide_approval(
+            tenant_id=tenant_id,
+            approval_id=approval_id,
+            approver_id=approver_id,
+            approved=False,
+            comment=comment,
+        )
+        if intent.reservation_id:
+            self.budget_coordinator.release(
+                tenant_id=tenant_id,
+                correlation_id=intent.correlation_id,
+                payment_intent_id=intent.id,
+                reservation_id=intent.reservation_id,
+                actor_type="HUMAN_APPROVER",
+                actor_id=approver_id,
+                reason=comment or "Human approver rejected proposal",
+            )
+        cancelled_intent = self.repo.transition_intent(
+            tenant_id=tenant_id,
+            intent_id=intent_id,
+            target_state=PaymentState.CANCELLED,
+            approval_record_id=rejected_approval.id,
+        )
+        self.repo.append_financial_event(
+            tenant_id=tenant_id,
+            correlation_id=intent.correlation_id,
+            payment_intent_id=intent.id,
+            event_type=FinancialEventType.HUMAN_REJECTED,
+            actor_type="HUMAN_APPROVER",
+            actor_id=approver_id,
+            payload={
+                "approval_id": str(rejected_approval.id),
+                "reason": comment or "Human approver rejected proposal",
+            },
+        )
+        return cancelled_intent, rejected_approval
+
     # -------------------------------------------------------------------------
     # Checkout & PayPal Flow
     # -------------------------------------------------------------------------
