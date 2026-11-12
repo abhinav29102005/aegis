@@ -61,7 +61,7 @@ def verify_aegis_signature(
     except UnicodeDecodeError:
         return False
 
-    payload_to_sign = f"{t}.{body_str}".encode("utf-8")
+    payload_to_sign = f"{t}.{body_str}".encode()
     expected_hex = hmac.new(secret.encode("utf-8"), payload_to_sign, hashlib.sha256).hexdigest()
 
     return hmac.compare_digest(expected_hex, parts["v1"])

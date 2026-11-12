@@ -10,7 +10,7 @@ import pytest
 from aegis_api.app import create_app
 from aegis_sdk import AegisAPIError, AegisClient, AsyncAegisClient
 from fastapi.testclient import TestClient
-from security import NexusSettings, Role
+from security import NexusSettings
 
 
 def test_client_not_found_lookups_and_error_handling() -> None:
@@ -89,8 +89,28 @@ def test_sync_sdk_additional_coverage(tmp_path: Path) -> None:
         assert rev_ag["status"] == "REVOKED"
 
         m = client.create_merchant(name="MToRevoke", domain="m-rev.com")
-        passp = client.create_passport(
+        rev_passp = client.create_passport(
             agent_id=ag["id"],
+            total_budget_minor=1000,
+            per_tx_limit_minor=500,
+            daily_limit_minor=1000,
+            allowed_merchant_ids=[m["id"]],
+        )
+        with pytest.raises(AegisAPIError) as exc_rev:
+            client.submit_purchase_proposal(
+                agent_id=ag["id"],
+                passport_id=rev_passp["id"],
+                merchant_id=m["id"],
+                merchant_name="MToRevoke",
+                amount_minor=500,
+                item_summary="Revoked agent test",
+                rationale="Should fail closed",
+            )
+        assert exc_rev.value.status_code == 403
+
+        ag_active = client.create_agent(name="ActiveForDispute", public_fingerprint="fp-active-disp")
+        passp = client.create_passport(
+            agent_id=ag_active["id"],
             total_budget_minor=1000,
             per_tx_limit_minor=500,
             daily_limit_minor=1000,
@@ -98,7 +118,7 @@ def test_sync_sdk_additional_coverage(tmp_path: Path) -> None:
         )
         # Submit proposal to generate valid payment intent for dispute
         prop = client.submit_purchase_proposal(
-            agent_id=ag["id"],
+            agent_id=ag_active["id"],
             passport_id=passp["id"],
             merchant_id=m["id"],
             merchant_name="MToRevoke",
@@ -134,8 +154,10 @@ async def test_async_sdk_comprehensive_operations(tmp_path: Path) -> None:
     app = create_app(settings=settings, create_tables=True)
     transport = httpx.ASGITransport(app=app)
 
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as hc:
-        async with AsyncAegisClient(client=hc) as client:
+    async with (
+        httpx.AsyncClient(transport=transport, base_url="http://testserver") as hc,
+        AsyncAegisClient(client=hc) as client,
+    ):
             reg = await client.register(
                 email="async-full@example.com",
                 password="Password!12345",

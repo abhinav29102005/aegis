@@ -20,14 +20,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
-from contracts import (
-    PassportStatus,
-    PaymentIntent,
-    PaymentState,
-    PurchaseProposal,
-    QuoteSnapshot,
-    compute_quote_hash,
-)
+from aegis_api.app import create_app
 from database import (
     LedgerRepository,
     OutboxEventRow,
@@ -39,9 +32,8 @@ from database import (
 )
 from database.repository import InsufficientBudgetError
 from fastapi.testclient import TestClient
-from security import NexusSettings, Role
+from security import NexusSettings
 from sqlalchemy import select
-from aegis_api.app import create_app
 
 
 def _init_sqlite_wal(db_path: Path) -> None:
@@ -380,7 +372,7 @@ def test_parallel_payment_proposal_idempotency(concurrency_env):
     intent_ids = {r["payment_intent"]["id"] for r in results}
     assert len(intent_ids) == 1, f"Idempotency violation! Multiple intent IDs returned: {intent_ids}"
 
-    chosen_intent_id = list(intent_ids)[0]
+    chosen_intent_id = next(iter(intent_ids))
 
     # Verify exactly one intent exists in the DB for this idempotency key
     payments_resp = client.get("/v1/guardian/payments", headers=headers)

@@ -12,27 +12,28 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
+from aegis_api.app import create_app
+from aegis_sdk import verify_webhook_signature
 from contracts import (
-    ApprovalRecord,
     ApprovalStatus,
     DecisionOutcome,
-    DisputeAnalysis,
     DisputeCase,
-    DisputeRecommendation,
     DisputeSourceType,
     DisputeStatus,
     EvidenceRecord,
     EvidenceSourceType,
     Merchant,
-    PaymentIntent,
-    PaymentState,
+    PassportStatus,
     PurchaseProposal,
     QuoteSnapshot,
     SpendingPassport,
-    PassportStatus,
     compute_quote_hash,
 )
-from database import LedgerRepository, LocalObjectStorage, PlatformRepository, create_db_engine, create_session_factory, init_db
+from database import (
+    LedgerRepository,
+    create_db_engine,
+    create_session_factory,
+)
 from disputeos.analysis.analyzer import DisputeAnalyzer
 from fastapi.testclient import TestClient
 from guardian.approvals.service import ApprovalService
@@ -40,13 +41,9 @@ from guardian.domain.exceptions import (
     ApprovalExpiredError,
     ApprovalMismatchError,
     GuardianError,
-    PolicyDeniedError,
 )
 from guardian.policies.engine import PolicyEngine
-from paypal import PayPalSandboxClient
-from security import NexusSettings, Role, sign_hmac_sha256, verify_hmac_sha256
-from aegis_api.app import create_app
-from aegis_sdk import verify_webhook_signature
+from security import NexusSettings, sign_hmac_sha256
 
 
 @pytest.fixture()
@@ -127,7 +124,7 @@ def test_ssrf_webhook_endpoint_validation(adversarial_env):
             headers=headers,
             json={"url": payload, "event_types": ["*"]},
         )
-        if not (payload.startswith("http://") or payload.startswith("https://")):
+        if not (payload.startswith(("http://", "https://"))):
             # Non-http schemes MUST be rejected at schema validation layer (HTTP 422)
             assert resp.status_code == 422, (
                 f"Dangerous scheme {payload} was unexpectedly accepted with status {resp.status_code}!"

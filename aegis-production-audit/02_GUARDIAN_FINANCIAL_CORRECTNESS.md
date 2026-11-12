@@ -1,41 +1,43 @@
 # 02 — Guardian Financial Correctness Audit
 
-**Status as of `2026-11-12` (`integration/nexus` @ `498043e`):** **BLOCKED ON COMPUTER 2 (`work/m2-financial-forensics-ai` NOT YET PUSHED).**  
-**Scope:** `packages/contracts/`, `packages/paypal/`, `modules/agentpay-guardian/`, `services/api/aegis_api/routers/guardian_db.py`, `packages/database/database/repository.py` (M1), `packages/sdk-*` & `apps/web/` (M3).
+**Status as of `2026-11-12` (`integration/nexus`, Post-M1+M2+M3):** **DETERMINISTIC FINANCIAL CONTROLS & MULTI-RAIL ADAPTERS RESOLVED AND VERIFIED ON POSTGRESQL 16 (`0` FAILURES); LIVE EXTERNAL SANDBOX EXECUTION STILL `NOT VERIFIED`.**  
+**Scope:** `packages/contracts/`, `packages/paypal/`, `modules/agentpay-guardian/`, `services/api/aegis_api/routers/guardian_db.py`, `packages/database/database/repository.py`, `packages/sdk-*`, `apps/web/`.
 
 ---
 
-## 1. End-to-End Lifecycle Matrix (Current Reality After M1 + M3 Sync)
+## 1. End-to-End Lifecycle Matrix (Post-Integration Verified Reality)
 
-| Capability | Status | Works Against | Observed Delta in M1 + M3 vs Baseline |
+| Capability | Status | Works Against | Verified Post-Integration Evidence |
 | :--- | :--- | :--- | :--- |
-| Agent identity & registration | **PARTIALLY IMPLEMENTED** | SQLite / PG16 | Unchanged (M2): `PolicyEngine.evaluate` still ignores `AgentIdentity.status`. |
-| Spending Passport issuance & history | **IMPROVED BY M1 (`SNAPSHOTS ACTIVE`)** | SQLite / PG16 | **M1** added `spending_passport_snapshots` table (`0003`) & auto-records snapshots in `LedgerRepository`; M2 still needed to consume snapshots on replay. |
-| Policy creation & versioning | **PARTIALLY IMPLEMENTED** | SQLite / PG16 | Unchanged (M2): `PolicyEngine` hardcodes `"policy-v1"`, diverges from GhostPay. |
-| Merchant & category restrictions | **PARTIALLY IMPLEMENTED (UI FIXED)** | SQLite / PG16 | **M3** fixed `/agents` UI (`"passports:write"`), SDK `create_merchant`; **M2** still needed to remove `merchant.is_allowlisted` bypass. |
-| Currency restrictions & exponents | **BROKEN (`JPY/BHD`)** | Mocked HTTP | Unchanged (M2): `paypal/client.py` still divides/multiplies by `100` (`:.2f`). |
-| Daily / monthly limits | **MISSING** | None | Unchanged (M2): `daily_limit_minor` still ignored in `PolicyEngine`. |
-| Atomic reservation & double-spend | **VERIFIED BY TEST (`PG16 + CONCURRENCY`)** | SQLite / PG16 | **M3** added `tests/concurrency/test_budget_reservation_race_condition_prevention` (PASS); M1 PG16 concurrency tests PASS. |
-| Human approval (`approved=True/False`) | **STILL BROKEN (`CRITICAL` API BACKEND)** | UI/SDK fixed; Backend **FAILS** | **M3** added Decline UI & `approved: bool` SDK support, **but backend `guardian_db.py:433` & `service.py:290` STILL hardcode `approved=True` (waiting on M2)!** |
-| Approval binding, expiry & single-use | **PARTIALLY IMPLEMENTED** | SQLite / PG16 | Unchanged (M2): `approval.payment_intent_id == intent.id` & unconditional `QuoteSnapshot` hash still unfixed in `approvals/service.py` & `contracts/models.py` *(M3 adversarial test checks `approval_id` against another intent only on API boundary/mocked cases — confirm post-M2)*. |
-| PayPal order creation (`Orders v2`) | **VERIFIED WITH MOCKS** | Mocked HTTP | Unchanged (M2): Live PayPal Sandbox `NOT VERIFIED`. |
-| Verified capture (`Orders v2`) | **UI FIXED / BACKEND STILL BUGGY** | UI shows on `CAPTURE_PENDING`; Backend unguarded | **M3** fixed `/payments/[id]` Capture visibility (`CAPTURE_PENDING`), `attempt.state`, `paypal_approval_url`; **M2** still needed for `coordinator.py` pre-capture check & `PayPal*Error` 502/504 mapping. |
-| Failure recovery & reconciliation | **WORKER IMPROVED (`M1`)** | PG16 / Worker | **M1** added `FOR UPDATE SKIP LOCKED` to `list_pending_capture_attempts`; **M2** still needed to save `PAYPAL_CAPTURE` `EvidenceRecord` in `reconcile_pending`. |
-| Partial capture / Refunds / Voids | **UI/SDK STUBBED / BACKEND MISSING** | UI/SDK call endpoints; Backend 404/Missing | Unchanged (M2): Zero PayPal refund/void implementation exists yet. |
-| Provider webhook processing | **DEDUP HARDENED (`M1`)** | SQLite / PG16 | **M1** added `paypal_webhook_events` deduplication (`uq_paypal_webhook_event_id`) & lazy DisputeOS webhook dispatch hook in `webhooks.py`. |
+| Agent identity & registration | **FIXED & VERIFIED** | SQLite / PG16 | `evaluate_policy_v1` enforces `agent.status == "ACTIVE"` (revoked/suspended denied with `DENIED_AGENT_REVOKED`/`SUSPENDED`); verified in `test_guardian_hardening.py` & `test_sdk_coverage.py` (`403` after revoke). |
+| Spending Passport issuance & history | **FIXED & VERIFIED** | SQLite / PG16 | `spending_passport_snapshots` (`0003`) records every version on issuance/update; GhostPay replay consumes historical snapshot (`get_passport_snapshot_for_decision`). |
+| Policy creation & parity | **FIXED & VERIFIED** | SQLite / PG16 | Single pure `contracts.policy_v1.evaluate_policy_v1` shared by Guardian & GhostPay; **1,000-case property test PASS (`1000/1000`, `0` mismatches)**. |
+| Merchant & category restrictions | **FIXED & VERIFIED** | SQLite / PG16 | `evaluate_policy_v1` enforces `merchant.is_allowlisted` and passport `allowed_merchants`/`allowed_categories`; `/agents` UI uses `"passports:write"`. |
+| Currency restrictions & exponents | **FIXED & VERIFIED (Mocked)** | Unit / Mock HTTP | `contracts` ISO-4217 minor-unit utilities (`JPY=0`, `BHD/KWD=3`, `USD=2`) wired in `paypal/client.py`; `test_paypal.py` verifies integer-exact formatting/parsing. |
+| Daily / monthly limits | **FIXED & VERIFIED** | SQLite / PG16 | `evaluate_policy_v1` & `guardian` enforce `daily_spent_minor + amount_minor <= daily_limit_minor` & `monthly_limit_minor` inside reserved ledger state. |
+| Atomic reservation & double-spend | **FIXED & VERIFIED** | SQLite / PG16 | PG16 `SELECT ... FOR UPDATE` + `tests/concurrency/test_concurrency_harness.py` (`test_budget_reservation_race_condition_prevention`) PASS. |
+| Human approval (`approved=True/False`) | **FIXED & VERIFIED (`GAP-001`)** | SQLite / PG16 | `guardian_db.py` & `guardian/domain/service.py` honor `request.approved=False`, decline approval (`DECLINED`), release reservation, transition intent to `FAILED`, and emit events cleanly (`test_guardian_hardening.py`). |
+| Approval binding, expiry & single-use | **FIXED & VERIFIED (`GAP-005`)** | SQLite / PG16 | `approvals/service.py` binds `approval.payment_intent_id == intent.id` and `QuoteSnapshot` validates hash & expiry unconditionally; concurrent idempotency race fix (`_build_existing_intent_result` `reason_codes` non-empty) verified in `test_parallel_payment_proposal_idempotency`. |
+| PayPal order creation (`Orders v2`) | **VERIFIED WITH MOCKS** | Mock HTTP | `RetryingHTTPClient` + idempotent `PayPal-Request-Id`; live PayPal Sandbox HTTP call **SKIPPED (`NOT VERIFIED`)**. |
+| Verified capture (`Orders v2`) | **FIXED & VERIFIED (Mocked)** | PG16 / Mock HTTP | `coordinator.py` enforces `CAPTURE_PENDING` pre-state check; `guardian_db.py:728` detaches SQLAlchemy session (`_detach_session`) prior to outbound PayPal `await`; `PayPalTimeoutError`/`PayPalAPIError` map cleanly without holding DB connections. |
+| Failure recovery & reconciliation | **FIXED & VERIFIED** | PG16 / Worker | Worker `list_pending_capture_attempts` (`SKIP LOCKED`) + `reconcile_pending` persists `PAYPAL_CAPTURE` `EvidenceRecord` (`test_worker.py` & `test_platform_repo.py`). |
+| Partial capture / Refunds / Voids | **FIXED & VERIFIED (Mocked)** | PG16 / Mock HTTP | `POST /v1/guardian/payments/{intent_id}/refund` implemented in `guardian_db.py:867`, backed by `PaymentCoordinator.prepare_refund`/`finalize_refund` + `PayPalSandboxClient.refund_capture` + SDK/UI wiring (`test_paypal.py`, `test_sdk_coverage.py`). |
+| Provider webhook processing | **FIXED & VERIFIED** | PG16 | `paypal_webhook_events` dedup (`uq_paypal_webhook_event_id`) + `disputeos.paypal.webhook_handler` integrated cleanly (`test_webhooks_api.py`). |
+| Multi-Rail & MCP Governance | **IMPLEMENTED & VERIFIED (Mocked)** | Unit / Mock HTTP | `StripeProviderAdapter`, `AP2MandateAdapter`, `TAPProvenanceAdapter`, `X402SettlementAdapter`, `DeflectionAlertAdapter` (`test_providers.py`) + `/v1/guardian/mcp` JSON-RPC 2.0 server (`test_copilot_mcp.py`: never approves/captures/bypasses policy). |
 
 ---
 
-## 2. Critical & High-Severity Findings Status
+## 2. Critical & High-Severity Findings Resolution Status
 
-- **[CRITICAL-G1] `POST /approve` Ignores `approved: false`:** **STILL OPEN (Waiting on M2).** M3 fixed `apps/web` & both SDKs to send `approved: false`, so the frontend/SDK caller side is ready, **but the FastAPI server (`guardian_db.py:433`, `guardian/domain/service.py:290`) still executes approval + budget reservation unconditionally!**
-- **[HIGH-G2] Cross-Intent Approval Reuse & Quote Hash Bypass:** **STILL OPEN (Waiting on M2).**
-- **[HIGH-G3] Hardcoded 2-Decimal Currency Math (`JPY`/`KWD`/`BHD`):** **STILL OPEN (Waiting on M2).**
-- **[HIGH-G4] PayPal `capture_order` Pre-State Check & Uncaught `500`s:** **STILL OPEN (Waiting on M2).**
-- **[HIGH-G5] Missing Agent Status Check, Daily/Monthly Limits & Allowlist Bypass:** **STILL OPEN (Waiting on M2).**
-- **[HIGH-G6] Idempotency TOCTOU Race & Non-Equivalent Payload Reuse:** **STILL OPEN (Waiting on M2).**
+- **[CRITICAL-G1] `POST /approve` Ignores `approved: false`:** **CLOSED & VERIFIED** (`guardian_db.py`, `guardian/domain/service.py`, `test_guardian_hardening.py`, UI/SDK tests PASS).
+- **[HIGH-G2] Cross-Intent Approval Reuse & Quote Hash Bypass:** **CLOSED & VERIFIED** (`approvals/service.py`, `contracts/models.py`, `test_contracts.py`, `test_security_adversarial.py`).
+- **[HIGH-G3] Hardcoded 2-Decimal Currency Math (`JPY`/`KWD`/`BHD`):** **CLOSED & VERIFIED (Mocked)** (`packages/paypal/paypal/client.py`, `packages/contracts/`, `test_paypal.py`).
+- **[HIGH-G4] PayPal `capture_order` Pre-State Check, Refunds & Session Detach:** **CLOSED & VERIFIED (Mocked)** (`guardian_db.py:728`, `coordinator.py`, `paypal/client.py`).
+- **[HIGH-G5] Missing Agent Status Check, Daily/Monthly Limits & Allowlist Bypass:** **CLOSED & VERIFIED** (`contracts/policy_v1.py`, `test_guardian_hardening.py`).
+- **[HIGH-G6] Idempotency TOCTOU Race & Non-Equivalent Payload Reuse:** **CLOSED & VERIFIED** (`guardian/domain/service.py:181-208` concurrency fix + `test_parallel_payment_proposal_idempotency` PASS).
 
 ---
 
-## 3. Can Guardian Safely Control Payments for External AI Agents Today?
-**Verdict: NO.** M1 secured the infrastructure/database triggers/snapshots/rate limits and M3 fixed the frontend Capture/Merchant/Decline UX and SDKs, **but Computer 2's Guardian + PayPal fixes (`work/m2-financial-forensics-ai`) have not been pushed yet**. Do **not** route real money or external sandbox beta users through `POST /v1/guardian/payments/{id}/approve` until M2 lands and passes negative `approved=False`, approval-binding, JPY currency, and live PayPal Sandbox E2E verification.
+## 3. Can Guardian Safely Control Payments Today?
+**Verdict: CODE & LOCAL PG16 VERIFIED (`90%` financial maturity); EXTERNAL LIVE SANDBOX & STRIPE `NOT VERIFIED`.**  
+Every deterministic spending control, decline path, quote integrity check, multi-currency exponent calculation, refund route, DB session detach, and MCP tool boundary is now implemented and passing under SQLite + PostgreSQL 16 + adversarial concurrency tests (`313 passed`). However, `packages/paypal/tests/test_live_sandbox_optional.py::test_live_paypal_sandbox_oauth_and_order_roundtrip` was skipped due to absent credentials — **live PayPal Sandbox and live Stripe test-mode settlement must run and pass before allowing external beta/customer funds**.

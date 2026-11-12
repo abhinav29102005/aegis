@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from uuid import uuid4
 
 import httpx
 import pytest
@@ -371,8 +370,10 @@ async def test_async_sdk_full_platform_operations(tmp_path: Path) -> None:
     app = create_app(settings=settings, create_tables=True)
 
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as hc:
-        async with AsyncAegisClient(client=hc) as async_client:
+    async with (
+        httpx.AsyncClient(transport=transport, base_url="http://testserver") as hc,
+        AsyncAegisClient(client=hc) as async_client,
+    ):
             # Register & Auth
             reg = await async_client.register(
                 email="async-owner@example.com",

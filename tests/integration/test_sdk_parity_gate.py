@@ -14,25 +14,19 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import inspect
-import json
 import re
 import time
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from uuid import UUID, uuid4
+from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-
 from aegis_api.app import create_app
-from unittest.mock import AsyncMock, patch
-from paypal.client import PayPalOrderCreationResult
-from security import NexusSettings, Role, create_access_token
 from aegis_sdk.client import AegisClient
+from fastapi.testclient import TestClient
+from paypal.client import PayPalOrderCreationResult
+from security import NexusSettings
 
 
 # ==============================================================================
@@ -87,7 +81,7 @@ def test_openapi_sdk_coverage_gate():
     ts_covered = ts_ops.intersection(fastapi_operations)
     ts_coverage_ratio = len(ts_covered) / total_ops
 
-    print(f"\n[OpenAPI Parity Gate Results]")
+    print("\n[OpenAPI Parity Gate Results]")
     print(f"Total Canonical Endpoints: {total_ops}")
     print(f"Python SDK Coverage: {len(py_covered)} / {total_ops} ({py_coverage_ratio:.1%})")
     print(f"TypeScript SDK Coverage: {len(ts_covered)} / {total_ops} ({ts_coverage_ratio:.1%})")
@@ -154,9 +148,9 @@ def test_verbatim_integration_guide_python_webhook_verifier():
     assert match is not None, "Section 5.1 Python Verifier code block not found in INTEGRATION_GUIDE.md"
     py_code = match.group(1).strip()
 
-    # Execute the verbatim code in an isolated scope
+    # Execute the verbatim documentation example in an isolated scope
     scope: dict[str, Any] = {}
-    exec(py_code, scope)
+    exec(py_code, scope)  # noqa: S102
 
     verify_fn = scope.get("verify_aegis_webhook")
     parse_fn = scope.get("parse_aegis_signature")
@@ -167,7 +161,7 @@ def test_verbatim_integration_guide_python_webhook_verifier():
     raw_payload = b'{"event":"payment.succeeded","amount":4500}'
     now_ts = int(time.time())
 
-    signed_content = f"{now_ts}.".encode("utf-8") + raw_payload
+    signed_content = f"{now_ts}.".encode() + raw_payload
     valid_sig = hmac.new(secret.encode("utf-8"), signed_content, hashlib.sha256).hexdigest()
     valid_header = f"t={now_ts},v1={valid_sig}"
 
@@ -192,7 +186,7 @@ def test_verbatim_integration_guide_python_webhook_verifier():
 
     # Assert expired timestamp fails (> 300s)
     old_ts = now_ts - 500
-    old_signed = f"{old_ts}.".encode("utf-8") + raw_payload
+    old_signed = f"{old_ts}.".encode() + raw_payload
     old_sig = hmac.new(secret.encode("utf-8"), old_signed, hashlib.sha256).hexdigest()
     assert verify_fn(
         raw_payload_bytes=raw_payload,
@@ -210,7 +204,6 @@ def test_verbatim_integration_guide_flow(mock_backend_env):
     org_id = str(env["org_id"])
 
     # Adapt AegisClient with a custom httpx transport that directs to TestClient
-    from httpx import Response
     import httpx
 
     class TestClientTransport(httpx.BaseTransport):

@@ -1,50 +1,44 @@
-# 15 — Prioritized Gap Register (`2026-11-12` M1 + M3 Sync Tracker)
+# 15 — Prioritized Gap Register (`2026-11-12` Full M1 + M2 + M3 Integrated Tracker)
 
-**Synced Branch:** `integration/nexus` @ `498043e` (`work/m1` + `work/m3` merged; **`work/m2-financial-forensics-ai` NOT YET PUSHED**)
-
----
-
-## 1. Closed / Resolved Gaps in M1 + M3 (`VERIFIED ON 498043e`)
-
-| ID | Gap Summary | Closing Branch | Verification Evidence Observed |
-| :--- | :--- | :--- | :--- |
-| **GAP-003** | Outbound webhook SSRF & error body exfiltration | **M1** | `ssrf.py` + `webhooks.py` + `processor.py` (`follow_redirects=False`, IPv4/IPv6 block, status-only errors); PASS in `test_worker.py`, `test_webhooks_api.py`, `test_security_adversarial.py`. |
-| **GAP-004** | Broken Next.js UI contracts (`CAPTURE_PENDING`, `passports:write`, 6 `Role`s, `DisputeAnalysis`, timeline) | **M3** | Fixed across `apps/web/src/`; `next lint` `0` errors, `10` Web Node tests & `next build` (`24` pages) PASS. *(Live Chromium Playwright run still pending.)* |
-| **GAP-006** | `.env` / Compose `JWT_SECRET`, `RATE_LIMIT_RPM`, `EVIDENCE_STORAGE_DIR` ignored by `NexusSettings` | **M1** | `settings.py` aliases + `validate_security_posture`; verified in `test_settings_and_auth.py` & live Compose smoke run. |
-| **GAP-007** | Global HS256 JWT rate-limit prefix collision & unbounded RAM buckets | **M1** | `rate_limit.py` `sha256[:16]` + TTL eviction + Redis sorted-set backend; verified live in Compose (`x-ratelimit-remaining: 239->238`). |
-| **GAP-008** | `ADMIN -> OWNER` escalation & cross-org hijack; open `/register` abuse | **M1** | `auth_orgs.py` blocks `ADMIN->OWNER` (`403`), switches to signed invite tokens, adds email verification tokens + `/register` throttling. |
-| **GAP-014** | Webhook signature mismatch (`X-AEGIS-Signature` vs `AEGIS-Signature: t=,v1=`) & doc crash | **M1 + M3** | Unified across `processor.py`, `hashing.py`, `sdk-python`, `sdk-typescript` (Node + WebCrypto), & `INTEGRATION_GUIDE.md`; `test_verbatim_integration_guide_*` PASS. |
-| **GAP-020** | PG `financial_events` immutability triggers, `FOR UPDATE` sequence lock, `save_dispute_case` drops, PITR scripts | **M1** | Alembic `0003` trigger verified PG16 + `backup_pitr.sh`/`restore_verify.sh` verified live against Compose dump. |
-| **GAP-021** | Non-root Dockerfiles, worker healthcheck, `127.0.0.1:5432`, Prometheus `/metrics`, OTel, Compose CI, Linux VPS manifests | **M1** | `id`=`uid=999(aegis)`, `worker_healthcheck=OK`, `/metrics` + `/ready` verified live in Compose; `deploy/linux-staging/` + `deploy/observability/` added. |
-| **GAP-024** | Stripe billing/metering scaffolding, GDPR/DPDPA erasure/export, `/onboarding`, `/status`, `/legal/{terms,privacy,dpa}` | **M1 + M3** | Backend `/v1/billing/*` & `/v1/privacy/*` unit-tested (`test_auth_billing_erasure.py`); UI & legal markdown pages built (`live Stripe/legal review pending`). |
+**Integrated Branch:** `integration/nexus` *(merging M1 `d9ab7b8` + M3 `4b5d52f` + M2 `3bbaeb6` + post-merge integration fixes)*
 
 ---
 
-## 2. Partially Closed Gaps (Waiting on M2 or Post-Merge Sync Fixes)
+## 1. All 26 Baseline Audit Gaps (`GAP-001`..`GAP-026`) — Post-Integration Status
 
-| ID | What M1 / M3 Already Completed | What Still Remains Open |
-| :--- | :--- | :--- |
-| **GAP-002** | **M1** wired `Permission.GHOSTPAY_READ` at `app.py` router mount; **M3** verified `VIEWER`/`AGENT_SERVICE` get `403` (`test_rbac_negative_matrix`). | **M2:** Add granular `Permission.GHOSTPAY_READ` / `GHOSTPAY_SIMULATE` inside `modules/ghostpay/ghostpay/api/router.py` directly. |
-| **GAP-010** | **M1** added outbox `locked_at`/`lease_expires_at` reaper, `SKIP LOCKED` reconciliation, `attempts=0` DLQ reset & concurrency semaphore (`test_worker.py` & `test_platform_repo.py` PASS PG16). | **M3 Test Fix:** `tests/concurrency/test_concurrency_harness.py::test_outbox_lease_claim_concurrency` FAILS (`60` vs `20`) because fixture uses SQLite WAL instead of `AEGIS_TEST_POSTGRES_URL`. |
-| **GAP-015** | **M3** built `AsyncAegisClient`, fixed TS `detail` parser, Edge WebCrypto, middlewares, pagination, & READMEs (`72/96` Py, `76/96` TS). | **M3 + Sync:** Wrap M1's `18` new billing/privacy/MFA/SSO/invitation routes in both SDKs to pass `test_openapi_sdk_coverage_gate` (`>=85%`, currently `75.0%`/`79.2%`). |
-| **GAP-018** | **M1** sanitized 403/503/webhook errors & enforced active principals; **M3** replaced `localStorage` with `HttpOnly` cookie BFF + CSP headers. | **M2:** Resolve `disputeos_db.py` cross-case artifact IDOR & unmounted standalone module routers (`SEC-06`, `SEC-09`). |
-| **GAP-022** | **M1** added S3/R2 WORM storage, 10MB streaming uploads, worker HTTP semaphore, M1 list pagination; **M3** added UI search/pagination/accessibility. | **M2:** Detach synchronous `Session` across PayPal `await` calls (`guardian_db.py`) + wire `guardian_db`/`disputeos_db` pagination. |
-| **GAP-023** | **M1** added SHA-pinned CI, `pytest-cov`, `pip-audit`, `gitleaks`, `trivy`; **M3** populated `tests/{adversarial,concurrency,e2e,integration}/`. | **Sync Cleanup:** Fix `79` Ruff errors in M3, add `"tests"` to `pyproject.toml` `testpaths`, & add `@playwright/test` dependency to run Chromium E2E live. |
-| **GAP-026** | **M1** added `0003` migration/deploy cleanup; **M3** deleted `docs/TEAM_HANDOFF.md`, updated `README.md`/`docs`, unlinked `packages/ui/`. | **M2:** Export missing `contracts.schema.json` schemas & reconcile `origin/feature/ghostpay` (`2a243e1`); `rmdir packages/ui`. |
+| ID | Gap Summary | Owners | Code / PG16 Status (`2026-11-12`) | Verification Evidence Observed (`integration/nexus`) | Remaining External / Non-Code Gate |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **GAP-001** | `POST /approve` ignores `request.approved=False` | M2 + M3 | **CLOSED IN CODE** | `guardian_db.py`, `guardian/domain/service.py`, `apps/web`, SDKs, `test_guardian_hardening.py` PASS. | Live Sandbox approval flow |
+| **GAP-002** | Missing RBAC on `/v1/ghostpay/*` | M1 + M2 | **CLOSED IN CODE** | Gateway `app.py` + internal `ghostpay/api/router.py` enforce `GHOSTPAY_READ`/`SIMULATE`; `test_rbac_negative_matrix.py` + `test_ghostpay_api.py` PASS. | None |
+| **GAP-003** | Outbound webhook SSRF & response reflection | M1 | **CLOSED IN CODE** | `ssrf.py`, `webhooks.py`, `processor.py` (`follow_redirects=False`, IPv4/IPv6 block, status-only error) PASS. | None |
+| **GAP-004** | Broken Next.js UI contract screens | M3 + M2 | **CLOSED IN CODE** | All 5 screens aligned; `next lint` `0`, `10` Node tests, `next build` (`24` routes) PASS; M2 backend routes live. | Live Chromium Playwright |
+| **GAP-005** | Cross-intent approval reuse & `quote_hash` bypass | M2 | **CLOSED IN CODE** | `approvals/service.py` binds `approval.payment_intent_id == intent.id`; `QuoteSnapshot` enforces unconditional hash & expiry; `test_contracts.py` & `test_security_adversarial.py` PASS. | None |
+| **GAP-006** | `.env` / Compose `JWT_SECRET`, `RATE_LIMIT_RPM`, `EVIDENCE_STORAGE_DIR` ignored | M1 | **CLOSED LIVE** | `settings.py` aliases + `validate_security_posture`; verified in tests & live `make compose-smoke`. | None |
+| **GAP-007** | Global JWT rate-limit prefix collision & unbounded RAM | M1 | **CLOSED LIVE** | `rate_limit.py` `sha256[:16]` + TTL eviction + Redis sorted-set backend verified. | None |
+| **GAP-008** | `ADMIN -> OWNER` escalation & cross-org hijack | M1 | **CLOSED IN CODE** | `auth_orgs.py` blocks `ADMIN->OWNER`, uses invite tokens & email verification/throttling (`test_auth_billing_erasure.py` PASS). | Live SMTP delivery |
+| **GAP-009** | `DisputeOS` fake `SUBMITTED` without PayPal `provide-evidence` | M2 | **CLOSED IN CODE (Mocked)** | `PayPalDisputeAdapter` calls `provide-evidence`/`accept-claim` behind `paypal_disputes_api_enabled` + blocks synthetics; `disputeos_db.py` sets `SUBMITTED` only on HTTP 2xx. | Live PayPal Disputes Sandbox |
+| **GAP-010** | Outbox lease reaper, `SKIP LOCKED`, DLQ reset, concurrency | M1 + Sync | **CLOSED IN CODE** | M1 leases/`SKIP LOCKED`/DLQ `attempts=0`; post-merge SQLite CAS fix in `platform_repo.py:656-703`; `test_outbox_lease_claim_concurrency` & `test_worker.py` PASS. | Multi-worker live soak |
+| **GAP-011** | `PolicyEngine` vs GhostPay `"policy-v1"` parity, daily/agent-status/allowlist | M2 | **CLOSED IN CODE** | Canonical `contracts.policy_v1.evaluate_policy_v1`; **1,000-case property test (`1000/1000`, `0` mismatches)** + agent status/allowlist/daily limits PASS. | None |
+| **GAP-012** | PayPal `JPY/BHD` decimals, pre-capture check, timeouts, refunds | M2 | **CLOSED IN CODE (Mocked)** | `contracts` ISO-4217 minor utils in `paypal/client.py`, `CAPTURE_PENDING` pre-check, retries, `POST /refund` (`guardian_db.py:867`); `test_paypal.py` PASS. | **Live PayPal Sandbox (`1 skipped`)** |
+| **GAP-013** | GhostPay legacy split-brain, RAM traces/investigations, partial digests | M2 + M1 | **CLOSED IN CODE** | Deleted `timemachine/replay.py` & `forensics/*`; wired `adapters.py` & GhostPay router to PG snapshots/traces/DNA; canonical hashes (`test_forensics_hardening.py` PASS). | None |
+| **GAP-014** | Webhook signature contract (`AEGIS-Signature: t=,v1=`) | M1 + M3 | **CLOSED LIVE** | Unified across Worker, `hashing.py`, Py SDK, TS SDK (Node + WebCrypto), & `INTEGRATION_GUIDE.md` (`test_verbatim_integration_guide_*` PASS). | None |
+| **GAP-015** | Python & TS SDK parity, `AsyncAegisClient`, `detail` parser | M3 + Sync | **CLOSED IN CODE** | Both SDKs expanded to **`97 / 99` (`98.0%`) OpenAPI ops**; `35/35` Vitest + `3/3` Node + `test_sdk_coverage.py` + parity gate PASS. | PyPI / npm publication |
+| **GAP-016** | Proposal/checkout idempotency TOCTOU race & payload equivalence | M2 | **CLOSED IN CODE** | `guardian/domain/service.py:181-208` + `coordinator.py` payload equivalence & reason-code race fix; `test_parallel_payment_proposal_idempotency` PASS. | None |
+| **GAP-017** | DisputeOS state guard, `/resolve`, `SEC-06` BOLA, `CUSTOMER.DISPUTE.*`, graph | M2 + M1 | **CLOSED IN CODE** | `DisputeStatus` guard, `POST /resolve`, `disputeos.paypal.webhook_handler`, `disputeos_db.py:464-477` BOLA check, non-Cartesian graph, full-context `normalizer.py`. | Live PayPal dispute webhook delivery |
+| **GAP-018** | Error sanitization, active principals, `HttpOnly` cookie BFF | M1 + M3 | **CLOSED IN CODE** | `tenant.py`/routes sanitize errors; `deps.py` checks active users/SAs; Next.js `HttpOnly` cookie BFF + CSP headers verified (`SEC-09` Guardian closed). | Unmounted unit-only `disputeos/api/router.py` cleanup |
+| **GAP-019** | Live LLM adapters (`OpenAI`/`Gemini`/`Anthropic`), sanitization, semantic citations | M2 + M1 | **CLOSED IN CODE (Mocked)** | `llm_client.py` (`631` lines) + `llm_invocation_logs` PG persistence + `sanitize_untrusted_text` + semantic `citations.py` (`test_ai_eval.py` PASS). | **Live OpenAI / Gemini / Anthropic API evals** |
+| **GAP-020** | PG `financial_events` immutability trigger, `FOR UPDATE` seq, PITR scripts | M1 | **CLOSED LIVE** | Alembic `0003` trigger verified PG16 + live `backup_pitr.sh`/`restore_verify.sh` drill passed in M1. | Remote S3/R2 PITR bucket test |
+| **GAP-021** | Non-root containers, healthchecks, `127.0.0.1:5432`, `/metrics`, OTel, Linux VPS | M1 | **CLOSED LIVE** | **`make compose-smoke` PASS post-merge** (`migrate` + `api /ready` + `worker --healthcheck`), Grafana/alerts, `deploy/linux-staging/`. | Live VPS deployment & Compose `web` check |
+| **GAP-022** | Session detach across PayPal `await`, S3/R2 WORM, 10MB cap, pagination | M1 + M2 | **CLOSED IN CODE** | `guardian_db.py:728` `_detach_session`, `S3ObjectStorage` WORM, 10MB stream cap, `limit`/`offset` pagination across routers. | Live S3/R2 upload test |
+| **GAP-023** | SHA-pinned CI, `pytest-cov`, `pip-audit`, Ruff clean, `tests/` harness in `testpaths` | M1 + M3 + Sync | **CLOSED IN CODE (`pip-audit`/`npm` CVEs tracked)** | **`0` Ruff errors**, `"tests"` in `pyproject.toml`, **`313 passed, 1 skipped` (`90%` cov)**; SHA-pinned CI. | `11` `pip-audit` (`langgraph`/`pytest`), `2` `apps/web` `postcss` CVEs, live Chromium Playwright |
+| **GAP-024** | Stripe billing, GDPR/DPDPA export/erasure, `/onboarding`, `/status`, `/legal/*` | M1 + M3 | **CLOSED IN CODE** | `/v1/billing/*`, `/v1/privacy/*`, legal pages, status & runbooks verified by unit/build tests. | **Live Stripe API + Legal counsel review** |
+| **GAP-025** | Multi-rail (`Stripe`, `AP2`, `TAP`, `x402`, `Deflection`) & MCP Server | M2 | **CLOSED IN CODE (Mocked)** | `guardian/providers/*` (`test_providers.py`) + `/v1/guardian/mcp` (`test_copilot_mcp.py`, `598` LOC) verified cleanly. | Live Stripe/AP2/TAP/x402 sandbox runs |
+| **GAP-026** | `contracts.schema.json` export, `feature/ghostpay` sync, docs/`packages/ui` cleanup | M2 + M3 + Sync | **CLOSED IN CODE** | `export_schemas.py` & updated `contracts.schema.json`; `TEAM_HANDOFF.md` deleted; `rmdir packages/ui` clean. | None |
 
 ---
 
-## 3. Completely Open Gaps (100% Waiting on Unpushed Computer 2 `work/m2`)
-
-| ID | Priority | Owner | Summary of Open Work Blocking Release |
-| :--- | :--- | :--- | :--- |
-| **GAP-001** | **P0** | M2 | `POST /approve` in `guardian_db.py:433` & `guardian/domain/service.py:290` still ignores `request.approved=False` (critical payment bypass!). |
-| **GAP-005** | **P0** | M2 | `consume_approval` still omits `approval.payment_intent_id == intent.id`; `QuoteSnapshot` still skips hash check when `quote_hash` supplied. |
-| **GAP-009** | **P0** | M2 | `DisputePayPalAdapter.submit_dispute_response` still no-op while `disputeos_db.py:510` marks cases `SUBMITTED` without calling PayPal. |
-| **GAP-011** | **P1** | M2 | Guardian `PolicyEngine` omits `AgentIdentity.status`, `daily_limit_minor`, allowlist strictness, & diverges from GhostPay `"policy-v1"`. |
-| **GAP-012** | **P1** | M2 | `paypal/client.py` 2-decimal math breaks `JPY`/`KWD`/`BHD`; `capture_order` calls PayPal before `CAPTURE_PENDING` check; zero refunds/retries/live Sandbox test. |
-| **GAP-013** | **P1** | M2 | GhostPay legacy `timemachine/replay.py` + `forensics/*` still active; `/traces`/`POST /investigations` volatile RAM; `adapters.py` does naive subtraction instead of using M1's `spending_passport_snapshots`. |
-| **GAP-016** | **P1** | M2 | `submit_proposal` idempotency outside DB lock without payload equivalence; `create_checkout` ignores attempt idempotency. |
-| **GAP-017** | **P1** | M2 | Missing `DisputeStatus` state guard, `POST /resolve`, `disputeos.paypal.webhook_handler` (`CUSTOMER.DISPUTE.*`), & full-context `normalizer.py` hash. |
-| **GAP-019** | **P2** | M2 | Zero live LLM integration in `PurchasingCopilot` & `DisputeAnalyzer` (`LLM_PROVIDER=deterministic` only); naive `CitationValidator`. |
-| **GAP-025** | **P3** | M2 | Single PayPal adapter only — missing `PaymentProviderAdapter` (Stripe/AP2/TAP/x402/MCP). |
+## 2. Remaining Pre-Launch Action List (Non-Code External & Dependency Items Only)
+1. **External Sandbox & Provider Execution (`NOT VERIFIED`):** Obtain PayPal Sandbox credentials to run `packages/paypal/tests/test_live_sandbox_optional.py` live (`create -> approve -> capture -> refund -> dispute -> webhook`), plus test-mode Stripe Billing, live LLM evals, remote S3/R2 upload, & SMTP.
+2. **Real Browser Playwright (`NOT VERIFIED`):** Install `@playwright/test` in `apps/web/package.json` and run `apps/web/tests/playwright_e2e_journeys.spec.ts` against `next start` + `aegis_api`.
+3. **Supply-Chain CVE Updates:** Upgrade `langgraph` (`>=0.4.4+` ecosystem / `langgraph-sdk>=0.4.4`) & `pytest>=9.0.3` for `pip-audit`, and upgrade `next` (`16.4.6`) or transitive `postcss` in `apps/web` before public beta/commercial release.
+4. **Ops, Legal & Compliance Sign-Off:** Deploy `deploy/linux-staging/` to target Linux VPS, benchmark RPS load capacity, complete external legal counsel review of `/legal/*` & `DPA`, run external pen-test, and prepare SOC 2 Type II controls.

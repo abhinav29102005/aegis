@@ -324,6 +324,20 @@ def test_paypal_webhook_error_sanitization_dedup_and_dispute_hook(
         }
 
         # CUSTOMER.DISPUTE.* falls back cleanly if handler module not installed
+        with monkeypatch.context() as mp:
+            mp.setitem(sys.modules, "disputeos.paypal.webhook_handler", None)
+            dispute_evt_missing = {
+                "id": "WH-DISP-MISSING",
+                "event_type": "CUSTOMER.DISPUTE.CREATED",
+                "resource": {"id": "PP-D-MISSING"},
+            }
+            disp_missing_resp = client.post(
+                "/v1/paypal/webhooks", headers=pp_headers, json=dispute_evt_missing
+            )
+            assert disp_missing_resp.status_code == 200
+            assert disp_missing_resp.json()["dispute_handler"] == "not_installed_yet"
+
+        # When real disputeos.paypal.webhook_handler is installed, unknown disputes fail safely
         dispute_evt = {
             "id": "WH-DISP-1",
             "event_type": "CUSTOMER.DISPUTE.CREATED",
@@ -331,7 +345,7 @@ def test_paypal_webhook_error_sanitization_dedup_and_dispute_hook(
         }
         disp_resp = client.post("/v1/paypal/webhooks", headers=pp_headers, json=dispute_evt)
         assert disp_resp.status_code == 200
-        assert disp_resp.json()["dispute_handler"] == "not_installed_yet"
+        assert disp_resp.json()["dispute_handler"]["handled"] is False
 
         # When disputeos.paypal.webhook_handler is installed, it is invoked
         called: list[tuple[str, dict, str]] = []

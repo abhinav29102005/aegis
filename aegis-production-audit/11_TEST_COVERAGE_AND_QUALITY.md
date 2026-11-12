@@ -1,23 +1,23 @@
 # 11 — Test Coverage & Evidence Quality Audit
 
-**Observed Post-Sync Test Results (`2026-11-12` on `integration/nexus` @ `498043e`):**
-- **Workspace PG16 Pytest (`packages/*/tests`, `modules/*/tests`, `services/*/tests`)**: **`228 passed, 0 failed, 0 skipped`** in `23.32s` (`87%` measured statement coverage across `10,490` statements via `pytest-cov`!).
-- **Root M3 QA Harness (`uv run pytest tests/ -v`)**: **`14 passed, 2 failed`** in `7.44s`:
-  - `tests/adversarial/test_rbac_negative_matrix.py`: **`3/3` PASS** (`6-role` negative matrix, `ADMIN->OWNER` blocked, `AGENT_SERVICE` blocked)
-  - `tests/adversarial/test_security_adversarial.py`: **`6/6` PASS** (SSRF, quote tamper, webhook tamper, replay, policy & dispute prompt injection)
-  - `tests/concurrency/test_concurrency_harness.py`: **`2/3` PASS** (`budget_reservation_race`, `parallel_proposal_idempotency`); **`test_outbox_lease_claim_concurrency` FAILED (`Total claimed: 60, unique: 20`)**
-  - `tests/e2e/test_console_journeys_e2e.py`: **`1/1` PASS**
-  - `tests/integration/test_sdk_parity_gate.py`: **`2/3` PASS** (verbatim `INTEGRATION_GUIDE.md` verifier & flow PASS); **`test_openapi_sdk_coverage_gate` FAILED (`75.0%` Py `72/96`, `79.2%` TS `76/96` vs `>=85%`)**
-- **TypeScript SDK (`packages/sdk-typescript`)**: **`35 passed` (Vitest `4` suites)** + **`3 passed` (Node legacy test)** + **`tsc` build PASS**.
-- **Next.js Console (`apps/web`)**: **`next lint` (`0` warnings/errors)** + **`3/3` unit (`format.test.mjs`)** + **`7/7` E2E journey (`console_e2e_journeys.test.mjs`)** + **`next build` (`24` static/dynamic pages) PASS**. (`@playwright/test` is NOT installed in `package.json`, so `playwright_e2e_journeys.spec.ts` has not executed in Chromium.)
-- **Ruff (`uv run ruff check .`)**: **`79` lint errors** (M1 paths `0` errors; M3 added unused/unsorted imports, `2` `F821` undefined `Any` in `packages/sdk-python/tests/test_pagination.py`, `S102` `exec` in `test_sdk_parity_gate.py`, plus `1` pre-existing `BLE001` in `guardian/payments/coordinator.py:294`).
-- **Live Infra Smoke (`work/m1` `d9ab7b8`)**: Docker Compose (`postgres` + `redis` + `migrate` + `api` + `worker`) + `backup_pitr.sh` + `restore_verify.sh` **VERIFIED LIVE**.
+**Observed Post-Integration Final Verification Results (`2026-11-12` on `integration/nexus`, after ALL edits including `pyproject.toml` `testpaths`):**
+- **Ruff Static Lint (`uv run ruff check .`):** **`All checks passed!`** (`0` lint errors across entire repository — down from `79`).
+- **Full Python Workspace + Root QA Suite vs `postgres:16-alpine` (`uv run pytest -q --cov=packages --cov=modules --cov=services --cov-report=term-missing:skip-covered`):**
+  - **Result:** **`313 passed, 1 skipped` (`packages/paypal/tests/test_live_sandbox_optional.py::test_live_paypal_sandbox_oauth_and_order_roundtrip`), `0 failed` in `42.34s`!**
+  - **Measured Statement Coverage:** **`90%` overall across `20,241` statements (`2,078` missed; `81` files skipped at `100%` coverage)**!
+  - **Notable Verified Subsets Included in `313 passed`:**
+    - Guardian <-> GhostPay `"policy-v1"` property parity (`modules/ghostpay/tests/test_forensics_hardening.py`): **`1,000 / 1,000` cases, `0` mismatches**.
+    - Root QA Harness (`tests/` now included in `pyproject.toml` `testpaths`): **`16 / 16` PASS** — 6-role RBAC negative matrix (`3/3`), adversarial SSRF/quote-tamper/webhook-tamper/replay/prompt-injection (`6/6`), concurrency race & outbox lease harness (`3/3`), console journey E2E (`1/1`), OpenAPI SDK parity gate (`97/99` = `98.0%` Py & TS) + verbatim `INTEGRATION_GUIDE.md` checks (`3/3`).
+    - Multi-rail providers (`modules/agentpay-guardian/tests/test_providers.py`), MCP + copilot (`test_copilot_mcp.py`), DisputeOS AI evals (`modules/disputeos/tests/test_ai_eval.py`), PG16 concurrency/migration triggers (`test_postgres_integration.py`, `test_database.py`, `test_platform_repo.py`), & worker DLQ/leases (`test_worker.py`).
+- **Live Docker Compose Smoke (`POSTGRES_PORT=55432 REDIS_PORT=56379 API_PORT=18000 make compose-smoke`):** **`exit 0`** — rebuilt `migrate`, `api`, & `worker` images from integrated tree, migrated PG16 + Redis, verified `/ready` `{"status":"ready","database":"connected","paypal_configured":false}` and `worker --healthcheck`.
+- **TypeScript SDK (`packages/sdk-typescript`):** `tsc` typecheck + build PASS, **`35 passed` (Vitest `4` files)** + **`3 passed` (Node legacy)**, `npm audit --omit=dev` **`0` vulnerabilities**.
+- **Next.js Console (`apps/web`):** `tsc --noEmit` PASS, `next lint` (`0` warnings/errors), **`3/3` unit (`format.test.mjs`)** + **`7/7` Node E2E (`console_e2e_journeys.test.mjs`)**, `next build` **`24` routes PASS**, `npm audit --omit=dev` reports `2` transitive `postcss` advisories (`1` moderate, `1` high).
+- **`pip-audit` (`uv run pip-audit -r /tmp/aegis-reqs.txt --desc`):** Reports `11` known vulnerabilities across `4` packages (`langgraph 0.6.11`, `langgraph-checkpoint 3.0.1`, `langgraph-sdk 0.2.15`, `pytest 8.4.2`).
 
 ---
 
-## 1. Critical Unverified / Still-Failing Gaps Revealed by Sync Testing
-1. **Unpushed M2 Financial Tests:** No backend negative tests exist yet for `approved=False` reserving `0`, `JPY`/`KWD` 0/3-decimal PayPal formatting, 1,000-case Guardian <-> GhostPay `"policy-v1"` property parity, or DisputeOS failed PayPal submission staying `APPROVED_FOR_SUBMISSION` because `work/m2-financial-forensics-ai` is not pushed.
-2. **M3 Concurrency Fixture Bug (`test_outbox_lease_claim_concurrency`):** Fixture opens SQLite WAL (`sqlite:///concurrency.db`) instead of `AEGIS_TEST_POSTGRES_URL`, failing disjoint lease claims (`60` vs `20`) because SQLite does not support `FOR UPDATE SKIP LOCKED`. *(PG16 worker test `test_platform_repo.py` passes cleanly.)*
-3. **M3 OpenAPI Coverage Gate Drift:** M1 expanded OpenAPI from `78` to `96` ops, lowering M3 SDK parity to `75.0%` / `79.2%` until M1 routes are wrapped in `sdk-python` & `sdk-typescript`.
-4. **Root `tests/` Excluded from Default `pytest`:** `pyproject.toml` `[tool.pytest.ini_options].testpaths` does not yet include `"tests"`, so default `uv run pytest` skips `tests/{adversarial,concurrency,e2e,integration}`.
-5. **External Network Flows Remain `NOT VERIFIED`:** Live PayPal Sandbox, live Stripe Billing webhooks, live S3/R2 remote upload, live LLM API calls, and Playwright live Chromium execution.
+## Remaining `NOT VERIFIED` Test Boundaries
+1. **Live PayPal Sandbox (`test_live_sandbox_optional.py`):** Explicitly skipped without sandbox client credentials (`1 skipped`).
+2. **Live Stripe Billing / Provider, Live S3/R2 Upload, Live LLM API Calls, Live SMTP:** Tested with `httpx` mocks / local disk stubs; unrun against real third-party endpoints (`NOT VERIFIED`).
+3. **Live Chromium Browser E2E (`playwright_e2e_journeys.spec.ts`):** Spec file (`90` lines) present, **`@playwright/test` absent from `apps/web/package.json`** (`NOT VERIFIED` in headless browser).
+4. **Load / Saturation Benchmarks & Live Linux VPS Deploy:** Capacity/RPS latency benchmarks not yet executed (`NOT VERIFIED`).

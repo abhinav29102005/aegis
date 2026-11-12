@@ -11,7 +11,7 @@ from contracts import (
     Tenant,
 )
 from security import Role, assert_same_tenant, generate_api_key, hash_api_key
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -653,23 +653,55 @@ class PlatformRepository:
             OutboxEventRow.lease_expires_at.is_not(None),
             OutboxEventRow.lease_expires_at < ts,
         )
-        stmt = (
-            select(OutboxEventRow)
-            .where(or_(due_pending_or_retry, expired_processing))
-            .order_by(OutboxEventRow.created_at.asc())
-            .limit(limit)
-        )
-        if self._is_postgres():
-            stmt = stmt.with_for_update(skip_locked=True)
-        rows = list(self.session.scalars(stmt).all())
+        due_condition = or_(due_pending_or_retry, expired_processing)
         lease_exp = ts + timedelta(seconds=lease_seconds)
-        for row in rows:
-            row.status = "PROCESSING"
-            row.locked_at = ts
-            row.locked_by = worker_id
-            row.lease_expires_at = lease_exp
+        if self._is_postgres():
+            stmt = (
+                select(OutboxEventRow)
+                .where(due_condition)
+                .order_by(OutboxEventRow.created_at.asc())
+                .limit(limit)
+                .with_for_update(skip_locked=True)
+            )
+            rows = list(self.session.scalars(stmt).all())
+            for row in rows:
+                row.status = "PROCESSING"
+                row.locked_at = ts
+                row.locked_by = worker_id
+                row.lease_expires_at = lease_exp
+            self.session.flush()
+            return rows
+
+        # SQLite / non-PG fallback: atomic compare-and-set UPDATE per candidate row
+        candidate_ids = list(
+            self.session.scalars(
+                select(OutboxEventRow.id)
+                .where(due_condition)
+                .order_by(OutboxEventRow.created_at.asc())
+                .limit(max(limit * 4, 100))
+            ).all()
+        )
+        claimed: list[OutboxEventRow] = []
+        for cid in candidate_ids:
+            if len(claimed) >= limit:
+                break
+            res = self.session.execute(
+                update(OutboxEventRow)
+                .where(OutboxEventRow.id == cid, due_condition)
+                .values(
+                    status="PROCESSING",
+                    locked_at=ts,
+                    locked_by=worker_id,
+                    lease_expires_at=lease_exp,
+                )
+                .execution_options(synchronize_session=False)
+            )
+            if getattr(res, "rowcount", 0) == 1:
+                row = self.session.get(OutboxEventRow, cid, populate_existing=True)
+                if row is not None:
+                    claimed.append(row)
         self.session.flush()
-        return rows
+        return claimed
 
     def mark_outbox_published(self, outbox_id: UUID, *, now: datetime | None = None) -> OutboxEventRow:
         row = self.session.get(OutboxEventRow, outbox_id)

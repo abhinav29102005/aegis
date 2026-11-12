@@ -12,22 +12,19 @@ Covers all 7 user journeys using real TestClient backend with SQLite:
 
 from __future__ import annotations
 
-import json
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
-from fastapi.testclient import TestClient
-
 from aegis_api.app import create_app
+from fastapi.testclient import TestClient
 from paypal.client import (
     PayPalCaptureResult,
     PayPalOrderCreationResult,
     VerifiedPayPalCapture,
 )
-from security import NexusSettings, Role
+from security import NexusSettings
 
 
 @pytest.fixture

@@ -848,4 +848,120 @@ export class AegisClient {
   requeueOutboxEvent(outboxId: string): Promise<OutboxEvent> {
     return this.request("POST", `/v1/worker/outbox/${outboxId}/requeue`);
   }
+
+  // ---------------------------------------------------------------------------
+  // MFA, Verification, Invitations, Billing, Privacy, Refunds & M2 Extensions
+  // ---------------------------------------------------------------------------
+
+  verifyEmail(token: string): Promise<Record<string, unknown>> {
+    return this.request("POST", "/v1/auth/verify-email", { token });
+  }
+
+  resendVerification(email: string): Promise<Record<string, unknown>> {
+    return this.request("POST", "/v1/auth/resend-verification", { email });
+  }
+
+  enrollMfa(): Promise<Record<string, unknown>> {
+    return this.request("POST", "/v1/auth/mfa/enroll");
+  }
+
+  verifyMfa(code: string): Promise<Record<string, unknown>> {
+    return this.request("POST", "/v1/auth/mfa/verify", { code });
+  }
+
+  oidcExchange(input: {
+    id_token: string;
+    nonce?: string;
+    organization_id?: string;
+  }): Promise<AuthTokenResponse> {
+    return this.request<AuthTokenResponse>("POST", "/v1/auth/sso/oidc/exchange", input);
+  }
+
+  listInvitations(): Promise<Array<Record<string, unknown>>> {
+    return this.request("GET", "/v1/orgs/invitations");
+  }
+
+  createInvitation(input: {
+    email: string;
+    role?: string;
+    expires_in_hours?: number;
+  }): Promise<Record<string, unknown>> {
+    return this.request("POST", "/v1/orgs/invitations", input);
+  }
+
+  acceptInvitation(token: string): Promise<Record<string, unknown>> {
+    return this.request("POST", `/v1/orgs/invitations/${token}/accept`);
+  }
+
+  revokeInvitation(invitationId: string): Promise<Record<string, unknown>> {
+    return this.request("DELETE", `/v1/orgs/invitations/${invitationId}`);
+  }
+
+  listBillingPlans(): Promise<Record<string, unknown>> {
+    return this.request("GET", "/v1/billing/plans");
+  }
+
+  getBillingSubscription(): Promise<Record<string, unknown>> {
+    return this.request("GET", "/v1/billing/subscription");
+  }
+
+  createBillingCheckout(input: {
+    plan?: "PRO" | "ENTERPRISE";
+    success_url: string;
+    cancel_url: string;
+  }): Promise<Record<string, unknown>> {
+    return this.request("POST", "/v1/billing/checkout", input);
+  }
+
+  createBillingPortal(returnUrl: string): Promise<Record<string, unknown>> {
+    return this.request("POST", "/v1/billing/portal", { return_url: returnUrl });
+  }
+
+  exportPersonalData(): Promise<Record<string, unknown>> {
+    return this.request("GET", "/v1/privacy/export");
+  }
+
+  listErasureRequests(): Promise<Array<Record<string, unknown>>> {
+    return this.request("GET", "/v1/privacy/erasure-requests");
+  }
+
+  createErasureRequest(input: {
+    user_id: string;
+    reason?: string;
+  }): Promise<Record<string, unknown>> {
+    return this.request("POST", "/v1/privacy/erasure-requests", input);
+  }
+
+  exportAuditEvents(params?: {
+    format?: "json" | "csv";
+    limit?: number;
+  }): Promise<unknown> {
+    return this.request("GET", "/v1/audit-events/export", undefined, { query: params });
+  }
+
+  refundPayment(
+    paymentIntentId: string,
+    input?: { attempt_id?: string; amount_minor?: number; reason?: string }
+  ): Promise<Record<string, unknown>> {
+    return this.request("POST", `/v1/guardian/payments/${paymentIntentId}/refund`, input ?? {});
+  }
+
+  resolveDisputeCase(
+    caseId: string,
+    input?: { resolution_outcome?: string; reason?: string; notes?: string }
+  ): Promise<DisputeCase> {
+    return this.request<DisputeCase>("POST", `/v1/disputeos/cases/${caseId}/resolve`, input ?? {});
+  }
+
+  downloadDisputeArtifact(caseId: string, artifactId: string): Promise<unknown> {
+    return this.request("GET", `/v1/disputeos/cases/${caseId}/artifacts/${artifactId}`);
+  }
+
+  listGhostPayTraces(params?: {
+    agent_id?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<Array<Record<string, unknown>>> {
+    return this.request("GET", "/v1/ghostpay/traces", undefined, { query: params });
+  }
 }

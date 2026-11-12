@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from aegis_sdk.pagination import (
-    AsyncPaginationIterator,
-    PaginationIterator,
     paginate,
     paginate_async,
 )

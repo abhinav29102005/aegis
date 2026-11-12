@@ -4,19 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any
+from typing import Any, Self
 from uuid import UUID, uuid4
 
 import httpx
 
 from aegis_sdk.exceptions import AegisAPIError
-from aegis_sdk.pagination import (
-    AsyncPaginationIterator,
-    PaginationIterator,
-    paginate,
-    paginate_async,
-)
-from aegis_sdk.webhook import verify_aegis_signature, verify_webhook_signature
 
 RETRYABLE_STATUS_CODES = frozenset({429, 502, 503, 504})
 
@@ -30,7 +23,7 @@ def _build_timeout(timeout: float | httpx.Timeout) -> httpx.Timeout:
 def _handle_response_error(resp: httpx.Response) -> None:
     try:
         err_payload = resp.json()
-    except Exception:
+    except ValueError:
         err_payload = resp.text
     raise AegisAPIError.from_response(resp.status_code, err_payload)
 
@@ -60,10 +53,10 @@ class AegisClient:
         self._client = client or httpx.Client(base_url=self.base_url, timeout=self._timeout)
         self._owns_client = client is None
 
-    def __enter__(self) -> AegisClient:
+    def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, *args: Any) -> None:
+    def __exit__(self, *args: object) -> None:
         self.close()
 
     def close(self) -> None:
@@ -139,12 +132,12 @@ class AegisClient:
                     return None
                 return resp.json()
 
-            except httpx.TransportError as exc:
+            except httpx.TransportError:
                 if attempt < self._max_retries:
                     attempt += 1
                     time.sleep(self._backoff_factor * (2 ** (attempt - 1)))
                     continue
-                raise exc
+                raise
 
     # =========================================================================
     # Auth & Sessions
@@ -999,6 +992,164 @@ class AegisClient:
     def requeue_dead_letter(self, outbox_id: str | UUID) -> dict[str, Any]:
         return self._request("POST", f"/v1/worker/outbox/{outbox_id}/requeue")
 
+    # =========================================================================
+    # Platform Health, MFA, Invitations, Billing, Privacy & M2 Extensions
+    # =========================================================================
+    def health(self) -> dict[str, Any]:
+        return self._request("GET", "/health")
+
+    def ready(self) -> dict[str, Any]:
+        return self._request("GET", "/ready")
+
+    def verify_email(self, *, token: str) -> dict[str, Any]:
+        return self._request("POST", "/v1/auth/verify-email", json_body={"token": token})
+
+    def resend_verification(self, *, email: str) -> dict[str, Any]:
+        return self._request("POST", "/v1/auth/resend-verification", json_body={"email": email})
+
+    def enroll_mfa(self) -> dict[str, Any]:
+        return self._request("POST", "/v1/auth/mfa/enroll")
+
+    def verify_mfa(self, *, code: str) -> dict[str, Any]:
+        return self._request("POST", "/v1/auth/mfa/verify", json_body={"code": code})
+
+    def oidc_exchange(
+        self,
+        *,
+        id_token: str,
+        nonce: str | None = None,
+        organization_id: str | UUID | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"id_token": id_token}
+        if nonce is not None:
+            body["nonce"] = nonce
+        if organization_id is not None:
+            body["organization_id"] = str(organization_id)
+        return self._request("POST", "/v1/auth/sso/oidc/exchange", json_body=body)
+
+    def list_invitations(self) -> list[dict[str, Any]]:
+        return self._request("GET", "/v1/orgs/invitations")
+
+    def create_invitation(
+        self,
+        *,
+        email: str,
+        role: str = "OPERATOR",
+        expires_in_hours: int = 72,
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/v1/orgs/invitations",
+            json_body={"email": email, "role": role, "expires_in_hours": expires_in_hours},
+        )
+
+    def accept_invitation(self, token: str) -> dict[str, Any]:
+        return self._request("POST", f"/v1/orgs/invitations/{token}/accept")
+
+    def revoke_invitation(self, invitation_id: str | UUID) -> dict[str, Any]:
+        return self._request("DELETE", f"/v1/orgs/invitations/{invitation_id}")
+
+    def list_billing_plans(self) -> dict[str, Any]:
+        return self._request("GET", "/v1/billing/plans")
+
+    def get_billing_subscription(self) -> dict[str, Any]:
+        return self._request("GET", "/v1/billing/subscription")
+
+    def create_billing_checkout(
+        self,
+        *,
+        plan: str = "PRO",
+        success_url: str,
+        cancel_url: str,
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/v1/billing/checkout",
+            json_body={"plan": plan, "success_url": success_url, "cancel_url": cancel_url},
+        )
+
+    def create_billing_portal(self, *, return_url: str) -> dict[str, Any]:
+        return self._request("POST", "/v1/billing/portal", json_body={"return_url": return_url})
+
+    def export_personal_data(self) -> dict[str, Any]:
+        return self._request("GET", "/v1/privacy/export")
+
+    def list_erasure_requests(self) -> list[dict[str, Any]]:
+        return self._request("GET", "/v1/privacy/erasure-requests")
+
+    def create_erasure_request(
+        self, *, user_id: str | UUID, reason: str = "GDPR_ERASURE"
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/v1/privacy/erasure-requests",
+            json_body={"user_id": str(user_id), "reason": reason},
+        )
+
+    def export_audit_events(self, *, fmt: str = "json", limit: int = 200) -> Any:
+        return self._request("GET", "/v1/audit-events/export", params={"format": fmt, "limit": limit})
+
+    def refund_payment(
+        self,
+        payment_intent_id: str | UUID,
+        *,
+        attempt_id: str | UUID | None = None,
+        amount_minor: int | None = None,
+        reason: str = "Operator requested refund",
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"reason": reason}
+        if attempt_id is not None:
+            body["attempt_id"] = str(attempt_id)
+        if amount_minor is not None:
+            body["amount_minor"] = amount_minor
+        return self._request(
+            "POST", f"/v1/guardian/payments/{payment_intent_id}/refund", json_body=body
+        )
+
+    def resolve_dispute_case(
+        self,
+        case_id: str | UUID,
+        *,
+        resolution_outcome: str | None = None,
+        reason: str | None = None,
+        notes: str | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {}
+        if resolution_outcome is not None:
+            body["resolution_outcome"] = resolution_outcome
+        if reason is not None:
+            body["reason"] = reason
+        if notes is not None:
+            body["notes"] = notes
+        return self._request("POST", f"/v1/disputeos/cases/{case_id}/resolve", json_body=body or None)
+
+    def ghostpay_health(self) -> dict[str, Any]:
+        return self._request("GET", "/v1/ghostpay/health")
+
+    def list_ghostpay_traces(
+        self, *, agent_id: str | UUID | None = None, limit: int = 50, offset: int = 0
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        if agent_id is not None:
+            params["agent_id"] = str(agent_id)
+        return self._request("GET", "/v1/ghostpay/traces", params=params)
+
+    def replay_trace(self, *, trace: dict[str, Any], policy_overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/v1/ghostpay/replay",
+            json_body={"trace": trace, "policy_overrides": policy_overrides},
+        )
+
+    def counterfactual_replay(
+        self, *, trace: dict[str, Any], overrides: dict[str, Any]
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/v1/ghostpay/counterfactual",
+            json_body={"trace": trace, "overrides": overrides},
+        )
+
 
 class AsyncAegisClient:
     """Asynchronous typed client for AEGIS REST APIs (`/v1/*`)."""
@@ -1025,10 +1176,10 @@ class AsyncAegisClient:
         self._client = client or httpx.AsyncClient(base_url=self.base_url, timeout=self._timeout)
         self._owns_client = client is None
 
-    async def __aenter__(self) -> AsyncAegisClient:
+    async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, *args: Any) -> None:
+    async def __aexit__(self, *args: object) -> None:
         await self.close()
 
     async def close(self) -> None:
@@ -1104,12 +1255,12 @@ class AsyncAegisClient:
                     return None
                 return resp.json()
 
-            except httpx.TransportError as exc:
+            except httpx.TransportError:
                 if attempt < self._max_retries:
                     attempt += 1
                     await asyncio.sleep(self._backoff_factor * (2 ** (attempt - 1)))
                     continue
-                raise exc
+                raise
 
     # =========================================================================
     # Auth & Sessions
@@ -1968,6 +2119,164 @@ class AsyncAegisClient:
 
     async def requeue_dead_letter(self, outbox_id: str | UUID) -> dict[str, Any]:
         return await self._request("POST", f"/v1/worker/outbox/{outbox_id}/requeue")
+
+    # =========================================================================
+    # Platform Health, MFA, Invitations, Billing, Privacy & M2 Extensions
+    # =========================================================================
+    async def health(self) -> dict[str, Any]:
+        return await self._request("GET", "/health")
+
+    async def ready(self) -> dict[str, Any]:
+        return await self._request("GET", "/ready")
+
+    async def verify_email(self, *, token: str) -> dict[str, Any]:
+        return await self._request("POST", "/v1/auth/verify-email", json_body={"token": token})
+
+    async def resend_verification(self, *, email: str) -> dict[str, Any]:
+        return await self._request("POST", "/v1/auth/resend-verification", json_body={"email": email})
+
+    async def enroll_mfa(self) -> dict[str, Any]:
+        return await self._request("POST", "/v1/auth/mfa/enroll")
+
+    async def verify_mfa(self, *, code: str) -> dict[str, Any]:
+        return await self._request("POST", "/v1/auth/mfa/verify", json_body={"code": code})
+
+    async def oidc_exchange(
+        self,
+        *,
+        id_token: str,
+        nonce: str | None = None,
+        organization_id: str | UUID | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"id_token": id_token}
+        if nonce is not None:
+            body["nonce"] = nonce
+        if organization_id is not None:
+            body["organization_id"] = str(organization_id)
+        return await self._request("POST", "/v1/auth/sso/oidc/exchange", json_body=body)
+
+    async def list_invitations(self) -> list[dict[str, Any]]:
+        return await self._request("GET", "/v1/orgs/invitations")
+
+    async def create_invitation(
+        self,
+        *,
+        email: str,
+        role: str = "OPERATOR",
+        expires_in_hours: int = 72,
+    ) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/v1/orgs/invitations",
+            json_body={"email": email, "role": role, "expires_in_hours": expires_in_hours},
+        )
+
+    async def accept_invitation(self, token: str) -> dict[str, Any]:
+        return await self._request("POST", f"/v1/orgs/invitations/{token}/accept")
+
+    async def revoke_invitation(self, invitation_id: str | UUID) -> dict[str, Any]:
+        return await self._request("DELETE", f"/v1/orgs/invitations/{invitation_id}")
+
+    async def list_billing_plans(self) -> dict[str, Any]:
+        return await self._request("GET", "/v1/billing/plans")
+
+    async def get_billing_subscription(self) -> dict[str, Any]:
+        return await self._request("GET", "/v1/billing/subscription")
+
+    async def create_billing_checkout(
+        self,
+        *,
+        plan: str = "PRO",
+        success_url: str,
+        cancel_url: str,
+    ) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/v1/billing/checkout",
+            json_body={"plan": plan, "success_url": success_url, "cancel_url": cancel_url},
+        )
+
+    async def create_billing_portal(self, *, return_url: str) -> dict[str, Any]:
+        return await self._request("POST", "/v1/billing/portal", json_body={"return_url": return_url})
+
+    async def export_personal_data(self) -> dict[str, Any]:
+        return await self._request("GET", "/v1/privacy/export")
+
+    async def list_erasure_requests(self) -> list[dict[str, Any]]:
+        return await self._request("GET", "/v1/privacy/erasure-requests")
+
+    async def create_erasure_request(
+        self, *, user_id: str | UUID, reason: str = "GDPR_ERASURE"
+    ) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/v1/privacy/erasure-requests",
+            json_body={"user_id": str(user_id), "reason": reason},
+        )
+
+    async def export_audit_events(self, *, fmt: str = "json", limit: int = 200) -> Any:
+        return await self._request("GET", "/v1/audit-events/export", params={"format": fmt, "limit": limit})
+
+    async def refund_payment(
+        self,
+        payment_intent_id: str | UUID,
+        *,
+        attempt_id: str | UUID | None = None,
+        amount_minor: int | None = None,
+        reason: str = "Operator requested refund",
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"reason": reason}
+        if attempt_id is not None:
+            body["attempt_id"] = str(attempt_id)
+        if amount_minor is not None:
+            body["amount_minor"] = amount_minor
+        return await self._request(
+            "POST", f"/v1/guardian/payments/{payment_intent_id}/refund", json_body=body
+        )
+
+    async def resolve_dispute_case(
+        self,
+        case_id: str | UUID,
+        *,
+        resolution_outcome: str | None = None,
+        reason: str | None = None,
+        notes: str | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {}
+        if resolution_outcome is not None:
+            body["resolution_outcome"] = resolution_outcome
+        if reason is not None:
+            body["reason"] = reason
+        if notes is not None:
+            body["notes"] = notes
+        return await self._request("POST", f"/v1/disputeos/cases/{case_id}/resolve", json_body=body or None)
+
+    async def ghostpay_health(self) -> dict[str, Any]:
+        return await self._request("GET", "/v1/ghostpay/health")
+
+    async def list_ghostpay_traces(
+        self, *, agent_id: str | UUID | None = None, limit: int = 50, offset: int = 0
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        if agent_id is not None:
+            params["agent_id"] = str(agent_id)
+        return await self._request("GET", "/v1/ghostpay/traces", params=params)
+
+    async def replay_trace(self, *, trace: dict[str, Any], policy_overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/v1/ghostpay/replay",
+            json_body={"trace": trace, "policy_overrides": policy_overrides},
+        )
+
+    async def counterfactual_replay(
+        self, *, trace: dict[str, Any], overrides: dict[str, Any]
+    ) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/v1/ghostpay/counterfactual",
+            json_body={"trace": trace, "overrides": overrides},
+        )
 
 
 class AgentAuthorizationTool:

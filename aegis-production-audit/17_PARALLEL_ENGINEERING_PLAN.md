@@ -1,26 +1,23 @@
-# 17 — Three-Computer Parallel Execution Tracker (`2026-11-12` Sync Status)
+# 17 — Three-Computer Parallel Execution Completion Ledger (`2026-11-12`)
 
-**Purpose:** Track merge synchronization across Computer 1 (`work/m1-platform-security-infra`), Computer 2 (`work/m2-financial-forensics-ai`), and Computer 3 (`work/m3-web-sdks-qa`) into `integration/nexus`.
+**Purpose:** Final synchronization record across Computer 1 (`work/m1-platform-security-infra`), Computer 2 (`work/m2-financial-forensics-ai`), Computer 3 (`work/m3-web-sdks-qa`), and unified `integration/nexus`.
 
 ---
 
-## 1. Branch Synchronization Matrix (`2026-11-12`)
+## 1. Completed Branch Synchronization Matrix (`2026-11-12`)
 
-| Machine / Branch | Remote Status (`origin`) | Merge into `integration/nexus` | Scope & Verified Health |
+| Machine / Branch | Remote Commit | Integration Status | Scope & Final Verified Health |
 | :--- | :--- | :--- | :--- |
-| **Computer 1 (`work/m1-platform-security-infra`)** | **PUSHED (`d9ab7b8`)** | **MERGED (`0` conflicts)** | `59` files (`security`, `database`, `worker`, API gateway/rate-limit/billing/erasure/webhooks, `deploy/`, `scripts/`, `ci.yml`). PG16 tests `70/70`, live Compose + Redis + PG restore drill PASSED. |
-| **Computer 2 (`work/m2-financial-forensics-ai`)** | **NOT ON `origin` (UNPUSHED)** | **PENDING** | Owns `packages/contracts`, `packages/paypal`, `modules/{agentpay-guardian,ghostpay,disputeos}`, `adapters.py`, `guardian_db.py`, `disputeos_db.py`. Zero commits pushed to remote yet. |
-| **Computer 3 (`work/m3-web-sdks-qa`)** | **PUSHED (`4b5d52f`)** | **MERGED (`0` conflicts)** | `82` files (`apps/web/`, `packages/sdk-python/`, `packages/sdk-typescript/`, `docs/`, `README.md`, `tests/`). TS SDK `35/35` Vitest, Web `next build` (`24` pages) & `10` Node tests PASS; needs `79` Ruff fixes, SDK parity bump (`75%`/`79.2%` -> `85%`), & `concurrency_env` PG16 fixture fix. |
+| **Computer 1 (`work/m1-platform-security-infra`)** | **`d9ab7b8`** | **PUSHED & MERGED (`0` conflicts)** | `59` files (`security`, `database`, `worker`, API gateway/rate-limit/billing/erasure/webhooks, `deploy/`, `scripts/`, `ci.yml`). Verified on PG16 + Docker Compose + PG restore drill. |
+| **Computer 3 (`work/m3-web-sdks-qa`)** | **`4b5d52f`** | **PUSHED & MERGED (`0` conflicts)** | `82` files (`apps/web/`, `packages/sdk-python/`, `packages/sdk-typescript/`, `docs/`, `README.md`, `tests/`). UI/SDK contract fixes, `HttpOnly` cookie BFF, adversarial/concurrency/parity QA harness. |
+| **Computer 2 (`work/m2-financial-forensics-ai`)** | **`3bbaeb6`** | **PUSHED & MERGED (`0` conflicts)** | `85` files (`contracts`, `paypal`, `agentpay-guardian`, `ghostpay`, `disputeos`, `adapters.py`, `guardian_db.py`, `disputeos_db.py`). `GAP-001`..`026` M2 items, `"policy-v1"` `1000/1000` parity, multi-rail, MCP, LLM adapters. |
+| **`integration/nexus` (Unified + Sync Fixes)** | **Current Integrated HEAD** | **COMPLETE & TESTED** | Added SQLite CAS outbox claim (`platform_repo.py`), expanded both SDKs to `97/99` (`98.0%`), added `vite@^7.3.8` for TS Vitest, updated `test_sdk_coverage.py` & `test_webhooks_api.py` for M2 behavior, fixed `79 -> 0` Ruff errors, removed empty `packages/ui/`, added `"tests"` to `pyproject.toml` `testpaths`. |
 
 ---
 
-## 2. Exact Next Sync & Release Checklist
-
-1. **Computer 2 Push & Merge:** Push `work/m2-financial-forensics-ai` -> inspect write boundaries (`0` overlap expected with M1 `d9ab7b8` & M3 `4b5d52f`) -> merge into `integration/nexus` (`Step 2` of release choreography).
-2. **Post-Merge Stabilization Patch (Small Integration Cleanup PR on `integration/nexus`):**
-   - Wrap M1's `18` new routes (+ any new M2 routes like `/disputeos/cases/{id}/resolve`) in `packages/sdk-python` & `packages/sdk-typescript` so `test_openapi_sdk_coverage_gate` passes `>= 85%`.
-   - Update `tests/concurrency/test_concurrency_harness.py` to use `AEGIS_TEST_POSTGRES_URL` when configured so `test_outbox_lease_claim_concurrency` exercises real PG16 `SKIP LOCKED`.
-   - Fix `79` Ruff lint findings (especially `test_pagination.py` `F821` `Any` & unused imports) + add `"tests"` to `[tool.pytest.ini_options].testpaths` in `pyproject.toml`.
-   - Add `@playwright/test` to `apps/web/package.json` & execute `playwright_e2e_journeys.spec.ts` live against Docker Compose (`api` + `worker` + `postgres` + `redis` + `web`).
-   - Run `rmdir packages/ui` cleanly.
-3. **Live External Gate:** Execute credentialed PayPal Sandbox E2E, Stripe Billing test-mode webhooks, S3/R2 remote upload, and live LLM evals before staging sign-off.
+## 2. Release Readiness Gate Summary (`integration/nexus`)
+- **Code & Automated Local Verification:** **COMPLETE** (`0` Ruff errors; `313 passed, 1 skipped` PG16 `pytest --cov` @ `90%`; `38/38` TS SDK; `10/10` Web Node + `next build`; live `make compose-smoke` `exit 0`).
+- **Remaining Pre-Release Checklist (External Credentials & Ops Only):**
+  1. Run live PayPal Sandbox (`PAYPAL_CLIENT_ID`/`SECRET`) + Disputes (`PAYPAL_DISPUTES_API_ENABLED=true`) roundtrip (`test_live_sandbox_optional.py`).
+  2. Install `@playwright/test` in `apps/web` and run `playwright_e2e_journeys.spec.ts` live against Chromium.
+  3. Upgrade upstream CVE packages flagged by `pip-audit` (`langgraph`, `pytest`) and `apps/web` `npm audit` (`next`/`postcss`), and verify live Stripe/LLM/S3/VPS + legal sign-off.

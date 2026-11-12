@@ -10,7 +10,6 @@ from aegis_sdk.integrations import (
     AegisPurchaseInput,
     AegisSpendingTool,
     OpenAIPurchaseGuard,
-    ahandle_openai_purchase_call,
     create_aegis_spending_tool,
     get_openai_purchase_tool_spec,
     handle_openai_purchase_call,

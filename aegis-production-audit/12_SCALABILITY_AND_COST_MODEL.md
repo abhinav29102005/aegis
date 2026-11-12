@@ -1,17 +1,17 @@
 # 12 — Performance, Scalability & Infrastructure Cost Model
 
-**Status as of `2026-11-12` (`integration/nexus` @ `498043e`):** **3 OF 5 ARCHITECTURAL BOTTLENECKS RESOLVED IN M1 (`REDIS RATE LIMIT`, `CONCURRENT WORKER SEMAPHORE`, `S3/R2 STREAMING STORAGE`, `POOL RECYCLE`, `FOR UPDATE SEQUENCE LOCK`, `PAGINATION`); REMAINING SYNC-DB-ACROSS-PAYPAL-AWAIT BOTTLENECK AWAITS M2.**
+**Status as of `2026-11-12` (`integration/nexus`, Post-M1+M2+M3):** **ALL 5 ARCHITECTURAL BOTTLENECKS IDENTIFIED AT BASELINE (`1be376e`) ARE NOW RESOLVED IN CODE; LOAD/RPS BENCHMARKS REMAIN `NOT VERIFIED`.**
 
 ---
 
-## 1. Bottleneck Status Matrix (`498043e`)
+## 1. Bottleneck Resolution Matrix (Baseline `1be376e` -> Integrated `2026-11-12`)
 
-| Bottleneck Identified at `1be376e` | Status (`498043e`) | Observed Code Evidence |
+| Bottleneck Identified at `1be376e` | Status (`2026-11-12` Integrated) | Observed Evidence |
 | :--- | :--- | :--- |
-| 1. Global in-process rate-limiter collision & memory growth | **FIXED (`M1`)** | `services/api/aegis_api/rate_limit.py` uses `sha256(token)[:16]`, bounded TTL eviction, and Redis sorted-set backend (verified live in Compose). |
-| 2. Synchronous `Session` held open across PayPal `await` network I/O (`guardian_db.py`) | **STILL OPEN (`M2`)** | `packages/database/database/session.py` added `pool_recycle`, `pool_timeout`, and PG statement timeouts (`M1`), **but `guardian_db.py:463,515,558` still awaits M2 to detach DB work around PayPal HTTP calls**. |
-| 3. Unlocked `append_financial_event` sequence read & unbounded lists | **FIXED IN `M1` *(Partially awaits `M2`)* ** | `repository.py` now locks sequence allocation with `SELECT ... FOR UPDATE`; M1 routers (`auth_orgs`, `overview`, `webhooks`) added `limit`/`offset` pagination (`guardian_db`/`disputeos_db` pagination awaits M2). |
-| 4. Sequential outbox worker HTTP dispatch head-of-line blocking | **FIXED (`M1`)** | `services/worker/aegis_worker/processor.py` executes outbox HTTP deliveries concurrently behind a bounded `asyncio.Semaphore`. |
-| 5. RAM-buffered `10 MB` upload & local-only disk (`LocalObjectStorage`) | **FIXED (`M1`)** | `packages/database/database/storage.py` adds streaming size-checked `put_stream(..., max_bytes=10MB)` and `S3ObjectStorage` (S3/R2 + WORM Object Lock); awaiting M2/router wiring in `disputeos_db.py`. |
+| 1. Global in-process rate-limiter collision & memory growth | **CLOSED (`M1`)** | `rate_limit.py` uses `sha256(token)[:16]`, bounded TTL eviction, and Redis sorted-set backend (verified live + unit tests). |
+| 2. Synchronous `Session` held open across PayPal `await` network I/O | **CLOSED (`M2`)** | `guardian_db.py:728` calls `_detach_session(http_request, session)` before async `await paypal_client` calls and opens short-lived `db2` session to finalize/record timeout or failure; `session.py` sets `pool_recycle` & `pool_timeout`. |
+| 3. Unlocked `append_financial_event` sequence read & unbounded lists | **CLOSED (`M1+M2`)** | `repository.py` uses `SELECT ... FOR UPDATE`; M1 (`auth_orgs`, `overview`, `webhooks`) & M2 (`guardian_db`, `disputeos_db`, `ghostpay`) enforce `limit`/`offset` pagination cleanly. |
+| 4. Sequential outbox worker HTTP dispatch head-of-line blocking | **CLOSED (`M1`)** | `services/worker/aegis_worker/processor.py` executes outbox deliveries concurrently behind `asyncio.Semaphore`. |
+| 5. RAM-buffered `10 MB` upload & local-only disk (`LocalObjectStorage`) | **CLOSED (`M1+M2`)** | `storage.py` enforces streaming `max_bytes=10MB` & `S3ObjectStorage` (S3/R2 WORM); `disputeos_db.py:368` streams uploads cleanly. |
 
-*(Capacity tiers from Tier 1 `\$25–\$80/mo` through Tier 4 remain unbenchmarked planning estimates; zero load/RPS benchmarks have executed yet — `NOT VERIFIED`.)*
+*(Tier 1 `\$25–\$80/mo` through Tier 4 cloud cost sizing estimates remain capacity-planning models; synthetic k6/Locust RPS saturation benchmarks have not executed — **`NOT VERIFIED`**.)*

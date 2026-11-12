@@ -76,4 +76,5 @@ testpaths = [
     "modules/ghostpay/tests",
     "services/api/tests",
     "services/worker/tests",
+    "tests",
 ]

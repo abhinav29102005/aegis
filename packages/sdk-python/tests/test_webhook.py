@@ -10,7 +10,7 @@ from aegis_sdk.webhook import verify_aegis_signature, verify_webhook_signature
 
 
 def _sign(t: int, body: str, secret: str) -> str:
-    payload = f"{t}.{body}".encode("utf-8")
+    payload = f"{t}.{body}".encode()
     return hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
 
 

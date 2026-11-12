@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
-from typing import Any, Generic, TypeVar
-
-T = TypeVar("T")
+from typing import Any
 
 
 def _extract_items_and_total(resp: Any) -> tuple[list[Any], int | None]:
@@ -19,7 +17,7 @@ def _extract_items_and_total(resp: Any) -> tuple[list[Any], int | None]:
     return [], 0
 
 
-class PaginationIterator(Generic[T], Iterator[T]):
+class PaginationIterator[T](Iterator[T]):
     """Synchronous iterator across paginated AEGIS API endpoints."""
 
     def __init__(
@@ -59,13 +57,11 @@ class PaginationIterator(Generic[T], Iterator[T]):
         self._buffer.extend(items)  # type: ignore[arg-type]
         self._offset += len(items)
 
-        if len(items) < self._limit:
-            self._exhausted = True
-        elif total is not None and self._offset >= total:
+        if len(items) < self._limit or total is not None and self._offset >= total:
             self._exhausted = True
 
 
-class AsyncPaginationIterator(Generic[T], AsyncIterator[T]):
+class AsyncPaginationIterator[T](AsyncIterator[T]):
     """Asynchronous iterator across paginated AEGIS API endpoints."""
 
     def __init__(
@@ -105,9 +101,7 @@ class AsyncPaginationIterator(Generic[T], AsyncIterator[T]):
         self._buffer.extend(items)  # type: ignore[arg-type]
         self._offset += len(items)
 
-        if len(items) < self._limit:
-            self._exhausted = True
-        elif total is not None and self._offset >= total:
+        if len(items) < self._limit or total is not None and self._offset >= total:
             self._exhausted = True
 
 
