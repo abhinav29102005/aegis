@@ -78,12 +78,18 @@ class TraceIngestionAdapter:
         """Assemble, validate, and index a PaymentTrace."""
         ev_list = evidence_records or []
 
-        # 1. Tenant boundary enforcement
+        # 1. Tenant boundary enforcement across all trace entities
         TraceValidator.validate_tenant_isolation(
             tenant_id,
             events=events,
             evidence_records=ev_list,
             intent=payment_intent,
+            proposal=proposal,
+            quote_snapshot=quote_snapshot,
+            recorded_decision=recorded_decision,
+            recorded_passport=recorded_passport,
+            recorded_merchant=recorded_merchant,
+            approval_record=approval_record,
         )
 
         # 2. Ingest and deduplicate events

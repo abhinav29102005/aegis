@@ -8,13 +8,29 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aegis_dev_password}
       POSTGRES_DB: ${POSTGRES_DB:-aegis_platform}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - aegis_postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aegis} -d ${POSTGRES_DB:-aegis_platform}"]
       interval: 5s
       timeout: 5s
+      start_period: 15s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: aegis-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - aegis_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
       retries: 5
 
   migrate:
@@ -27,7 +43,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-aegis}:${POSTGRES_PASSWORD:-aegis_dev_password}@postgres:5432/${POSTGRES_DB:-aegis_platform}
-    command: ["sh", "-c", "cd /app/packages/database && uv run --no-sync alembic upgrade head"]
+    command: ["sh", "-c", "cd /app/packages/database && alembic upgrade head"]
     restart: "no"
 
   api:
@@ -38,6 +54,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
       migrate:
         condition: service_completed_successfully
     environment:
@@ -47,19 +65,40 @@ services:
       API_PORT: 8000
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3005,http://localhost:3000}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-aegis}:${POSTGRES_PASSWORD:-aegis_dev_password}@postgres:5432/${POSTGRES_DB:-aegis_platform}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       NEXUS_SIGNING_SECRET: ${NEXUS_SIGNING_SECRET:-dev-only-change-in-production-signing-secret}
       JWT_SECRET: ${JWT_SECRET:-dev-only-change-in-production-jwt-secret}
-      EVIDENCE_STORAGE_DIR: /var/lib/aegis/evidence
+      NEXUS_API_KEY: ${NEXUS_API_KEY:-dev-nexus-api-key}
+      JWT_ACCESS_TTL_MINUTES: ${JWT_ACCESS_TTL_MINUTES:-480}
       RATE_LIMIT_RPM: ${RATE_LIMIT_RPM:-240}
+      EMAIL_VERIFICATION_REQUIRED: ${EMAIL_VERIFICATION_REQUIRED:-false}
+      AEGIS_DATA_RESIDENCY: ${AEGIS_DATA_RESIDENCY:-US}
+      AEGIS_STORAGE_BACKEND: ${AEGIS_STORAGE_BACKEND:-local}
+      EVIDENCE_STORAGE_DIR: /var/lib/aegis/evidence
+      AEGIS_S3_BUCKET: ${AEGIS_S3_BUCKET:-}
+      AEGIS_S3_ENDPOINT_URL: ${AEGIS_S3_ENDPOINT_URL:-}
+      AEGIS_S3_REGION: ${AEGIS_S3_REGION:-us-east-1}
+      AEGIS_S3_ACCESS_KEY_ID: ${AEGIS_S3_ACCESS_KEY_ID:-}
+      AEGIS_S3_SECRET_ACCESS_KEY: ${AEGIS_S3_SECRET_ACCESS_KEY:-}
+      AEGIS_S3_KEY_PREFIX: ${AEGIS_S3_KEY_PREFIX:-}
+      AEGIS_S3_OBJECT_LOCK_MODE: ${AEGIS_S3_OBJECT_LOCK_MODE:-}
+      AEGIS_S3_RETENTION_DAYS: ${AEGIS_S3_RETENTION_DAYS:-}
       PAYPAL_MODE: ${PAYPAL_MODE:-sandbox}
       PAYPAL_BASE_URL: ${PAYPAL_BASE_URL:-https://api-m.sandbox.paypal.com}
       PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID:-}
       PAYPAL_CLIENT_SECRET: ${PAYPAL_CLIENT_SECRET:-}
       PAYPAL_WEBHOOK_ID: ${PAYPAL_WEBHOOK_ID:-}
       PAYPAL_DISPUTES_API_ENABLED: ${PAYPAL_DISPUTES_API_ENABLED:-false}
+      STRIPE_API_KEY: ${STRIPE_API_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      WEBHOOK_REQUIRE_HTTPS: ${WEBHOOK_REQUIRE_HTTPS:-false}
+      WEBHOOK_LEGACY_SIGNATURE_FALLBACK: ${WEBHOOK_LEGACY_SIGNATURE_FALLBACK:-false}
       LLM_PROVIDER: ${LLM_PROVIDER:-deterministic}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-aegis-api}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     ports:
       - "${API_PORT:-8000}:8000"
     volumes:
@@ -79,19 +118,51 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
       migrate:
         condition: service_completed_successfully
     environment:
       APP_ENV: ${APP_ENV:-development}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-aegis}:${POSTGRES_PASSWORD:-aegis_dev_password}@postgres:5432/${POSTGRES_DB:-aegis_platform}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       NEXUS_SIGNING_SECRET: ${NEXUS_SIGNING_SECRET:-dev-only-change-in-production-signing-secret}
       JWT_SECRET: ${JWT_SECRET:-dev-only-change-in-production-jwt-secret}
+      NEXUS_API_KEY: ${NEXUS_API_KEY:-dev-nexus-api-key}
+      AEGIS_DATA_RESIDENCY: ${AEGIS_DATA_RESIDENCY:-US}
+      AEGIS_STORAGE_BACKEND: ${AEGIS_STORAGE_BACKEND:-local}
+      EVIDENCE_STORAGE_DIR: /var/lib/aegis/evidence
+      AEGIS_S3_BUCKET: ${AEGIS_S3_BUCKET:-}
+      AEGIS_S3_ENDPOINT_URL: ${AEGIS_S3_ENDPOINT_URL:-}
+      AEGIS_S3_REGION: ${AEGIS_S3_REGION:-us-east-1}
+      AEGIS_S3_ACCESS_KEY_ID: ${AEGIS_S3_ACCESS_KEY_ID:-}
+      AEGIS_S3_SECRET_ACCESS_KEY: ${AEGIS_S3_SECRET_ACCESS_KEY:-}
+      AEGIS_S3_KEY_PREFIX: ${AEGIS_S3_KEY_PREFIX:-}
+      AEGIS_S3_OBJECT_LOCK_MODE: ${AEGIS_S3_OBJECT_LOCK_MODE:-}
+      AEGIS_S3_RETENTION_DAYS: ${AEGIS_S3_RETENTION_DAYS:-}
       WORKER_POLL_INTERVAL_SECONDS: ${WORKER_POLL_INTERVAL_SECONDS:-5}
+      WORKER_MAX_ATTEMPTS: ${WORKER_MAX_ATTEMPTS:-5}
+      WORKER_MAX_CONCURRENT_WEBHOOKS: ${WORKER_MAX_CONCURRENT_WEBHOOKS:-10}
       PAYPAL_MODE: ${PAYPAL_MODE:-sandbox}
       PAYPAL_BASE_URL: ${PAYPAL_BASE_URL:-https://api-m.sandbox.paypal.com}
       PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID:-}
       PAYPAL_CLIENT_SECRET: ${PAYPAL_CLIENT_SECRET:-}
+      PAYPAL_WEBHOOK_ID: ${PAYPAL_WEBHOOK_ID:-}
+      STRIPE_API_KEY: ${STRIPE_API_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      WEBHOOK_REQUIRE_HTTPS: ${WEBHOOK_REQUIRE_HTTPS:-false}
+      WEBHOOK_LEGACY_SIGNATURE_FALLBACK: ${WEBHOOK_LEGACY_SIGNATURE_FALLBACK:-false}
+      OTEL_SERVICE_NAME: aegis-worker
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    volumes:
+      - aegis_evidence_data:/var/lib/aegis/evidence
+    healthcheck:
+      test: ["CMD", "python", "-m", "aegis_worker.main", "--healthcheck"]
+      interval: 15s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
     restart: unless-stopped
 
   web:
@@ -110,8 +181,15 @@ services:
       NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-AEGIS}
     ports:
       - "${WEB_PORT:-3005}:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
     restart: unless-stopped
 
 volumes:
   aegis_postgres_data:
+  aegis_redis_data:
   aegis_evidence_data:

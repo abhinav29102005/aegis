@@ -100,7 +100,9 @@ class SpendingPassport(NexusBaseModel):
     reserved_minor: int = Field(default=0, ge=0)
     per_tx_limit_minor: int = Field(ge=0)
     daily_limit_minor: int = Field(ge=0)
+    monthly_limit_minor: int | None = Field(default=None, ge=0)
     human_approval_threshold_minor: int = Field(default=5000, ge=0)
+    allowed_currencies: list[str] = Field(default_factory=list)
     allowed_merchant_ids: list[UUID] = Field(default_factory=list)
     allowed_categories: list[str] = Field(default_factory=list)
     allow_unknown_merchants: bool = False
@@ -113,6 +115,11 @@ class SpendingPassport(NexusBaseModel):
     def _upper_currency(cls, v: str) -> str:
         return v.upper()
 
+    @field_validator("allowed_currencies")
+    @classmethod
+    def _upper_allowed_currencies(cls, v: list[str]) -> list[str]:
+        return [c.upper() for c in v]
+
     @field_validator("expires_at", "created_at")
     @classmethod
     def _utc_dates(cls, v: datetime) -> datetime:
@@ -121,6 +128,10 @@ class SpendingPassport(NexusBaseModel):
     @property
     def available_budget_minor(self) -> int:
         return max(0, self.total_budget_minor - self.spent_minor - self.reserved_minor)
+
+    @property
+    def approval_threshold_minor(self) -> int:
+        return self.human_approval_threshold_minor
 
 
 class PurchaseProposal(NexusBaseModel):
@@ -191,7 +202,7 @@ class QuoteSnapshot(NexusBaseModel):
             self.quote_hash = computed
         elif self.quote_hash != computed:
             raise ValueError(
-                f"Quote hash mismatch: provided {self.quote_hash} != computed {computed}"
+                f"quote_hash mismatch: provided {self.quote_hash} != computed {computed}"
             )
         return self
 
@@ -418,8 +429,8 @@ class ReplayTimelineEntry(NexusBaseModel):
     occurred_at: datetime
     summary: str
     evidence_ids: list[UUID] = Field(default_factory=list)
-    event_hash: str | None = None
-    previous_event_hash: str | None = None
+    previous_event_hash: str | None = Field(default=None, max_length=128)
+    event_hash: str | None = Field(default=None, max_length=128)
     integrity_verified: bool = True
 
     @field_validator("occurred_at")
@@ -500,8 +511,8 @@ class DisputeCase(NexusBaseModel):
     response_payload_hash: str | None = Field(default=None, max_length=128)
     response_due_by: datetime | None = None
     resolved_at: datetime | None = None
-    resolution_outcome: str | None = None
-    external_status: str | None = None
+    resolution_outcome: str | None = Field(default=None, max_length=128)
+    external_status: str | None = Field(default=None, max_length=128)
     opened_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
@@ -510,7 +521,7 @@ class DisputeCase(NexusBaseModel):
     def _upper_currency(cls, v: str) -> str:
         return v.upper()
 
-    @field_validator("approved_at", "opened_at", "updated_at", "response_due_by", "resolved_at")
+    @field_validator("approved_at", "response_due_by", "resolved_at", "opened_at", "updated_at")
     @classmethod
     def _utc_dates(cls, v: datetime | None) -> datetime | None:
         return _normalize_utc(v)
@@ -544,7 +555,7 @@ class DisputeAnalysis(NexusBaseModel):
     requires_human_approval: bool = True
     generated_with_llm: bool = False
     llm_provider: str | None = Field(default=None, max_length=64)
-    llm_model: str | None = Field(default=None, max_length=64)
+    llm_model: str | None = Field(default=None, max_length=128)
     analyzed_at: datetime = Field(default_factory=utc_now)
 
     @field_validator("analyzed_at")
@@ -589,6 +600,32 @@ class AP2PaymentMandate(NexusBaseModel):
     authorized_at: datetime = Field(default_factory=utc_now)
 
 
+class AP2MandatePayload(NexusBaseModel):
+    """Normalized Agent Payments Protocol (AP2) mandate payload."""
+
+    mandate_id: str = Field(min_length=1, max_length=128)
+    tenant_id: UUID
+    agent_id: UUID
+    passport_id: UUID | None = None
+    merchant_id: UUID | None = None
+    max_amount_minor: int = Field(gt=0)
+    currency: str = Field(default="USD", min_length=3, max_length=3)
+    scope: list[str] = Field(default_factory=list)
+    expires_at: datetime
+    signature: str = Field(min_length=8, max_length=512)
+    issued_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("currency")
+    @classmethod
+    def _upper_currency(cls, v: str) -> str:
+        return v.upper()
+
+    @field_validator("expires_at", "issued_at")
+    @classmethod
+    def _utc_dates(cls, v: datetime) -> datetime:
+        return _normalize_utc(v)  # type: ignore[return-value]
+
+
 class TokenProvenanceProof(NexusBaseModel):
     """Visa TAP / Mastercard Agent Pay token provenance verification proof."""
 
@@ -604,21 +641,69 @@ class TokenProvenanceProof(NexusBaseModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
-class X402SettlementProof(NexusBaseModel):
-    """HTTP 402 / Web3 autonomous agent micro-settlement proof."""
+class TAPTokenPayload(NexusBaseModel):
+    """Normalized Trusted Agent Protocol (TAP) authorization token payload."""
 
-    proof_id: UUID = Field(default_factory=uuid4)
+    token_id: str = Field(min_length=1, max_length=128)
     tenant_id: UUID
-    correlation_id: UUID
-    chain_id: int = Field(gt=0)
-    transaction_hash: str = Field(pattern=r"^0x[a-fA-F0-9]{64}$")
-    token_address: str = Field(pattern=r"^0x[a-fA-F0-9]{40}$")
-    amount_units: str = Field(min_length=1, max_length=78)
-    payer_address: str = Field(pattern=r"^0x[a-fA-F0-9]{40}$")
-    recipient_address: str = Field(pattern=r"^0x[a-fA-F0-9]{40}$")
-    block_number: int = Field(gt=0)
+    agent_id: UUID
+    merchant_domain: str = Field(min_length=1, max_length=255)
+    amount_minor: int = Field(gt=0)
+    currency: str = Field(default="USD", min_length=3, max_length=3)
+    nonce: str = Field(min_length=8, max_length=128)
+    expires_at: datetime
+    signature: str = Field(min_length=8, max_length=512)
+    issued_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("currency")
+    @classmethod
+    def _upper_currency(cls, v: str) -> str:
+        return v.upper()
+
+    @field_validator("expires_at", "issued_at")
+    @classmethod
+    def _utc_dates(cls, v: datetime) -> datetime:
+        return _normalize_utc(v)  # type: ignore[return-value]
+
+
+class X402SettlementProof(NexusBaseModel):
+    """Normalized HTTP 402 / x402 on-chain settlement proof."""
+
+    proof_id: str = Field(default_factory=lambda: str(uuid4()), min_length=1, max_length=128)
+    tenant_id: UUID
+    correlation_id: UUID | None = None
+    payment_intent_id: UUID | None = None
+    network: str = Field(default="base-sepolia", min_length=1, max_length=64)
+    chain_id: int | None = None
+    asset: str = Field(default="USDC", min_length=1, max_length=32)
+    amount_minor: int = Field(default=0, ge=0)
+    amount_units: str | None = None
+    tx_hash: str = Field(default="", max_length=256)
+    transaction_hash: str | None = None
+    token_address: str | None = None
+    payer_address: str = Field(default="", max_length=256)
+    payee_address: str = Field(default="", max_length=256)
+    recipient_address: str | None = None
+    block_number: int | None = None
     verified: bool = True
     settled_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("settled_at")
+    @classmethod
+    def _utc_settled(cls, v: datetime) -> datetime:
+        return _normalize_utc(v)  # type: ignore[return-value]
+
+    @model_validator(mode="after")
+    def _sync_fields(self) -> X402SettlementProof:
+        if self.transaction_hash and not self.tx_hash:
+            self.tx_hash = self.transaction_hash
+        elif self.tx_hash and not self.transaction_hash:
+            self.transaction_hash = self.tx_hash
+        if self.recipient_address and not self.payee_address:
+            self.payee_address = self.recipient_address
+        elif self.payee_address and not self.recipient_address:
+            self.recipient_address = self.payee_address
+        return self
 
 
 class StripePaymentIntentPayload(NexusBaseModel):
@@ -661,4 +746,49 @@ class StripeSmartDisputePayload(NexusBaseModel):
     status: str = Field(max_length=64)
     evidence_due_by: datetime | None = None
     evidence_submitted: bool = False
+
+
+class StripeEventEnvelope(NexusBaseModel):
+    """Normalized Stripe webhook / Radar / Dispute event envelope."""
+
+    event_id: str = Field(min_length=1, max_length=128)
+    tenant_id: UUID
+    event_type: str = Field(min_length=1, max_length=128)
+    api_version: str | None = Field(default=None, max_length=32)
+    payment_intent_ref: str | None = Field(default=None, max_length=128)
+    amount_minor: int | None = Field(default=None, ge=0)
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    received_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("currency")
+    @classmethod
+    def _upper_currency(cls, v: str | None) -> str | None:
+        return v.upper() if v is not None else None
+
+    @field_validator("received_at")
+    @classmethod
+    def _utc_received(cls, v: datetime) -> datetime:
+        return _normalize_utc(v)  # type: ignore[return-value]
+
+
+class DeflectionAlert(NexusBaseModel):
+    """Pre-dispute / chargeback deflection alert emitted by risk or forensics checks."""
+
+    id: UUID = Field(default_factory=uuid4)
+    tenant_id: UUID
+    correlation_id: UUID
+    payment_intent_id: UUID | None = None
+    dispute_case_id: UUID | None = None
+    alert_type: str = Field(min_length=1, max_length=64)
+    severity: str = Field(default="MEDIUM", pattern=r"^(LOW|MEDIUM|HIGH|CRITICAL)$")
+    reason: str = Field(min_length=1, max_length=1000)
+    recommended_action: str = Field(min_length=1, max_length=500)
+    acknowledged: bool = False
+    created_at: datetime = Field(default_factory=utc_now)
+
+    @field_validator("created_at")
+    @classmethod
+    def _utc_created(cls, v: datetime) -> datetime:
+        return _normalize_utc(v)  # type: ignore[return-value]
 

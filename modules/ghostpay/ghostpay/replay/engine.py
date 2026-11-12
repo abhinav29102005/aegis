@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
-from uuid import uuid4
+from typing import TYPE_CHECKING, Any
+from uuid import UUID, uuid4
 
 from contracts import (
+    AgentIdentity,
     ApprovalRecord,
+    ApprovalStatus,
     DecisionOutcome,
     DecisionReasonCode,
     Merchant,
@@ -16,12 +18,13 @@ from contracts import (
     ReplayRequest,
     ReplayResult,
     SpendingPassport,
+    evaluate_policy_v1,
 )
 from contracts.policy_v1 import evaluate_policy_v1_rules
 
 from ghostpay.anomalies.detector import detect_anomalies
+from ghostpay.domain.exceptions import IllegalSideEffectError, InsufficientEvidenceError
 from ghostpay.errors import (
-    IllegalSideEffectError,
     OverrideValidationError,
     ReplayExecutionForbiddenError,
 )
@@ -32,6 +35,16 @@ from ghostpay.replay.registry import (
     resolve_policy_evaluator,
 )
 from ghostpay.timelines.builder import build_timeline
+
+if TYPE_CHECKING:
+    from ghostpay.domain.models import PaymentTrace
+    from ghostpay.timemachine.policies import CounterfactualPolicy
+
+
+def _safe_nonneg_int(val: Any, default: int = 0) -> int:
+    if isinstance(val, int) and not isinstance(val, bool) and val >= 0:
+        return val
+    return default
 
 
 def evaluate_deterministic_policy(
@@ -44,18 +57,75 @@ def evaluate_deterministic_policy(
     evaluation_time: datetime | None = None,
     now: datetime | None = None,
     check_quote_expiration: bool = False,
+    agent: AgentIdentity | None = None,
+    daily_spent_minor: int = 0,
+    monthly_spent_minor: int = 0,
+    correlation_id: UUID | None = None,
+    payment_intent_id: UUID | None = None,
 ) -> tuple[DecisionOutcome, list[DecisionReasonCode], list[str]]:
-    """Deterministic policy-v1 rules engine recomputing authorization outcome."""
-    effective_time = evaluation_time or now or quote.created_at
-    return evaluate_policy_v1_rules(
+    """Delegate policy-v1 evaluation strictly to contracts.policy_v1.evaluate_policy_v1."""
+    # Never fall back to wall-clock time during forensic evaluation.
+    eval_time = evaluation_time or now or quote.created_at
+
+    decision = evaluate_policy_v1(
         proposal=proposal,
-        quote=quote,
         passport=passport,
         merchant=merchant,
-        approval_record=approval_record,
-        evaluation_time=effective_time,
-        check_quote_expiration=check_quote_expiration,
+        quote=quote,
+        agent=agent,
+        daily_spent_minor=daily_spent_minor,
+        monthly_spent_minor=monthly_spent_minor,
+        now=eval_time,
+        correlation_id=correlation_id or proposal.correlation_id,
+        policy_version=DEFAULT_POLICY_VERSION,
+        payment_intent_id=payment_intent_id,
     )
+
+    outcome = decision.outcome
+    reason_codes = list(decision.reason_codes)
+    violated_constraints = list(decision.violated_constraints)
+
+    # Human approval resolution only applies when policy-v1 escalated (never overrides DENY)
+    if outcome == DecisionOutcome.ESCALATE and approval_record is not None:
+        if approval_record.tenant_id != proposal.tenant_id:
+            return (
+                DecisionOutcome.DENY,
+                [DecisionReasonCode.DENIED_CROSS_TENANT],
+                ["APPROVAL_RECORD_CROSS_TENANT"],
+            )
+        if approval_record.status == ApprovalStatus.EXPIRED or (
+            approval_record.expires_at and eval_time >= approval_record.expires_at
+        ):
+            return (
+                DecisionOutcome.DENY,
+                [DecisionReasonCode.DENIED_APPROVAL_EXPIRED],
+                ["APPROVAL_RECORD_EXPIRED"],
+            )
+        if (
+            approval_record.bound_merchant_id != merchant.id
+            or approval_record.bound_amount_minor != proposal.amount_minor
+            or approval_record.bound_currency.upper() != proposal.currency.upper()
+            or approval_record.bound_quote_hash != quote.quote_hash
+        ):
+            return (
+                DecisionOutcome.DENY,
+                [DecisionReasonCode.DENIED_APPROVAL_MISMATCH],
+                ["APPROVAL_RECORD_MISMATCH"],
+            )
+        if approval_record.status == ApprovalStatus.REJECTED:
+            return (
+                DecisionOutcome.DENY,
+                [DecisionReasonCode.DENIED_APPROVAL_MISMATCH],
+                ["APPROVAL_RECORD_REJECTED"],
+            )
+        if approval_record.status in (ApprovalStatus.APPROVED, ApprovalStatus.CONSUMED):
+            return (
+                DecisionOutcome.ALLOW,
+                [DecisionReasonCode.OK_WITHIN_POLICY],
+                [],
+            )
+
+    return outcome, reason_codes, violated_constraints
 
 
 register_policy_evaluator(DEFAULT_POLICY_VERSION, evaluate_deterministic_policy)
@@ -64,20 +134,20 @@ register_policy_evaluator(DEFAULT_POLICY_VERSION, evaluate_deterministic_policy)
 class ReplayEngine:
     """Read-only forensic policy & authorization replay engine."""
 
-    @classmethod
-    def capture_payment(cls, *args: object, **kwargs: object) -> None:
-        raise IllegalSideEffectError("Replay engine is strictly read-only: capture_payment is forbidden.")
+    @staticmethod
+    def capture_payment(*args: Any, **kwargs: Any) -> None:
+        raise IllegalSideEffectError("Replay engine cannot invoke payment capture")
+
+    @staticmethod
+    def reserve_budget(*args: Any, **kwargs: Any) -> None:
+        raise IllegalSideEffectError("Replay engine cannot reserve budget")
+
+    @staticmethod
+    def release_reservation(*args: Any, **kwargs: Any) -> None:
+        raise IllegalSideEffectError("Replay engine cannot release budget")
 
     @classmethod
-    def reserve_budget(cls, *args: object, **kwargs: object) -> None:
-        raise IllegalSideEffectError("Replay engine is strictly read-only: reserve_budget is forbidden.")
-
-    @classmethod
-    def release_reservation(cls, *args: object, **kwargs: object) -> None:
-        raise IllegalSideEffectError("Replay engine is strictly read-only: release_reservation is forbidden.")
-
-    @classmethod
-    def replay(cls, request: ReplayRequest) -> ReplayResult:
+    def replay(cls, request: ReplayRequest, *, agent: AgentIdentity | None = None) -> ReplayResult:
         """Deterministically replay a transaction without mutating state or executing payments."""
         # 1. Baseline replay must never silently ignore counterfactual overrides
         if request.counterfactual_overrides:
@@ -92,7 +162,7 @@ class ReplayEngine:
                 ],
             )
 
-        # 2. Enforce tenancy & verify provenance, event hash-chain, evidence integrity
+        # 2. Enforce tenancy & verify provenance, correlation binding, event hash-chain, evidence integrity
         integrity_valid, missing_evidence, integrity_errors = verify_provenance_and_integrity(request)
 
         # 3. Resolve exact requested policy evaluator (fail closed on unsupported versions)
@@ -102,7 +172,13 @@ class ReplayEngine:
         timeline = build_timeline(request.events, request.evidence_records)
 
         # 5. Deterministically recompute policy outcome (never using wall-clock time)
-        eval_time = request.evaluation_time or request.recorded_decision.decided_at
+        original_decision = request.recorded_decision
+        eval_time = request.evaluation_time or original_decision.decided_at
+        policy_inputs = original_decision.policy_inputs or {}
+        daily_spent = _safe_nonneg_int(policy_inputs.get("daily_spent_minor"), 0)
+        monthly_spent = _safe_nonneg_int(policy_inputs.get("monthly_spent_minor"), 0)
+        agent_obj = agent if agent is not None else getattr(request, "agent", None)
+
         recomputed_outcome, recomputed_reasons, new_violated_constraints = policy_evaluator(
             proposal=request.proposal,
             quote=request.quote_snapshot,
@@ -110,9 +186,13 @@ class ReplayEngine:
             merchant=request.recorded_merchant,
             approval_record=request.approval_record,
             evaluation_time=eval_time,
+            agent=agent_obj,
+            daily_spent_minor=daily_spent,
+            monthly_spent_minor=monthly_spent,
+            correlation_id=request.correlation_id,
+            payment_intent_id=request.payment_intent.id,
         )
 
-        original_decision = request.recorded_decision
         original_outcome = original_decision.outcome
         original_reasons = original_decision.reason_codes
 
@@ -212,61 +292,56 @@ class ReplayEngine:
             )
         return result
 
-
-class PolicyTimeMachine(ReplayEngine):
-    """Forensic Policy Time Machine supporting counterfactual replay and simulation."""
-
-    @classmethod
-    def replay(cls, request: ReplayRequest) -> ReplayResult:
-        """Replay transaction; if counterfactual_overrides are present, simulate counterfactual."""
-        if request.counterfactual_overrides:
-            from ghostpay.counterfactual.simulator import simulate_counterfactual
-            return simulate_counterfactual(request, request.counterfactual_overrides)
-        return super().replay(request)
-
     @classmethod
     def replay_trace(
         cls,
-        trace: Any,
-        policy: Any = None,
+        trace: PaymentTrace,
+        policy: CounterfactualPolicy | None = None,
     ) -> ReplayResult:
-        """Replay a trace object under an optional counterfactual policy."""
-        overrides = policy.to_overrides_dict() if policy and hasattr(policy, "to_overrides_dict") else {}
-
-        if (
-            not trace.recorded_passport
-            or not trace.recorded_decision
-            or not trace.quote_snapshot
-            or not trace.recorded_merchant
-        ):
+        """Replay a PaymentTrace object, failing closed to INCOMPLETE_EVIDENCE if artifacts are missing."""
+        try:
+            req = trace.to_replay_request()
+        except InsufficientEvidenceError as exc:
+            missing = getattr(trace, "missing_evidence", None) or ["INSUFFICIENT_EVIDENCE"]
+            outcome = trace.recorded_decision.outcome if trace.recorded_decision else DecisionOutcome.DENY
             return ReplayResult(
                 tenant_id=trace.tenant_id,
                 correlation_id=trace.payment_intent_id,
                 payment_intent_id=trace.payment_intent_id,
                 policy_version=trace.policy_version,
-                original_outcome=DecisionOutcome.DENY,
-                recomputed_outcome=DecisionOutcome.DENY,
+                original_outcome=outcome,
+                recomputed_outcome=outcome,
                 drift_detected=False,
-                explanation="Missing historical state: INSUFFICIENT_EVIDENCE to replay trace",
-                missing_evidence=trace.missing_evidence or ["INSUFFICIENT_EVIDENCE"],
+                explanation=str(exc)[:2000],
+                missing_evidence=missing,
                 integrity_valid=False,
                 consistency_status="INCOMPLETE_EVIDENCE",
                 executed_payment=False,
             )
 
-        req = ReplayRequest(
-            tenant_id=trace.tenant_id,
-            correlation_id=trace.payment_intent_id,
-            payment_intent=trace.payment_intent or trace.recorded_decision.model_dump(),  # type: ignore[arg-type]
-            proposal=getattr(trace, "proposal", None) or trace.quote_snapshot.model_dump(),  # type: ignore[arg-type]
-            quote_snapshot=trace.quote_snapshot,
-            recorded_passport=trace.recorded_passport,
-            recorded_merchant=trace.recorded_merchant,
-            recorded_decision=trace.recorded_decision,
-            approval_record=trace.approval_record,
-            policy_version=trace.policy_version,
-            events=trace.ordered_events,
-            evidence_records=trace.authorization_evidence,
-            counterfactual_overrides=overrides,
-        )
+        if policy is not None:
+            from ghostpay.counterfactual.simulator import simulate_counterfactual
+
+            return simulate_counterfactual(req, policy.to_overrides_dict())
         return cls.replay(req)
+
+
+class PolicyTimeMachine(ReplayEngine):
+    """Forensic Policy Time Machine supporting counterfactual replay and simulation."""
+
+    @classmethod
+    def replay(cls, request: ReplayRequest, *, agent: AgentIdentity | None = None) -> ReplayResult:
+        """Replay transaction; if counterfactual_overrides are present, simulate counterfactual."""
+        if request.counterfactual_overrides:
+            from ghostpay.counterfactual.simulator import simulate_counterfactual
+
+            return simulate_counterfactual(request, request.counterfactual_overrides)
+        return super().replay(request, agent=agent)
+
+
+__all__ = [
+    "DEFAULT_POLICY_VERSION",
+    "PolicyTimeMachine",
+    "ReplayEngine",
+    "evaluate_deterministic_policy",
+]

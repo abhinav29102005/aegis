@@ -24,14 +24,16 @@ from ghostpay.agentdna.detector import AgentDNAAnomalyResult, AgentDNADetector
 from ghostpay.agentdna.explanations import format_agent_dna_explanation
 from ghostpay.agentdna.profiles import AgentBehaviorProfile, build_agent_profile
 from ghostpay.anomalies.detector import detect_anomalies
+from ghostpay.counterfactual.simulator import simulate_counterfactual
 from ghostpay.domain.exceptions import (
     CrossTenantAccessError,
+    InsufficientEvidenceError,
     InvestigationNotFoundError,
     TraceNotFoundError,
 )
 from ghostpay.domain.models import InvestigationReport, PaymentTrace
 from ghostpay.ingestion.adapter import TraceIngestionAdapter
-from ghostpay.replay.engine import PolicyTimeMachine
+from ghostpay.replay.engine import PolicyTimeMachine, ReplayEngine
 from ghostpay.timelines.builder import build_timeline
 from ghostpay.timemachine.policies import CounterfactualPolicy
 from ghostpay.timemachine.recommendations import generate_safeguard_recommendations
@@ -115,7 +117,7 @@ class GhostPayService:
     # -------------------------------------------------------------------------
     def replay(self, request: ReplayRequest) -> ReplayResult:
         """Execute deterministic, read-only counterfactual replay."""
-        return PolicyTimeMachine.replay(request)
+        return ReplayEngine.replay(request)
 
     def compare_policies(
         self,
@@ -166,8 +168,12 @@ class GhostPayService:
         timeline = build_timeline(trace.ordered_events, trace.authorization_evidence)
 
         # 1. Anomaly detection (trace-level)
-        dummy_req = trace.to_replay_request()
-        trace_anomalies = detect_anomalies(dummy_req, timeline) if dummy_req else []
+        replay_req: ReplayRequest | None = None
+        try:
+            replay_req = trace.to_replay_request()
+        except InsufficientEvidenceError:
+            replay_req = None
+        trace_anomalies = detect_anomalies(replay_req) if replay_req else []
 
         # 2. Agent DNA profiling & detection
         history = self.agent_history.get((tenant_id, trace.agent_id), [])
@@ -182,10 +188,9 @@ class GhostPayService:
 
         # 3. Counterfactual replays
         replay_results: list[ReplayResult] = []
-        if dummy_req and counterfactual_policies:
+        if replay_req and counterfactual_policies:
             for pol in counterfactual_policies:
-                pol_req = dummy_req.model_copy(update={"counterfactual_overrides": pol.to_overrides_dict()})
-                replay_results.append(PolicyTimeMachine.replay(pol_req))
+                replay_results.append(simulate_counterfactual(replay_req, pol.to_overrides_dict()))
 
         # 4. Safeguard recommendations
         suggested_safeguards: list[str] = []

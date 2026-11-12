@@ -1,17 +1,18 @@
-"""Forensics package for GhostPay."""
+"""Compatibility re-exports routing legacy forensics imports to hardened GhostPay modules."""
 
 from ghostpay.anomalies.detector import detect_anomalies
-from ghostpay.provenance.verifier import (
+from ghostpay.provenance import (
     ProvenanceEdge,
     ProvenanceGraph,
     ProvenanceNode,
     build_provenance_graph,
     enforce_request_tenancy,
     verify_evidence_digest,
+    verify_execution_artifacts_consistency,
     verify_provenance_and_integrity,
     verify_quote_snapshot_integrity,
 )
-from ghostpay.timelines.builder import (
+from ghostpay.timelines import (
     build_timeline,
     correlate_evidence_ids,
     format_event_summary,
@@ -27,6 +28,7 @@ __all__ = [
     "build_provenance_graph",
     "enforce_request_tenancy",
     "verify_evidence_digest",
+    "verify_execution_artifacts_consistency",
     "verify_quote_snapshot_integrity",
     "verify_provenance_and_integrity",
     "detect_anomalies",

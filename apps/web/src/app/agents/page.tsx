@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -14,6 +14,15 @@ export default function AgentsMerchantsPage() {
   const [merchants, setMerchants] = useState<MerchantRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Search & Pagination states
+  const [agentSearch, setAgentSearch] = useState("");
+  const [agentLimit, setAgentLimit] = useState(10);
+  const [agentOffset, setAgentOffset] = useState(0);
+
+  const [merchantSearch, setMerchantSearch] = useState("");
+  const [merchantLimit, setMerchantLimit] = useState(10);
+  const [merchantOffset, setMerchantOffset] = useState(0);
 
   const [agentName, setAgentName] = useState("");
   const [agentPurpose, setAgentPurpose] = useState("Cloud procurement");
@@ -30,12 +39,24 @@ export default function AgentsMerchantsPage() {
     setLoading(true);
     setError(null);
     try {
+      const agentParams = new URLSearchParams({
+        limit: String(agentLimit),
+        offset: String(agentOffset),
+      });
+      if (agentSearch.trim()) agentParams.set("q", agentSearch.trim());
+
+      const merchantParams = new URLSearchParams({
+        limit: String(merchantLimit),
+        offset: String(merchantOffset),
+      });
+      if (merchantSearch.trim()) merchantParams.set("q", merchantSearch.trim());
+
       const [a, m] = await Promise.all([
-        apiRequest<AgentRecord[]>("/v1/guardian/agents", {
+        apiRequest<AgentRecord[]>(`/v1/guardian/agents?${agentParams.toString()}`, {
           token: session.access_token,
           orgId: session.active_tenant_id,
         }),
-        apiRequest<MerchantRecord[]>("/v1/guardian/merchants", {
+        apiRequest<MerchantRecord[]>(`/v1/guardian/merchants?${merchantParams.toString()}`, {
           token: session.access_token,
           orgId: session.active_tenant_id,
         }),
@@ -47,11 +68,46 @@ export default function AgentsMerchantsPage() {
     } finally {
       setLoading(false);
     }
-  }, [session]);
+  }, [agentLimit, agentOffset, agentSearch, merchantLimit, merchantOffset, merchantSearch, session]);
 
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  // Client-side search and pagination filtering
+  const filteredAgents = useMemo(() => {
+    const q = agentSearch.trim().toLowerCase();
+    if (!q) return agents;
+    return agents.filter(
+      (a) =>
+        a.name.toLowerCase().includes(q) ||
+        a.id.toLowerCase().includes(q) ||
+        a.purpose.toLowerCase().includes(q) ||
+        a.framework.toLowerCase().includes(q) ||
+        a.public_fingerprint.toLowerCase().includes(q) ||
+        a.status.toLowerCase().includes(q),
+    );
+  }, [agents, agentSearch]);
+
+  const pagedAgents = useMemo(() => {
+    return filteredAgents.slice(agentOffset, agentOffset + agentLimit);
+  }, [filteredAgents, agentOffset, agentLimit]);
+
+  const filteredMerchants = useMemo(() => {
+    const q = merchantSearch.trim().toLowerCase();
+    if (!q) return merchants;
+    return merchants.filter(
+      (m) =>
+        m.name.toLowerCase().includes(q) ||
+        m.id.toLowerCase().includes(q) ||
+        m.domain.toLowerCase().includes(q) ||
+        m.category.toLowerCase().includes(q),
+    );
+  }, [merchants, merchantSearch]);
+
+  const pagedMerchants = useMemo(() => {
+    return filteredMerchants.slice(merchantOffset, merchantOffset + merchantLimit);
+  }, [filteredMerchants, merchantOffset, merchantLimit]);
 
   async function handleCreateAgent(e: React.FormEvent) {
     e.preventDefault();
@@ -205,7 +261,8 @@ export default function AgentsMerchantsPage() {
           </form>
         )}
 
-        {hasPermission("merchants:write") && (
+        {/* GAP-004: Fix permission check from "merchants:write" to "passports:write" */}
+        {hasPermission("passports:write") && (
           <form onSubmit={(e) => void handleCreateMerchant(e)} className="rounded-xl border border-aegis-border bg-aegis-surface p-5">
             <h2 className="text-base font-semibold text-white">Add Allowlisted Merchant</h2>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -254,12 +311,59 @@ export default function AgentsMerchantsPage() {
         )}
       </div>
 
-      <section className="mt-8">
-        <h2 id="agents-caption" className="mb-3 text-base font-semibold text-white">
-          Registered Agents ({agents.length})
-        </h2>
+      {/* Agents Table with Search & Pagination */}
+      <section className="mt-8 rounded-xl border border-aegis-border bg-aegis-surface p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-4">
+          <h2 id="agents-caption" className="text-base font-semibold text-white">
+            Registered Agents ({filteredAgents.length})
+          </h2>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative">
+              <input
+                type="text"
+                value={agentSearch}
+                onChange={(e) => {
+                  setAgentSearch(e.target.value);
+                  setAgentOffset(0);
+                }}
+                placeholder="Search agents (name, purpose, framework)..."
+                className="w-64 rounded-lg border border-aegis-border bg-aegis-bg px-3 py-1.5 text-xs text-white placeholder-slate-400"
+              />
+              {agentSearch && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAgentSearch("");
+                    setAgentOffset(0);
+                  }}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-white"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5 text-xs text-slate-300">
+              <label htmlFor="agent-limit-select">Limit:</label>
+              <select
+                id="agent-limit-select"
+                value={agentLimit}
+                onChange={(e) => {
+                  setAgentLimit(Number(e.target.value));
+                  setAgentOffset(0);
+                }}
+                className="rounded border border-aegis-border bg-aegis-bg px-2 py-1 text-xs text-white"
+              >
+                <option value={5}>5</option>
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
         <div tabIndex={0} role="region" aria-labelledby="agents-caption" className="table-wrapper">
-          <table className="aegis-table">
+          <table className="aegis-table w-full text-left text-sm">
             <thead>
               <tr>
                 <th scope="col">Name</th>
@@ -267,24 +371,24 @@ export default function AgentsMerchantsPage() {
                 <th scope="col">Status</th>
                 <th scope="col">Fingerprint</th>
                 <th scope="col">Created</th>
-                <th scope="col">Actions</th>
+                <th scope="col" className="text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
               {loading && agents.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="text-center text-slate-400">
+                  <td colSpan={6} className="text-center text-slate-400 py-6">
                     Loading agents…
                   </td>
                 </tr>
-              ) : agents.length === 0 ? (
+              ) : pagedAgents.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="text-center text-slate-400">
-                    No AI agents registered yet.
+                  <td colSpan={6} className="text-center text-slate-400 py-6">
+                    {agentSearch ? "No agents matching your search." : "No AI agents registered yet."}
                   </td>
                 </tr>
               ) : (
-                agents.map((a) => (
+                pagedAgents.map((a) => (
                   <tr key={a.id}>
                     <td>
                       <div className="font-medium text-white">{a.name}</div>
@@ -296,7 +400,7 @@ export default function AgentsMerchantsPage() {
                     </td>
                     <td className="font-mono text-xs text-slate-400">{truncateId(a.public_fingerprint, 16)}</td>
                     <td className="text-xs text-slate-400">{formatIsoDateTime(a.created_at)}</td>
-                    <td>
+                    <td className="text-right">
                       {hasPermission("agents:write") && (
                         a.status === "ACTIVE" ? (
                           <button
@@ -323,32 +427,115 @@ export default function AgentsMerchantsPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Agents Pagination Bar */}
+        {filteredAgents.length > 0 && (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-aegis-border pt-3 text-xs text-slate-400">
+            <div>
+              Showing {Math.min(filteredAgents.length, agentOffset + 1)} to {Math.min(filteredAgents.length, agentOffset + agentLimit)} of {filteredAgents.length} agents
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={agentOffset === 0}
+                onClick={() => setAgentOffset((prev) => Math.max(0, prev - agentLimit))}
+                className="rounded border border-aegis-border bg-aegis-bg px-2.5 py-1 text-xs text-slate-200 hover:bg-slate-800 disabled:opacity-40"
+              >
+                Previous
+              </button>
+              <span>
+                Page {Math.floor(agentOffset / agentLimit) + 1} of {Math.max(1, Math.ceil(filteredAgents.length / agentLimit))}
+              </span>
+              <button
+                type="button"
+                disabled={agentOffset + agentLimit >= filteredAgents.length}
+                onClick={() => setAgentOffset((prev) => prev + agentLimit)}
+                className="rounded border border-aegis-border bg-aegis-bg px-2.5 py-1 text-xs text-slate-200 hover:bg-slate-800 disabled:opacity-40"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
       </section>
 
-      <section className="mt-8">
-        <h2 id="merchants-caption" className="mb-3 text-base font-semibold text-white">
-          Merchants ({merchants.length})
-        </h2>
+      {/* Merchants Table with Search & Pagination */}
+      <section className="mt-8 rounded-xl border border-aegis-border bg-aegis-surface p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-4">
+          <h2 id="merchants-caption" className="text-base font-semibold text-white">
+            Merchants ({filteredMerchants.length})
+          </h2>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative">
+              <input
+                type="text"
+                value={merchantSearch}
+                onChange={(e) => {
+                  setMerchantSearch(e.target.value);
+                  setMerchantOffset(0);
+                }}
+                placeholder="Search merchants (name, domain, category)..."
+                className="w-64 rounded-lg border border-aegis-border bg-aegis-bg px-3 py-1.5 text-xs text-white placeholder-slate-400"
+              />
+              {merchantSearch && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMerchantSearch("");
+                    setMerchantOffset(0);
+                  }}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-white"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5 text-xs text-slate-300">
+              <label htmlFor="merchant-limit-select">Limit:</label>
+              <select
+                id="merchant-limit-select"
+                value={merchantLimit}
+                onChange={(e) => {
+                  setMerchantLimit(Number(e.target.value));
+                  setMerchantOffset(0);
+                }}
+                className="rounded border border-aegis-border bg-aegis-bg px-2 py-1 text-xs text-white"
+              >
+                <option value={5}>5</option>
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
         <div tabIndex={0} role="region" aria-labelledby="merchants-caption" className="table-wrapper">
-          <table className="aegis-table">
+          <table className="aegis-table w-full text-left text-sm">
             <thead>
               <tr>
                 <th scope="col">Merchant</th>
                 <th scope="col">Domain</th>
                 <th scope="col">Category</th>
                 <th scope="col">Allowlisted</th>
-                <th scope="col">Actions</th>
+                <th scope="col" className="text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {merchants.length === 0 ? (
+              {loading && merchants.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="text-center text-slate-400">
-                    No merchants configured yet.
+                  <td colSpan={5} className="text-center text-slate-400 py-6">
+                    Loading merchants…
+                  </td>
+                </tr>
+              ) : pagedMerchants.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="text-center text-slate-400 py-6">
+                    {merchantSearch ? "No merchants matching your search." : "No merchants configured yet."}
                   </td>
                 </tr>
               ) : (
-                merchants.map((m) => (
+                pagedMerchants.map((m) => (
                   <tr key={m.id}>
                     <td>
                       <div className="font-medium text-white">{m.name}</div>
@@ -359,8 +546,9 @@ export default function AgentsMerchantsPage() {
                     <td>
                       <StatusBadge label={m.is_allowlisted ? "ACTIVE" : "SUSPENDED"} />
                     </td>
-                    <td>
-                      {hasPermission("merchants:write") && (
+                    <td className="text-right">
+                      {/* GAP-004: Fix permission check from "merchants:write" to "passports:write" */}
+                      {hasPermission("passports:write") && (
                         <button
                           type="button"
                           onClick={() => void handleToggleMerchantAllowlist(m)}
@@ -376,6 +564,36 @@ export default function AgentsMerchantsPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Merchants Pagination Bar */}
+        {filteredMerchants.length > 0 && (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-aegis-border pt-3 text-xs text-slate-400">
+            <div>
+              Showing {Math.min(filteredMerchants.length, merchantOffset + 1)} to {Math.min(filteredMerchants.length, merchantOffset + merchantLimit)} of {filteredMerchants.length} merchants
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={merchantOffset === 0}
+                onClick={() => setMerchantOffset((prev) => Math.max(0, prev - merchantLimit))}
+                className="rounded border border-aegis-border bg-aegis-bg px-2.5 py-1 text-xs text-slate-200 hover:bg-slate-800 disabled:opacity-40"
+              >
+                Previous
+              </button>
+              <span>
+                Page {Math.floor(merchantOffset / merchantLimit) + 1} of {Math.max(1, Math.ceil(filteredMerchants.length / merchantLimit))}
+              </span>
+              <button
+                type="button"
+                disabled={merchantOffset + merchantLimit >= filteredMerchants.length}
+                onClick={() => setMerchantOffset((prev) => prev + merchantLimit)}
+                className="rounded border border-aegis-border bg-aegis-bg px-2.5 py-1 text-xs text-slate-200 hover:bg-slate-800 disabled:opacity-40"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
       </section>
 
       <ConfirmDialog

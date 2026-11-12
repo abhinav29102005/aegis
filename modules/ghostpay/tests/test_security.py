@@ -11,6 +11,7 @@ from contracts.fixtures import (
     build_authorized_39_purchase_fixture,
 )
 
+from ghostpay.counterfactual import simulate_counterfactual
 from ghostpay.domain.exceptions import CrossTenantAccessError
 from ghostpay.domain.service import GhostPayService
 from ghostpay.replay.engine import PolicyTimeMachine
@@ -31,7 +32,22 @@ def test_tenant_isolation_on_investigations(service: GhostPayService) -> None:
 
 
 def test_zero_financial_side_effects_during_investigation(service: GhostPayService) -> None:
+    fixture = build_authorized_39_purchase_fixture()
     trace = make_test_trace()
+    trace = trace.model_copy(
+        update={
+            "proposal": fixture["proposal"].model_copy(
+                update={
+                    "tenant_id": trace.tenant_id,
+                    "correlation_id": trace.payment_intent.correlation_id,
+                    "agent_id": trace.agent_id,
+                    "merchant_id": trace.quote_snapshot.merchant_id,
+                    "amount_minor": trace.quote_snapshot.amount_minor,
+                    "currency": trace.quote_snapshot.currency,
+                }
+            )
+        }
+    )
     service.ingestion.traces[trace.trace_id] = trace
     service.agent_history[(trace.tenant_id, trace.agent_id)] = [trace]
 
@@ -75,8 +91,7 @@ def test_adversarial_evaluation_matrix() -> None:
     total_evaluations = len(scenarios)
 
     for _name, overrides, expected in scenarios:
-        s_req = req.model_copy(update={"counterfactual_overrides": overrides})
-        res = PolicyTimeMachine.replay(s_req)
+        res = simulate_counterfactual(req, overrides)
         if res.recomputed_outcome == expected:
             correct_evaluations += 1
 

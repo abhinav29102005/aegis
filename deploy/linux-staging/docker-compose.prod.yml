@@ -1,0 +1,114 @@
+# Production / Linux VPS staging override for docker-compose.yml
+# Usage:
+#   docker compose -f docker-compose.yml -f deploy/linux-staging/docker-compose.prod.yml --env-file /etc/aegis/.env up -d
+#
+# All sensitive credentials use `:?` so Compose fails closed if any secret is unset.
+
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be set}
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  redis:
+    ports:
+      - "127.0.0.1:6379:6379"
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - "256mb"
+      - --maxmemory-policy
+      - allkeys-lru
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  migrate:
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
+
+  api:
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      NEXUS_SIGNING_SECRET: ${NEXUS_SIGNING_SECRET:?NEXUS_SIGNING_SECRET must be set}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      NEXUS_API_KEY: ${NEXUS_API_KEY:?NEXUS_API_KEY must be set}
+      CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS must be set to HTTPS origin}
+      WEBHOOK_REQUIRE_HTTPS: ${WEBHOOK_REQUIRE_HTTPS:-true}
+      WEBHOOK_LEGACY_SIGNATURE_FALLBACK: ${WEBHOOK_LEGACY_SIGNATURE_FALLBACK:-false}
+      AEGIS_DATA_RESIDENCY: ${AEGIS_DATA_RESIDENCY:?AEGIS_DATA_RESIDENCY must be set (US|EU|IN)}
+      AEGIS_STORAGE_BACKEND: ${AEGIS_STORAGE_BACKEND:-s3}
+      AEGIS_S3_BUCKET: ${AEGIS_S3_BUCKET:-}
+      AEGIS_S3_ENDPOINT_URL: ${AEGIS_S3_ENDPOINT_URL:-}
+      AEGIS_S3_REGION: ${AEGIS_S3_REGION:-us-east-1}
+      AEGIS_S3_ACCESS_KEY_ID: ${AEGIS_S3_ACCESS_KEY_ID:-}
+      AEGIS_S3_SECRET_ACCESS_KEY: ${AEGIS_S3_SECRET_ACCESS_KEY:-}
+      AEGIS_S3_OBJECT_LOCK_MODE: ${AEGIS_S3_OBJECT_LOCK_MODE:-COMPLIANCE}
+      AEGIS_S3_RETENTION_DAYS: ${AEGIS_S3_RETENTION_DAYS:-2555}
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  worker:
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      NEXUS_SIGNING_SECRET: ${NEXUS_SIGNING_SECRET:?NEXUS_SIGNING_SECRET must be set}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      NEXUS_API_KEY: ${NEXUS_API_KEY:?NEXUS_API_KEY must be set}
+      WEBHOOK_REQUIRE_HTTPS: ${WEBHOOK_REQUIRE_HTTPS:-true}
+      WEBHOOK_LEGACY_SIGNATURE_FALLBACK: ${WEBHOOK_LEGACY_SIGNATURE_FALLBACK:-false}
+      AEGIS_DATA_RESIDENCY: ${AEGIS_DATA_RESIDENCY:?AEGIS_DATA_RESIDENCY must be set (US|EU|IN)}
+      AEGIS_STORAGE_BACKEND: ${AEGIS_STORAGE_BACKEND:-s3}
+      AEGIS_S3_BUCKET: ${AEGIS_S3_BUCKET:-}
+      AEGIS_S3_ENDPOINT_URL: ${AEGIS_S3_ENDPOINT_URL:-}
+      AEGIS_S3_REGION: ${AEGIS_S3_REGION:-us-east-1}
+      AEGIS_S3_ACCESS_KEY_ID: ${AEGIS_S3_ACCESS_KEY_ID:-}
+      AEGIS_S3_SECRET_ACCESS_KEY: ${AEGIS_S3_SECRET_ACCESS_KEY:-}
+      AEGIS_S3_OBJECT_LOCK_MODE: ${AEGIS_S3_OBJECT_LOCK_MODE:-COMPLIANCE}
+      AEGIS_S3_RETENTION_DAYS: ${AEGIS_S3_RETENTION_DAYS:-2555}
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  web:
+    ports:
+      - "127.0.0.1:${WEB_PORT:-3005}:3000"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"

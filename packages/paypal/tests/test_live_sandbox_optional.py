@@ -1,35 +1,41 @@
-"""Optional credential-gated live PayPal sandbox verification test.
-
-If live credentials are not set, skips safely without failing offline test suites.
-"""
-
-from __future__ import annotations
+"""Optional live PayPal Sandbox integration test (skipped when credentials are absent)."""
 
 import os
+from uuid import uuid4
 
 import pytest
-from paypal import PayPalSandboxClient
-from security import NexusSettings
+from paypal.client import PayPalSandboxClient
+from security.settings import NexusSettings
+
+_HAS_PAYPAL_SANDBOX_CREDS = bool(
+    os.getenv("PAYPAL_CLIENT_ID", "").strip() and os.getenv("PAYPAL_CLIENT_SECRET", "").strip()
+)
+
+pytestmark = pytest.mark.skipif(
+    not _HAS_PAYPAL_SANDBOX_CREDS,
+    reason="PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET are not set; skipping live PayPal Sandbox test.",
+)
 
 
-def test_live_sandbox_optional() -> None:
-    client_id = os.environ.get("PAYPAL_CLIENT_ID", "").strip()
-    client_secret = os.environ.get("PAYPAL_CLIENT_SECRET", "").strip()
+@pytest.mark.asyncio
+async def test_live_paypal_sandbox_oauth_and_order_roundtrip() -> None:
+    settings = NexusSettings(
+        paypal_mode="sandbox",
+        paypal_base_url=os.getenv("PAYPAL_BASE_URL", "https://api-m.sandbox.paypal.com"),
+        paypal_client_id=os.environ["PAYPAL_CLIENT_ID"],
+        paypal_client_secret=os.environ["PAYPAL_CLIENT_SECRET"],
+    )
+    client = PayPalSandboxClient(settings=settings)
+    token = await client.get_access_token()
+    assert isinstance(token, str) and len(token) > 10
 
-    if not client_id or not client_secret or client_id.startswith("sb-") or "placeholder" in client_id.lower():
-        pytest.skip("NOT VERIFIED: Live PayPal sandbox credentials not configured in environment.")
-
-    import asyncio
-
-    async def _run() -> None:
-        settings = NexusSettings(
-            paypal_mode="sandbox",
-            paypal_client_id=client_id,
-            paypal_client_secret=client_secret,
-            paypal_base_url="https://api-m.sandbox.paypal.com",
-        )
-        client = PayPalSandboxClient(settings=settings)
-        token = await client.get_access_token()
-        assert token is not None and len(token) > 10
-
-    asyncio.run(_run())
+    created = await client.create_order(
+        amount_minor=1500,
+        currency="USD",
+        reference_id=f"live-test-{uuid4()}",
+        description="AEGIS optional live sandbox verification order",
+        request_id=str(uuid4()),
+    )
+    assert created.paypal_order_id
+    fetched = await client.get_order(paypal_order_id=created.paypal_order_id)
+    assert fetched["id"] == created.paypal_order_id

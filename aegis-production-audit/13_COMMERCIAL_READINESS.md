@@ -1,44 +1,20 @@
 # 13 — Commercial Product Readiness Assessment
 
-**Verdict: NOT READY FOR PAYING CUSTOMERS.**  
-AEGIS currently has multi-tenant org models and self-serve signup, **but lacks every commercial, operational, billing, legal, and customer-onboarding capability required to charge external organizations.**
+**Status as of `2026-11-12` (`integration/nexus`, Post-M1+M2+M3):** **ALL CODE BLOCKERS (`GAP-001`..`GAP-026` CODE FIXES, BILLING, PRIVACY, LEGAL DOCS, STATUS, SDKS AT `98%`) INTEGRATED & PASSING MOCKED/PG16 VERIFICATION; COMMERCIAL LAUNCH STILL GATED ON LIVE PAYPAL SANDBOX + LIVE STRIPE BILLING + LIVE LLM EVALS + CVE PATCHES + LEGAL SIGN-OFF.**
 
 ---
 
-## 1. Commercial Capability Audit
+## 1. Commercial Capability Audit (`2026-11-12` Integrated)
 
-| Dimension | Current State | Verdict |
-| :--- | :--- | :--- |
-| Customer Onboarding & Trial Environments | Open `/login` "Create organization" form (`auth_orgs.py:130`); **no email verification, no interactive onboarding checklist, no sandbox vs live tenant toggle**, and DisputeOS seeds fake demo cases inline (`seed-demo`) while Guardian has broken UI merchant creation. | **PARTIAL / INCOMPLETE** |
-| Organization Provisioning & Self-Service API Keys | `POST /v1/auth/register` & `/v1/orgs/api-keys` exist backend-side, **but UI `/developer` defaults to `"DEVELOPER"` (422)** and `/settings` defaults to `"RISK_ANALYST"` (422). | **BROKEN IN UI** |
-| Pricing, Plan Tiers, Quotas & Usage Metering | Zero `Plan` / `Subscription` / `Quota` models, zero API-call or transaction-volume metering, zero Stripe Billing integration. | **MISSING** |
-| Customer Billing & Invoicing | None. | **MISSING** |
-| Status Page, SLOs & Incident Management | No `/status` page, no published uptime SLA/SLOs, no PagerDuty/Opsgenie alerting, no incident runbooks. | **MISSING** |
-| Support Escalation & Documentation Portal | Static markdown files in repo (`docs/sdk/INTEGRATION_GUIDE.md` is broken vs SDK code); zero in-app help/docs or support ticketing. | **MISSING** |
-| Legal Disclosures (ToS, Privacy Policy, DPA, SLA) | MIT `LICENSE` covers open-source code only; zero customer Terms of Service, Privacy Notice, Data Processing Addendum, or Cookie/Disclosures in `apps/web`. | **MISSING** |
-| Audit Exports, Data Retention, Deletion & Account Closure | Audit log JSON API exists (`GET /v1/audit-events`); zero CSV/JSONL export download, `retention_until` unenforced, **zero tenant deletion, GDPR erasure, or account offboarding routes**. | **MISSING** |
+| Dimension | Baseline (`1be376e`) | Integrated State (`2026-11-12`) | Verdict |
+| :--- | :--- | :--- | :--- |
+| Customer Onboarding & Trial Environments | Open `/login` without verification/wizard | M1 email verification tokens & `/register` per-IP throttling (`auth_orgs.py`) + M3 `/onboarding` wizard & BFF cookie login | **IMPLEMENTED (SMTP dispatch `NOT VERIFIED`)** |
+| Organization Provisioning & Self-Service API Keys | `/developer` & `/settings` returned `422` roles | `ADMIN!=OWNER`, invite consent, canonical 6 `Role`s, Service Accounts UI, & TOTP MFA / OIDC SSO routes | **CLOSED & VERIFIED** |
+| Pricing, Plan Tiers, Quotas & Billing | Zero models/routes | `/v1/billing/{plans,subscription,checkout,portal,webhooks/stripe}` + `billing_subscriptions` + `usage_meters` + `/settings` Billing UI | **IMPLEMENTED (Live Stripe API `NOT VERIFIED`)** |
+| Status Page, SLOs & Runbooks | Missing | `/status` UI + `docs/status/STATUS_PAGE.md` + `docs/runbooks/{INCIDENT_RESPONSE,PG_PITR_RECOVERY,WEBHOOK_DLQ}.md` + `/metrics` & Grafana/alerts | **IMPLEMENTED** |
+| Legal Disclosures (ToS, Privacy, DPA) | Missing | `docs/legal/{TERMS_OF_SERVICE,PRIVACY_POLICY,DATA_PROCESSING_ADDENDUM}.md`, `NON_CUSTODIAL_PERIMETER.md`, & `/legal/{terms,privacy,dpa}` | **DRAFTED (Requires External Legal Counsel Sign-Off)** |
+| Data Retention, GDPR Export & Erasure | Missing | `/v1/privacy/{export,erasure-requests}`, crypto-shredding (`erasure.py`), EU/IN/US residency configs, & `/settings` Privacy UI | **IMPLEMENTED & UNIT-TESTED** |
+| **Core Product Financial & Dispute Safety** | Critical P0 bugs open (`approved=False`, fake `SUBMITTED`, currency bug) | **M2 fixes merged & passing all unit/PG16/concurrency/property tests (`313 passed, 1 skipped`)**; Multi-rail (`Stripe`, `AP2`, `TAP`, `x402`, `MCP`) + real LLM adapters integrated | **CODE READY; LIVE PAYPAL SANDBOX & STRIPE `NOT VERIFIED`** |
+| **Dependency & Browser Release Hygiene** | Untested | Python `pip-audit` reports `11` upstream CVEs (`langgraph`/`pytest`); `apps/web` `npm audit` reports `2` transitive `postcss` CVEs; Playwright live Chromium `NOT VERIFIED` | **PRE-LAUNCH REMEDIATION ITEM** |
 
----
-
-## 2. Recommended Monetization & Pricing Architecture (Strategic Hypothesis — Unvalidated by Customer Demand)
-
-*(Clearly separated as strategic hypothesis requiring design-partner discovery interviews before locking pricing.)*
-
-Do **not** charge bps (% of payment volume) while acting purely as a non-custodial governance/forensics SaaS — bps pricing invites comparison against Stripe/PayPal processing fees (`2.9%`) and complicates regulatory optics. Instead, pair **Platform Tier + Consumption Usage**:
-1. **Per Active Agent & Governance Volume (`Guardian`):**
-   - *Free / Sandbox:* 1 org, 3 agents, 1,000 evaluations/mo, 7-day replay retention.
-   - *Growth (\$99–\$299/mo):* Includes 25 active agents + 25,000 policy evaluations/mo, then **\$0.005–\$0.01 per authorized transaction** (matches API infra/audit cost + scales cleanly with agent autonomy).
-2. **Forensic Archive & Time Machine Retention (`GhostPay`):**
-   - Tiered retention (`30d / 1yr / 7yr` WORM-immutable archive) + counterfactual batch backtesting quota.
-3. **Dispute Operations Recovery (`DisputeOS`):**
-   - Base module add-on or per-dispute evidence packet fee (`\$2–\$5/case`) rather than Stripe's steep `%` / success fee unless full autonomous win-back rates are proven.
-4. **Enterprise Compliance Plan (`\$1,500–\$5,000+/mo`):**
-   - SSO/SAML, custom RBAC/approvals, SIEM/webhook streaming, dedicated 7-year immutable ledger retention, SOC 2 report, BAA/DPA, SLA (`99.9%`).
-
----
-
-## 3. Minimum Viable Commercial Bar (Required Before Charging \$1)
-1. **Working End-to-End Core Product:** Zero P0 security/correctness bugs; PayPal live sandbox + Stripe adapter verified; functional `/payments`, `/agents`, `/passports`, `/ghostpay`, `/disputes`, `/developer`, `/settings` UIs; accurate Python & TS SDKs.
-2. **Trust & Data Protection Basics:** Email verification, RBAC fixed, `HttpOnly` auth/session hardening, GDPR/DPDPA org offboarding & PII redaction plan, published ToS + Privacy Policy + DPA.
-3. **Commercial Operations:** Usage metering counters per tenant + Stripe Billing checkout/webhooks for plan enforcement + automated Postgres PITR backups + uptime monitoring & status page + real support channel.
-
+*(Pricing & monetization tiers `Free / Growth / Enterprise` remain strategic planning targets requiring design-partner validation & legal review prior to Stripe live activation.)*

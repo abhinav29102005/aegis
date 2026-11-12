@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime
 from typing import Any
 
 from contracts import DisputeCase, EvidenceRecord, EvidenceSourceType
@@ -38,13 +39,130 @@ _DELIVERY_REQUIRED: tuple[tuple[EvidenceSourceType, str], ...] = (
 _DELIVERY_REASON_TOKENS: tuple[str, ...] = (
     "NOT_RECEIVED",
     "NOT RECEIVED",
+    "INR",
     "DELIVERY",
     "MERCHANDISE",
+    "NEVER_ARRIVED",
+)
+
+_UNAUTHORIZED_REASON_TOKENS: tuple[str, ...] = (
+    "UNAUTHORIZED",
+    "UNAUTHORISED",
+    "FRAUD",
+    "STOLEN_CARD",
+    "ACCOUNT_TAKEOVER",
+    "NO_AUTHORIZATION",
+)
+
+_SUBSCRIPTION_REASON_TOKENS: tuple[str, ...] = (
+    "SUBSCRIPTION",
+    "RECURRING",
+    "CANCELLED_RECURRING",
+    "CANCELED_RECURRING",
+    "BILLING_AGREEMENT",
+    "CANCELLED",
+    "CANCELED",
+)
+
+_SNAD_REASON_TOKENS: tuple[str, ...] = (
+    "SIGNIFICANTLY_NOT_AS_DESCRIBED",
+    "NOT_AS_DESCRIBED",
+    "SNAD",
+    "DEFECTIVE",
+    "DAMAGED",
+    "COUNTERFEIT",
+    "WRONG_ITEM",
 )
 
 _NON_DELIVERY_PATTERN = re.compile(
-    r"\b(not delivered|undelivered|delayed|never arrived|lost)\b"
+    r"\b("
+    r"not delivered|non-delivery|non delivery|undelivered|delayed|never arrived|"
+    r"never delivered|failed delivery|lost in transit|lost|missing package|"
+    r"returned to sender|wrong address|unshipped|out of stock|backordered|not received"
+    r")\b"
 )
+
+_SNAD_ADMISSION_PATTERN = re.compile(
+    r"\b("
+    r"wrong item|defective|damaged in transit|damaged item|counterfeit|"
+    r"not as described|significantly not as described|missing parts|broken on arrival"
+    r")\b"
+)
+
+_CARD_VERIFICATION_KEYS: frozenset[str] = frozenset({
+    "avs_result",
+    "avs_code",
+    "cvv_result",
+    "cvv2_match",
+    "three_ds",
+    "3ds_status",
+    "eci",
+    "authentication_result",
+    "card_verification",
+})
+
+_TELEMETRY_KEYS: frozenset[str] = frozenset({
+    "ip_address",
+    "buyer_ip",
+    "device_fingerprint",
+    "device_id",
+    "user_agent",
+    "session_id",
+    "geo_ip",
+    "ip_country",
+    "telemetry",
+})
+
+_SUBSCRIPTION_KEYS: frozenset[str] = frozenset({
+    "subscription_id",
+    "billing_agreement_id",
+    "cancellation_status",
+    "cancelled_at",
+    "canceled_at",
+    "cancellation_proof",
+    "cancellation_confirmed",
+    "renewal_notice_sent",
+    "recurring_consent",
+    "terms_accepted_at",
+})
+
+_SNAD_SPEC_KEYS: frozenset[str] = frozenset({
+    "line_items",
+    "item_description",
+    "product_specs",
+    "listing_snapshot",
+    "sku",
+    "condition",
+    "item_condition",
+})
+
+_SNAD_INSPECTION_KEYS: frozenset[str] = frozenset({
+    "rma_status",
+    "return_policy",
+    "inspection_report",
+    "quality_check",
+    "merchant_response",
+    "resolution_offer",
+    "pre_shipment_condition",
+})
+
+_FAILED_CARD_CHECK_VALUES: frozenset[str] = frozenset({
+    "N",
+    "NO_MATCH",
+    "FAIL",
+    "FAILED",
+    "MISMATCH",
+    "REJECTED",
+    "U",
+    "ATTEMPT_FAILED",
+})
+
+_CANCELLED_STATUS_VALUES: frozenset[str] = frozenset({
+    "CANCELLED",
+    "CANCELED",
+    "TERMINATED",
+    "REVOKED",
+})
 
 
 def _enforce_tenant(case: DisputeCase, evidence: list[EvidenceRecord]) -> None:
@@ -68,6 +186,46 @@ def _flatten_text(value: Any) -> list[str]:
             parts.extend(_flatten_text(item))
         return parts
     return [str(value)]
+
+
+def _collect_nested_keys(value: Any) -> dict[str, Any]:
+    """Collect lowercase leaf/nested dict keys across content dictionaries for heuristic inspection."""
+    collected: dict[str, Any] = {}
+    if isinstance(value, dict):
+        for key, val in value.items():
+            lowered = str(key).strip().lower()
+            if val is not None and lowered not in collected:
+                collected[lowered] = val
+            if isinstance(val, dict):
+                for nested_k, nested_v in _collect_nested_keys(val).items():
+                    if nested_k not in collected:
+                        collected[nested_k] = nested_v
+    return collected
+
+
+def _has_any_nonempty_key(evidence: list[EvidenceRecord], keys: frozenset[str]) -> bool:
+    for rec in evidence:
+        flat = _collect_nested_keys(rec.content)
+        for key in keys:
+            val = flat.get(key)
+            if val not in (None, "", [], {}):
+                return True
+    return False
+
+
+def _parse_iso_dt(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+    if isinstance(value, str) and value.strip():
+        cleaned = value.strip()
+        if cleaned.endswith("Z"):
+            cleaned = f"{cleaned[:-1]}+00:00"
+        try:
+            parsed = datetime.fromisoformat(cleaned)
+        except ValueError:
+            return None
+        return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+    return None
 
 
 def _tracking_indicates_delivered(rec: EvidenceRecord) -> bool:
@@ -114,10 +272,45 @@ def detect_missing_evidence(case: DisputeCase, evidence: list[EvidenceRecord]) -
             missing.append(description)
 
     reason_upper = case.reason.upper()
+    claim_upper = case.buyer_claim.upper()
+    combined_upper = f"{reason_upper} {claim_upper}"
+
     if any(token in reason_upper for token in _DELIVERY_REASON_TOKENS):
         for source_type, description in _DELIVERY_REQUIRED:
             if source_type not in present_types:
                 missing.append(description)
+
+    if any(token in combined_upper for token in _UNAUTHORIZED_REASON_TOKENS):
+        if not _has_any_nonempty_key(evidence, _CARD_VERIFICATION_KEYS):
+            missing.append(
+                "Missing AVS/CVV/3DS card verification telemetry "
+                "(avs_result, cvv_result, or 3DS authentication status required for unauthorized dispute)."
+            )
+        if not _has_any_nonempty_key(evidence, _TELEMETRY_KEYS):
+            missing.append(
+                "Missing IP/device telemetry "
+                "(ip_address, device_fingerprint, or session_id required for unauthorized dispute)."
+            )
+
+    if any(token in combined_upper for token in _SUBSCRIPTION_REASON_TOKENS) and not _has_any_nonempty_key(
+        evidence, _SUBSCRIPTION_KEYS
+    ):
+        missing.append(
+            "Missing subscription/cancellation proof "
+            "(subscription_id, cancellation_status, cancelled_at, or recurring consent log required)."
+        )
+
+    if any(token in combined_upper for token in _SNAD_REASON_TOKENS):
+        if not _has_any_nonempty_key(evidence, _SNAD_SPEC_KEYS):
+            missing.append(
+                "Missing SIGNIFICANTLY_NOT_AS_DESCRIBED item specification packet "
+                "(line_items, product_specs, condition, or listing_snapshot required)."
+            )
+        if not _has_any_nonempty_key(evidence, _SNAD_INSPECTION_KEYS):
+            missing.append(
+                "Missing SIGNIFICANTLY_NOT_AS_DESCRIBED inspection/RMA packet "
+                "(inspection_report, rma_status, return_policy, or pre_shipment_condition required)."
+            )
 
     return missing
 
@@ -221,5 +414,115 @@ def detect_contradictions(case: DisputeCase, evidence: list[EvidenceRecord]) -> 
                     f"Contradiction: Buyer claims pre-renewal cancellation, but {rec.source_type.value} {rec.id} "
                     f"shows cancellation was requested on {cancel_date}, after billing date {billing_date}."
                 )
+
+    # Card AVS / CVV / 3DS check contradictions
+    for rec in evidence:
+        flat = _collect_nested_keys(rec.content)
+        for check_key in ("avs_result", "avs_code", "cvv_result", "cvv2_match", "three_ds", "3ds_status", "authentication_result"):
+            val = flat.get(check_key)
+            if val is not None and str(val).strip().upper() in _FAILED_CARD_CHECK_VALUES:
+                contradictions.append(
+                    f"Card verification failure in {rec.source_type.value} {rec.id}: "
+                    f"{check_key}={val} contradicts authorized payment verification."
+                )
+
+    # IP / Device / Geo telemetry contradictions
+    observed_ips: list[tuple[EvidenceRecord, str]] = []
+    observed_devices: list[tuple[EvidenceRecord, str]] = []
+    for rec in evidence:
+        flat = _collect_nested_keys(rec.content)
+        ip_val = flat.get("ip_address") or flat.get("buyer_ip")
+        if isinstance(ip_val, str) and ip_val.strip():
+            observed_ips.append((rec, ip_val.strip()))
+        dev_val = flat.get("device_fingerprint") or flat.get("device_id")
+        if isinstance(dev_val, str) and dev_val.strip():
+            observed_devices.append((rec, dev_val.strip()))
+
+        ip_country = flat.get("ip_country")
+        billing_country = flat.get("billing_country")
+        if ip_country and billing_country and str(ip_country).strip().upper() != str(billing_country).strip().upper():
+            contradictions.append(
+                f"Geo-IP mismatch in {rec.source_type.value} {rec.id}: "
+                f"ip_country={ip_country} differs from billing_country={billing_country}."
+            )
+        if flat.get("device_mismatch") is True or flat.get("vpn_tor_detected") is True or flat.get("velocity_anomaly") is True:
+            contradictions.append(
+                f"Telemetry risk anomaly in {rec.source_type.value} {rec.id}: "
+                f"device/network telemetry flagged anomalous activity."
+            )
+
+    if len({ip for _, ip in observed_ips}) > 1:
+        first_rec, first_ip = observed_ips[0]
+        second_rec, second_ip = next((r, ip) for r, ip in observed_ips if ip != first_ip)
+        contradictions.append(
+            f"IP telemetry contradiction between {first_rec.source_type.value} {first_rec.id} ({first_ip}) "
+            f"and {second_rec.source_type.value} {second_rec.id} ({second_ip})."
+        )
+    if len({dev for _, dev in observed_devices}) > 1:
+        first_rec, first_dev = observed_devices[0]
+        second_rec, second_dev = next((r, dev) for r, dev in observed_devices if dev != first_dev)
+        contradictions.append(
+            f"Device fingerprint contradiction between {first_rec.source_type.value} {first_rec.id} ({first_dev}) "
+            f"and {second_rec.source_type.value} {second_rec.id} ({second_dev})."
+        )
+
+    # Subscription cancellation contradictions
+    for rec in evidence:
+        flat = _collect_nested_keys(rec.content)
+        cancel_status = str(flat.get("cancellation_status", "")).strip().upper()
+        cancelled_at = _parse_iso_dt(flat.get("cancelled_at") or flat.get("canceled_at"))
+        is_cancelled = cancel_status in _CANCELLED_STATUS_VALUES or flat.get("cancellation_confirmed") is True or cancelled_at is not None
+        if not is_cancelled:
+            continue
+        for capture_rec in capture_records:
+            cap_flat = _collect_nested_keys(capture_rec.content)
+            cap_time = _parse_iso_dt(cap_flat.get("verified_at")) or capture_rec.collected_at
+            if cancelled_at is None or cancelled_at <= cap_time:
+                contradictions.append(
+                    f"Subscription cancellation contradiction between {rec.source_type.value} {rec.id} "
+                    f"(cancelled prior to charge) and PAYPAL_CAPTURE {capture_rec.id}."
+                )
+
+    # SIGNIFICANTLY_NOT_AS_DESCRIBED (SNAD) contradictions
+    quoted_conditions = {
+        str(_collect_nested_keys(rec.content).get("condition") or _collect_nested_keys(rec.content).get("item_condition")).strip().upper()
+        for rec in evidence
+        if rec.source_type in (EvidenceSourceType.QUOTE, EvidenceSourceType.PROPOSAL)
+        and (_collect_nested_keys(rec.content).get("condition") or _collect_nested_keys(rec.content).get("item_condition"))
+    }
+    quoted_skus = {
+        str(_collect_nested_keys(rec.content).get("sku")).strip().upper()
+        for rec in evidence
+        if rec.source_type in (EvidenceSourceType.QUOTE, EvidenceSourceType.PROPOSAL)
+        and _collect_nested_keys(rec.content).get("sku")
+    }
+    for rec in evidence:
+        flat = _collect_nested_keys(rec.content)
+        if any(flat.get(flag) is True for flag in ("defective", "wrong_item", "damaged_in_transit", "sku_mismatch", "counterfeit")):
+            contradictions.append(
+                f"SIGNIFICANTLY_NOT_AS_DESCRIBED contradiction in {rec.source_type.value} {rec.id}: "
+                f"fulfillment record flags defective/wrong/damaged item."
+            )
+        if rec.source_type in (EvidenceSourceType.DELIVERY_RECEIPT, EvidenceSourceType.CUSTOMER_MESSAGE):
+            obs_cond = flat.get("condition") or flat.get("item_condition")
+            if obs_cond and quoted_conditions and str(obs_cond).strip().upper() not in quoted_conditions:
+                contradictions.append(
+                    f"SIGNIFICANTLY_NOT_AS_DESCRIBED condition mismatch in {rec.source_type.value} {rec.id}: "
+                    f"observed condition={obs_cond} contradicts quoted {sorted(quoted_conditions)}."
+                )
+            obs_sku = flat.get("sku") or flat.get("delivered_sku")
+            if obs_sku and quoted_skus and str(obs_sku).strip().upper() not in quoted_skus:
+                contradictions.append(
+                    f"SIGNIFICANTLY_NOT_AS_DESCRIBED SKU mismatch in {rec.source_type.value} {rec.id}: "
+                    f"delivered sku={obs_sku} contradicts quoted {sorted(quoted_skus)}."
+                )
+            if rec.source_type == EvidenceSourceType.CUSTOMER_MESSAGE:
+                msg_blob = " ".join([rec.title, *_flatten_text(rec.content)]).lower().replace("_", " ")
+                snad_match = _SNAD_ADMISSION_PATTERN.search(msg_blob)
+                if snad_match:
+                    contradictions.append(
+                        f"SIGNIFICANTLY_NOT_AS_DESCRIBED admission in {rec.source_type.value} {rec.id}: "
+                        f"message indicates '{snad_match.group(1)}'."
+                    )
 
     return contradictions

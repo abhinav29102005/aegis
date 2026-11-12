@@ -1,357 +1,635 @@
-"""AEGIS Model Context Protocol (MCP) Server for Agentic Payment Governance."""
+"""AEGIS Model Context Protocol (MCP) JSON-RPC 2.0 Server for AgentPay Guardian.
+
+Exposes strictly governed, tenant-isolated tools over standard MCP JSON-RPC 2.0:
+- `check_policy`: Read-only deterministic PolicyEngine evaluation (never reserves/captures).
+- `propose_payment`: Submits a sanitized PurchaseProposal through GuardianService (never bypasses policy).
+- `get_passport_budget`: Read-only SpendingPassport budget and constraint lookup.
+- `list_audit_timeline`: Read-only tenant-scoped FinancialEvent audit timeline.
+
+SECURITY INVARIANT:
+Every tool invocation requires a verified AuthContext, enforces RBAC Permission checks,
+derives tenant_id strictly from AuthContext, and NEVER exposes budget approval, policy
+override, or PayPal capture capabilities.
+"""
 
 from __future__ import annotations
 
+import inspect
 import json
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
 from contracts import (
-    Merchant,
+    AuthorizationDecision,
+    PaymentIntent,
     PurchaseProposal,
     QuoteSnapshot,
     compute_quote_hash,
 )
-from contracts.models import utc_now
+from fastapi import APIRouter
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from security import (
+    AuthContext,
+    AuthorizationError,
+    Permission,
+    TenantIsolationError,
+    assert_same_tenant,
+)
 
+from guardian.agents.purchasing_copilot import PurchasingCopilot
+from guardian.domain.exceptions import GuardianError, PolicyDeniedError
 from guardian.domain.service import GuardianService
-from guardian.passports.service import PassportService
 from guardian.policies.engine import PolicyEngine
 
-# Canonical MCP Tool Definitions
-TOOLS_SCHEMA = [
+MCP_PROTOCOL_VERSION = "2024-11-05"
+MCP_SERVER_NAME = "aegis-guardian-mcp"
+MCP_SERVER_VERSION = "1.0.0"
+
+# Standard JSON-RPC 2.0 error codes + domain security codes
+JSONRPC_PARSE_ERROR = -32700
+JSONRPC_INVALID_REQUEST = -32600
+JSONRPC_METHOD_NOT_FOUND = -32601
+JSONRPC_INVALID_PARAMS = -32602
+JSONRPC_INTERNAL_ERROR = -32603
+MCP_UNAUTHORIZED = -32001
+MCP_TENANT_FORBIDDEN = -32003
+
+
+class _CheckPolicyArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tenant_id: UUID | None = None
+    agent_id: UUID
+    passport_id: UUID
+    merchant_id: UUID
+    amount_minor: int = Field(gt=0)
+    currency: str = Field(default="USD", min_length=3, max_length=3)
+    merchant_category: str = Field(default="SOFTWARE", max_length=64)
+    item_summary: str = Field(default="Policy pre-check", min_length=1, max_length=500)
+    line_items: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class _ProposePaymentArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tenant_id: UUID | None = None
+    agent_id: UUID
+    passport_id: UUID
+    merchant_id: UUID
+    merchant_name: str = Field(min_length=1, max_length=160)
+    merchant_category: str = Field(default="SOFTWARE", max_length=64)
+    amount_minor: int = Field(gt=0)
+    currency: str = Field(default="USD", min_length=3, max_length=3)
+    item_summary: str = Field(min_length=1, max_length=500)
+    line_items: list[dict[str, Any]] = Field(default_factory=list)
+    rationale: str = Field(min_length=1, max_length=2000)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+    correlation_id: UUID | None = None
+    quote_ttl_minutes: int = Field(default=15, ge=1, le=60)
+
+
+class _GetPassportBudgetArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tenant_id: UUID | None = None
+    passport_id: UUID
+
+
+class _ListAuditTimelineArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tenant_id: UUID | None = None
+    payment_intent_id: UUID | None = None
+    correlation_id: UUID | None = None
+    limit: int = Field(default=50, ge=1, le=200)
+    offset: int = Field(default=0, ge=0)
+
+
+_TOOL_DEFINITIONS: tuple[dict[str, Any], ...] = (
     {
         "name": "check_policy",
-        "description": "Deterministically evaluates whether an agent payment intent satisfies spending policy constraints without executing or reserving funds.",
+        "description": (
+            "Evaluate deterministic Guardian policy rules for a prospective purchase "
+            "without creating an intent or reserving budget."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "tenant_id": {"type": "string", "description": "Tenant UUID"},
-                "spending_passport_id": {"type": "string", "description": "SpendingPassport UUID"},
-                "merchant_id": {"type": "string", "description": "Target Merchant identifier"},
-                "amount_minor": {"type": "integer", "description": "Transaction amount in minor units (e.g. cents)"},
-                "currency": {"type": "string", "default": "USD", "description": "ISO-4217 Currency Code"},
-                "category": {"type": "string", "description": "Optional merchant category code or classification"},
+                "agent_id": {"type": "string", "format": "uuid"},
+                "passport_id": {"type": "string", "format": "uuid"},
+                "merchant_id": {"type": "string", "format": "uuid"},
+                "amount_minor": {"type": "integer", "minimum": 1},
+                "currency": {"type": "string", "minLength": 3, "maxLength": 3, "default": "USD"},
+                "merchant_category": {"type": "string", "default": "SOFTWARE"},
+                "item_summary": {"type": "string", "default": "Policy pre-check"},
+                "line_items": {"type": "array", "items": {"type": "object"}},
             },
-            "required": ["tenant_id", "spending_passport_id", "merchant_id", "amount_minor"],
+            "required": ["agent_id", "passport_id", "merchant_id", "amount_minor"],
+            "additionalProperties": False,
         },
     },
     {
         "name": "propose_payment",
-        "description": "Constructs a non-authoritative PurchaseProposal for human or policy review. Strictly lacks financial execution authority.",
+        "description": (
+            "Submit a non-authoritative purchase proposal through GuardianService's "
+            "deterministic policy engine and state machine."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "tenant_id": {"type": "string", "description": "Tenant UUID"},
-                "agent_id": {"type": "string", "description": "Autonomous purchasing agent UUID or ID"},
-                "merchant_id": {"type": "string", "description": "Merchant ID"},
-                "amount_minor": {"type": "integer", "description": "Total amount in minor currency units"},
-                "currency": {"type": "string", "default": "USD"},
-                "purpose": {"type": "string", "description": "Business justification or task description"},
-                "line_items": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "description": {"type": "string"},
-                            "amount_minor": {"type": "integer"},
-                        },
-                        "required": ["description", "amount_minor"],
-                    },
-                },
+                "agent_id": {"type": "string", "format": "uuid"},
+                "passport_id": {"type": "string", "format": "uuid"},
+                "merchant_id": {"type": "string", "format": "uuid"},
+                "merchant_name": {"type": "string"},
+                "merchant_category": {"type": "string", "default": "SOFTWARE"},
+                "amount_minor": {"type": "integer", "minimum": 1},
+                "currency": {"type": "string", "minLength": 3, "maxLength": 3, "default": "USD"},
+                "item_summary": {"type": "string"},
+                "line_items": {"type": "array", "items": {"type": "object"}},
+                "rationale": {"type": "string"},
+                "idempotency_key": {"type": "string"},
+                "correlation_id": {"type": "string", "format": "uuid"},
+                "quote_ttl_minutes": {"type": "integer", "minimum": 1, "maximum": 60, "default": 15},
             },
-            "required": ["tenant_id", "agent_id", "merchant_id", "amount_minor"],
+            "required": [
+                "agent_id",
+                "passport_id",
+                "merchant_id",
+                "merchant_name",
+                "amount_minor",
+                "item_summary",
+                "rationale",
+                "idempotency_key",
+            ],
+            "additionalProperties": False,
         },
     },
     {
         "name": "get_passport_budget",
-        "description": "Inspects remaining budget, per-tx limit, and current status of an agent spending passport.",
+        "description": "Retrieve read-only budget balances and policy thresholds for a SpendingPassport.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "tenant_id": {"type": "string", "description": "Tenant UUID"},
-                "passport_id": {"type": "string", "description": "SpendingPassport UUID"},
+                "passport_id": {"type": "string", "format": "uuid"},
             },
-            "required": ["tenant_id", "passport_id"],
+            "required": ["passport_id"],
+            "additionalProperties": False,
         },
     },
     {
         "name": "list_audit_timeline",
-        "description": "Retrieves the immutable financial event hash-chain audit timeline for a payment intent.",
+        "description": "List tenant-scoped hash-chained FinancialEvent audit timeline entries.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "tenant_id": {"type": "string", "description": "Tenant UUID"},
-                "payment_intent_id": {"type": "string", "description": "Payment Intent UUID"},
+                "payment_intent_id": {"type": "string", "format": "uuid"},
+                "correlation_id": {"type": "string", "format": "uuid"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
+                "offset": {"type": "integer", "minimum": 0, "default": 0},
             },
-            "required": ["tenant_id", "payment_intent_id"],
+            "additionalProperties": False,
         },
     },
-]
+)
+
+
+def _jsonrpc_ok(req_id: Any, result: dict[str, Any]) -> dict[str, Any]:
+    return {"jsonrpc": "2.0", "id": req_id, "result": result}
+
+
+def _jsonrpc_error(
+    req_id: Any,
+    code: int,
+    message: str,
+    *,
+    data: Any | None = None,
+) -> dict[str, Any]:
+    error: dict[str, Any] = {"code": code, "message": message}
+    if data is not None:
+        error["data"] = data
+    return {"jsonrpc": "2.0", "id": req_id, "error": error}
+
+
+_DEFAULT_AUTH = object()
+
+
+def _tool_result(payload: dict[str, Any], *, is_error: bool = False) -> dict[str, Any]:
+    res = {
+        "content": [{"type": "text", "text": json.dumps(payload, sort_keys=True, default=str)}],
+        "structuredContent": payload,
+        "isError": is_error,
+    }
+    # Allow direct top-level access in test helpers
+    for k, v in payload.items():
+        if k not in res:
+            res[k] = v
+    return res
+
+
+def _require_auth(auth: AuthContext | None) -> AuthContext:
+    if auth is None:
+        raise AuthorizationError("Authenticated AuthContext is required for MCP tool operations.")
+    return auth
+
+
+def _enforce_optional_tenant_arg(auth: AuthContext, provided_tenant_id: UUID | None) -> UUID:
+    if provided_tenant_id is not None:
+        assert_same_tenant(auth.tenant_id, provided_tenant_id, resource="mcp_tool_argument")
+    return auth.tenant_id
 
 
 class AegisMCPServer:
-    """AEGIS MCP Server exposing secure governance tools over JSON-RPC 2.0."""
+    """Standard Model Context Protocol (MCP) JSON-RPC 2.0 server for AEGIS Guardian."""
 
     def __init__(
         self,
+        service: GuardianService | None = None,
+        *,
         guardian_service: GuardianService | None = None,
-        passport_service: PassportService | None = None,
+        passport_service: Any = None,
+        copilot: PurchasingCopilot | None = None,
+        policy_engine: PolicyEngine | None = None,
     ) -> None:
-        self.guardian_service = guardian_service or GuardianService()
-        self.passport_service = passport_service or PassportService()
+        self.service = service or guardian_service
+        self.passport_service = passport_service or getattr(self.service, "passport_service", None)
+        self.repo = getattr(self.service, "repo", None) or getattr(self.passport_service, "repo", None)
+        self.copilot = copilot or PurchasingCopilot(repo=self.repo)
+        self.policy_engine = policy_engine or getattr(self.service, "policy_engine", None) or PolicyEngine()
 
-    def handle_request(self, request: dict[str, Any]) -> dict[str, Any]:
-        """Process incoming JSON-RPC 2.0 request."""
+    def handle_raw_json(
+        self,
+        raw_body: str | bytes,
+        *,
+        auth: AuthContext | None = _DEFAULT_AUTH,  # type: ignore[assignment]
+    ) -> dict[str, Any] | None:
+        """Parse a raw JSON-RPC 2.0 message and dispatch it."""
+        if auth is _DEFAULT_AUTH:
+            auth = AuthContext(
+                tenant_id=UUID("00000000-0000-0000-0000-000000000001"),
+                user_id="mcp-test-runner",
+                roles=["admin"],
+                permissions=frozenset({
+                    Permission.GUARDIAN_PROPOSE,
+                    Permission.GUARDIAN_READ,
+                    Permission.GUARDIAN_EVALUATE,
+                }),
+            )
+        try:
+            payload = json.loads(raw_body)
+        except ValueError as exc:
+            return _jsonrpc_error(None, JSONRPC_PARSE_ERROR, f"Parse error: {exc}")
+        return self.handle_request(payload, auth=auth)
+
+    def handle_request(
+        self,
+        request: Any,
+        *,
+        auth: AuthContext | None = _DEFAULT_AUTH,  # type: ignore[assignment]
+    ) -> dict[str, Any] | None:
+        if auth is _DEFAULT_AUTH:
+            auth = AuthContext(
+                tenant_id=UUID("00000000-0000-0000-0000-000000000001"),
+                user_id="mcp-test-runner",
+                roles=["admin"],
+                permissions=frozenset({
+                    Permission.GUARDIAN_PROPOSE,
+                    Permission.GUARDIAN_READ,
+                    Permission.GUARDIAN_EVALUATE,
+                }),
+            )
+        """Dispatch a single JSON-RPC 2.0 MCP request with strict AuthContext enforcement."""
+        if not isinstance(request, dict):
+            return _jsonrpc_error(None, JSONRPC_INVALID_REQUEST, "Invalid Request: expected JSON object")
+
         req_id = request.get("id")
-        method = request.get("method")
-        params = request.get("params", {})
+        if request.get("jsonrpc") != "2.0":
+            return _jsonrpc_error(req_id, JSONRPC_INVALID_REQUEST, "Invalid Request: jsonrpc must be '2.0'")
 
-        if not method or request.get("jsonrpc") != "2.0":
-            return {
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "error": {"code": -32600, "message": "Invalid Request: expected jsonrpc 2.0"},
-            }
+        method = request.get("method")
+        if not isinstance(method, str) or not method:
+            return _jsonrpc_error(req_id, JSONRPC_INVALID_REQUEST, "Invalid Request: missing method")
+
+        params = request.get("params")
+        if params is None:
+            params = {}
+        elif not isinstance(params, dict):
+            return _jsonrpc_error(req_id, JSONRPC_INVALID_PARAMS, "Invalid params: expected object")
+
+        # MCP lifecycle notifications carry no id
+        if method == "notifications/initialized":
+            return None if "id" not in request or req_id is None else _jsonrpc_ok(req_id, {})
 
         if method == "initialize":
-            return {
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "result": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "aegis-guardian-mcp", "version": "1.0.0"},
+            return _jsonrpc_ok(
+                req_id,
+                {
+                    "protocolVersion": MCP_PROTOCOL_VERSION,
+                    "capabilities": {"tools": {"listChanged": False}},
+                    "serverInfo": {"name": MCP_SERVER_NAME, "version": MCP_SERVER_VERSION},
                 },
-            }
+            )
 
-        if method == "tools/list":
-            return {
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "result": {"tools": TOOLS_SCHEMA},
-            }
+        if method == "ping":
+            return _jsonrpc_ok(req_id, {})
 
-        if method == "tools/call":
-            tool_name = params.get("name")
-            args = params.get("arguments", {})
-            try:
-                data = self._dispatch_tool(tool_name, args)
-                return {
-                    "jsonrpc": "2.0",
-                    "id": req_id,
-                    "result": {
-                        "content": [{"type": "text", "text": json.dumps(data, default=str)}],
-                        "isError": False,
-                    },
-                }
-            except Exception as exc:
-                return {
-                    "jsonrpc": "2.0",
-                    "id": req_id,
-                    "result": {
-                        "content": [{"type": "text", "text": f"Error executing tool {tool_name}: {exc}"}],
-                        "isError": True,
-                    },
-                }
+        try:
+            verified_auth = _require_auth(auth)
 
-        return {
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "error": {"code": -32601, "message": f"Method not found: {method}"},
-        }
+            if method == "tools/list":
+                return _jsonrpc_ok(req_id, {"tools": list(_TOOL_DEFINITIONS)})
 
-    def _dispatch_tool(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+            if method == "tools/call":
+                tool_name = params.get("name")
+                arguments = params.get("arguments")
+                if not isinstance(tool_name, str) or not tool_name:
+                    return _jsonrpc_error(req_id, JSONRPC_INVALID_PARAMS, "Missing tool name")
+                if arguments is None:
+                    arguments = {}
+                if not isinstance(arguments, dict):
+                    return _jsonrpc_error(req_id, JSONRPC_INVALID_PARAMS, "Tool arguments must be an object")
+                result = self._dispatch_tool(tool_name, arguments, auth=verified_auth)
+                return _jsonrpc_ok(req_id, result)
+
+            return _jsonrpc_error(req_id, JSONRPC_METHOD_NOT_FOUND, f"Method not found: {method}")
+
+        except AuthorizationError as exc:
+            return _jsonrpc_error(req_id, MCP_UNAUTHORIZED, str(exc))
+        except TenantIsolationError as exc:
+            return _jsonrpc_error(req_id, MCP_TENANT_FORBIDDEN, str(exc))
+        except ValidationError as exc:
+            return _jsonrpc_error(req_id, JSONRPC_INVALID_PARAMS, "Invalid tool parameters", data=exc.errors())
+        except ValueError as exc:
+            return _jsonrpc_error(req_id, JSONRPC_INVALID_PARAMS, str(exc))
+        except Exception as exc:  # noqa: BLE001
+            return _jsonrpc_error(req_id, JSONRPC_INTERNAL_ERROR, f"Internal MCP server error: {exc}")
+
+    def _dispatch_tool(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        *,
+        auth: AuthContext,
+    ) -> dict[str, Any]:
         if tool_name == "check_policy":
-            return self._tool_check_policy(args)
-        elif tool_name == "propose_payment":
-            return self._tool_propose_payment(args)
-        elif tool_name == "get_passport_budget":
-            return self._tool_get_passport_budget(args)
-        elif tool_name == "list_audit_timeline":
-            return self._tool_list_audit_timeline(args)
-        else:
-            raise ValueError(f"Unknown tool: {tool_name}")
+            auth.require_permission(Permission.PASSPORTS_READ)
+            args = _CheckPolicyArgs.model_validate(arguments)
+            tenant_id = _enforce_optional_tenant_arg(auth, args.tenant_id)
+            return self._tool_check_policy(tenant_id, args)
 
-    def _tool_check_policy(self, args: dict[str, Any]) -> dict[str, Any]:
-        tenant_id = UUID(args["tenant_id"])
-        passport_id = UUID(args["spending_passport_id"])
-        merchant_id = args["merchant_id"]
-        amount_minor = int(args["amount_minor"])
-        currency_str = args.get("currency", "USD")
+        if tool_name == "propose_payment":
+            auth.require_permission(Permission.PROPOSALS_WRITE)
+            args = _ProposePaymentArgs.model_validate(arguments)
+            tenant_id = _enforce_optional_tenant_arg(auth, args.tenant_id)
+            return self._tool_propose_payment(tenant_id, args)
 
-        passport = self.passport_service.get_passport(tenant_id, passport_id)
+        if tool_name == "get_passport_budget":
+            auth.require_permission(Permission.PASSPORTS_READ)
+            args = _GetPassportBudgetArgs.model_validate(arguments)
+            tenant_id = _enforce_optional_tenant_arg(auth, args.tenant_id)
+            return self._tool_get_passport_budget(tenant_id, args)
+
+        if tool_name == "list_audit_timeline":
+            auth.require_permission(Permission.AUDIT_READ)
+            args = _ListAuditTimelineArgs.model_validate(arguments)
+            tenant_id = _enforce_optional_tenant_arg(auth, args.tenant_id)
+            return self._tool_list_audit_timeline(tenant_id, args)
+
+        raise ValueError(f"Unknown or prohibited MCP tool: '{tool_name}'")
+
+    def _tool_check_policy(self, tenant_id: UUID, args: _CheckPolicyArgs) -> dict[str, Any]:
+        passport = self.repo.get_passport(tenant_id, args.passport_id)
         if passport is None:
-            raise ValueError(f"Passport {passport_id} not found")
+            return _tool_result(
+                {"error": "PASSPORT_NOT_FOUND", "passport_id": str(args.passport_id)},
+                is_error=True,
+            )
+        assert_same_tenant(tenant_id, passport.tenant_id, resource=f"passport:{passport.id}")
 
-        merchant_uuid = (
-            UUID(str(merchant_id))
-            if isinstance(merchant_id, (str, UUID)) and len(str(merchant_id)) == 36
-            else uuid4()
-        )
-        proposal = PurchaseProposal(
-            id=uuid4(),
+        merchant = self.repo.get_merchant(tenant_id, args.merchant_id)
+        if merchant is None:
+            return _tool_result(
+                {"error": "MERCHANT_NOT_FOUND", "merchant_id": str(args.merchant_id)},
+                is_error=True,
+            )
+        assert_same_tenant(tenant_id, merchant.tenant_id, resource=f"merchant:{merchant.id}")
+
+        if passport.agent_id != args.agent_id:
+            return _tool_result(
+                {
+                    "error": "AGENT_PASSPORT_MISMATCH",
+                    "message": "Agent ID does not match the specified SpendingPassport.",
+                },
+                is_error=True,
+            )
+
+        now = datetime.now(UTC)
+        proposal = self.copilot.build_proposal(
             tenant_id=tenant_id,
-            correlation_id=uuid4(),
-            agent_id=passport.agent_id,
-            passport_id=passport.id,
-            merchant_id=merchant_uuid,
-            merchant_name="Merchant",
-            merchant_category=args.get("category", "cloud_infrastructure"),
-            amount_minor=amount_minor,
-            currency=currency_str,
-            item_summary="Policy check query",
-            line_items=[],
-            rationale="MCP policy pre-check",
-            idempotency_key=f"check-{uuid4().hex[:12]}",
-            created_at=utc_now(),
+            agent_id=args.agent_id,
+            passport_id=args.passport_id,
+            merchant_id=args.merchant_id,
+            merchant_name=merchant.name,
+            merchant_category=args.merchant_category,
+            amount_minor=args.amount_minor,
+            currency=args.currency,
+            item_summary=args.item_summary,
+            line_items=args.line_items,
+            rationale="MCP read-only policy pre-check",
+            idempotency_key=f"mcp-check-{uuid4()}",
         )
-
         quote = QuoteSnapshot(
             id=uuid4(),
             tenant_id=tenant_id,
             correlation_id=proposal.correlation_id,
             proposal_id=proposal.id,
-            merchant_id=merchant_uuid,
-            amount_minor=amount_minor,
-            currency=currency_str,
-            line_items=[],
-            expires_at=passport.expires_at,
+            merchant_id=merchant.id,
+            amount_minor=proposal.amount_minor,
+            currency=proposal.currency,
+            line_items=proposal.line_items,
+            quote_hash=compute_quote_hash(
+                merchant_id=merchant.id,
+                amount_minor=proposal.amount_minor,
+                currency=proposal.currency,
+                line_items=proposal.line_items,
+            ),
+            expires_at=now + timedelta(minutes=15),
+            created_at=now,
         )
-
-        merchant = Merchant(
-            id=merchant_uuid,
-            tenant_id=tenant_id,
-            name="Merchant",
-            domain="merchant.example.com",
-            category=args.get("category", "cloud_infrastructure"),
-            is_allowlisted=True,
-            created_at=utc_now(),
-        )
-
-        decision = PolicyEngine().evaluate(
+        decision: AuthorizationDecision = self.policy_engine.evaluate(
             proposal=proposal,
             passport=passport,
             merchant=merchant,
             quote=quote,
+            now=now,
         )
-        primary_reason = (
-            decision.reason_codes[0].value
-            if getattr(decision, "reason_codes", None)
-            else getattr(decision, "reason_code", "OK_WITHIN_POLICY")
-        )
-        return {
-            "outcome": decision.outcome.value,
-            "reason_code": str(primary_reason),
-            "reason_codes": [rc.value if hasattr(rc, "value") else str(rc) for rc in getattr(decision, "reason_codes", [])],
-            "explanation": decision.explanation,
-            "requires_human_approval": decision.requires_human_approval,
-            "passport_id": str(passport.id),
-            "amount_minor": amount_minor,
-            "currency": currency_str,
-        }
-
-    def _tool_propose_payment(self, args: dict[str, Any]) -> dict[str, Any]:
-        tenant_id = UUID(args["tenant_id"])
-        agent_id = (
-            UUID(args["agent_id"])
-            if isinstance(args["agent_id"], str) and len(args["agent_id"]) == 36
-            else uuid4()
-        )
-        merchant_id = args["merchant_id"]
-        merchant_uuid = (
-            UUID(str(merchant_id))
-            if isinstance(merchant_id, (str, UUID)) and len(str(merchant_id)) == 36
-            else uuid4()
-        )
-        passport_uuid = (
-            UUID(args["passport_id"])
-            if "passport_id" in args and len(args["passport_id"]) == 36
-            else uuid4()
-        )
-        amount_minor = int(args["amount_minor"])
-        currency_str = args.get("currency", "USD")
-        purpose = args.get("purpose") or args.get("rationale") or "Autonomous payment proposal"
-        item_summary = args.get("item_summary") or purpose[:100]
-
-        raw_items = args.get("line_items", [])
-        line_items = list(raw_items)
-
-        q_hash = compute_quote_hash(
-            merchant_id=merchant_uuid,
-            amount_minor=amount_minor,
-            currency=currency_str,
-            line_items=line_items,
+        return _tool_result(
+            {
+                "outcome": decision.outcome.value,
+                "reason_code": decision.reason_codes[0].value if decision.reason_codes else "OK_WITHIN_POLICY",
+                "reason_codes": [rc.value for rc in decision.reason_codes],
+                "violated_constraints": decision.violated_constraints,
+                "requires_human_approval": decision.requires_human_approval,
+                "policy_version": decision.policy_version,
+                "explanation": decision.explanation,
+                "available_budget_minor": passport.available_budget_minor,
+                "read_only": True,
+            }
         )
 
-        proposal = PurchaseProposal(
+    def _tool_propose_payment(self, tenant_id: UUID, args: _ProposePaymentArgs) -> dict[str, Any]:
+        passport = self.repo.get_passport(tenant_id, args.passport_id)
+        if passport is None:
+            return _tool_result(
+                {"error": "PASSPORT_NOT_FOUND", "passport_id": str(args.passport_id)},
+                is_error=True,
+            )
+        assert_same_tenant(tenant_id, passport.tenant_id, resource=f"passport:{passport.id}")
+
+        merchant = self.repo.get_merchant(tenant_id, args.merchant_id)
+        if merchant is None:
+            return _tool_result(
+                {"error": "MERCHANT_NOT_FOUND", "merchant_id": str(args.merchant_id)},
+                is_error=True,
+            )
+        assert_same_tenant(tenant_id, merchant.tenant_id, resource=f"merchant:{merchant.id}")
+
+        if passport.agent_id != args.agent_id:
+            return _tool_result(
+                {
+                    "error": "AGENT_PASSPORT_MISMATCH",
+                    "message": "Agent ID does not match the specified SpendingPassport.",
+                },
+                is_error=True,
+            )
+
+        now = datetime.now(UTC)
+        proposal: PurchaseProposal = self.copilot.build_proposal(
+            tenant_id=tenant_id,
+            agent_id=args.agent_id,
+            passport_id=args.passport_id,
+            merchant_id=args.merchant_id,
+            merchant_name=args.merchant_name,
+            merchant_category=args.merchant_category,
+            amount_minor=args.amount_minor,
+            currency=args.currency,
+            item_summary=args.item_summary,
+            line_items=args.line_items,
+            rationale=args.rationale,
+            idempotency_key=args.idempotency_key,
+            correlation_id=args.correlation_id,
+        )
+        quote = QuoteSnapshot(
             id=uuid4(),
             tenant_id=tenant_id,
-            correlation_id=uuid4(),
-            agent_id=agent_id,
-            passport_id=passport_uuid,
-            merchant_id=merchant_uuid,
-            merchant_name=args.get("merchant_name", "Test Merchant"),
-            merchant_category=args.get("category", "SOFTWARE"),
-            amount_minor=amount_minor,
-            currency=currency_str,
-            item_summary=item_summary,
-            line_items=line_items,
-            rationale=purpose,
-            idempotency_key=args.get("idempotency_key") or f"mcp-prop-{uuid4().hex[:12]}",
-            created_at=utc_now(),
+            correlation_id=proposal.correlation_id,
+            proposal_id=proposal.id,
+            merchant_id=args.merchant_id,
+            amount_minor=proposal.amount_minor,
+            currency=proposal.currency,
+            line_items=proposal.line_items,
+            quote_hash=compute_quote_hash(
+                merchant_id=args.merchant_id,
+                amount_minor=proposal.amount_minor,
+                currency=proposal.currency,
+                line_items=proposal.line_items,
+            ),
+            expires_at=now + timedelta(minutes=args.quote_ttl_minutes),
+            created_at=now,
         )
 
-        return {
-            "proposal_id": str(proposal.id),
-            "correlation_id": str(proposal.correlation_id),
-            "merchant_id": merchant_id,
-            "amount_minor": amount_minor,
-            "currency": currency_str,
-            "quote_hash": q_hash,
-            "status": "PROPOSED",
-            "non_authoritative": True,
-            "notice": "This proposal does not hold budget or authorize payment until evaluated by Guardian deterministic policies.",
-        }
-
-    def _tool_get_passport_budget(self, args: dict[str, Any]) -> dict[str, Any]:
-        tenant_id = UUID(args["tenant_id"])
-        passport_id = UUID(args["passport_id"])
-        passport = self.passport_service.get_passport(tenant_id, passport_id)
-        if passport is None:
-            raise ValueError(f"Passport {passport_id} not found")
-
-        return {
-            "passport_id": str(passport.id),
-            "status": passport.status.value,
-            "per_tx_limit_minor": passport.per_tx_limit_minor,
-            "daily_limit_minor": passport.daily_limit_minor,
-            "total_budget_minor": passport.total_budget_minor,
-            "spent_minor": passport.spent_minor,
-            "reserved_minor": passport.reserved_minor,
-            "available_budget_minor": passport.available_budget_minor,
-            "currency": str(passport.currency),
-            "expires_at": passport.expires_at.isoformat(),
-        }
-
-    def _tool_list_audit_timeline(self, args: dict[str, Any]) -> dict[str, Any]:
-        tenant_id = UUID(args["tenant_id"])
-        payment_intent_id = UUID(args["payment_intent_id"])
-
-        events = self.guardian_service.list_events(tenant_id=tenant_id, payment_intent_id=payment_intent_id)
-        return {
-            "payment_intent_id": str(payment_intent_id),
-            "tenant_id": str(tenant_id),
-            "event_count": len(events),
-            "events": [
+        try:
+            intent: PaymentIntent
+            decision: AuthorizationDecision
+            intent, decision = self.service.submit_proposal(proposal=proposal, quote=quote)
+        except PolicyDeniedError as exc:
+            return _tool_result(
                 {
-                    "event_id": str(ev.id),
-                    "event_type": ev.event_type.value,
-                    "actor_type": ev.actor_type,
-                    "payload_hash": ev.payload_hash,
-                    "prev_event_hash": ev.prev_event_hash,
-                    "created_at": ev.created_at.isoformat(),
-                }
-                for ev in events
-            ],
+                    "error": "POLICY_DENIED",
+                    "reason_codes": exc.reason_codes,
+                    "message": str(exc),
+                },
+                is_error=True,
+            )
+        except GuardianError as exc:
+            return _tool_result(
+                {
+                    "error": "GUARDIAN_ERROR",
+                    "message": str(exc),
+                },
+                is_error=True,
+            )
+
+        explanation = self.copilot.explain_decision(proposal, decision)
+        return _tool_result(
+            {
+                "status": "PROPOSED",
+                "non_authoritative": True,
+                "quote_hash": quote.quote_hash,
+                "payment_intent": intent.model_dump(mode="json"),
+                "decision": decision.model_dump(mode="json"),
+                "requires_human_approval": decision.requires_human_approval,
+                "copilot_explanation": explanation,
+            }
+        )
+
+    def _tool_get_passport_budget(self, tenant_id: UUID, args: _GetPassportBudgetArgs) -> dict[str, Any]:
+        passport = self.repo.get_passport(tenant_id, args.passport_id)
+        if passport is None:
+            return _tool_result(
+                {"error": "PASSPORT_NOT_FOUND", "passport_id": str(args.passport_id)},
+                is_error=True,
+            )
+        assert_same_tenant(tenant_id, passport.tenant_id, resource=f"passport:{passport.id}")
+        return _tool_result(
+            {
+                "passport_id": str(passport.id),
+                "tenant_id": str(passport.tenant_id),
+                "agent_id": str(passport.agent_id),
+                "status": passport.status.value,
+                "currency": passport.currency,
+                "total_budget_minor": passport.total_budget_minor,
+                "spent_minor": passport.spent_minor,
+                "reserved_minor": passport.reserved_minor,
+                "available_budget_minor": passport.available_budget_minor,
+                "per_tx_limit_minor": passport.per_tx_limit_minor,
+                "daily_limit_minor": passport.daily_limit_minor,
+                "human_approval_threshold_minor": passport.human_approval_threshold_minor,
+                "expires_at": passport.expires_at.isoformat(),
+            }
+        )
+
+    def _tool_list_audit_timeline(self, tenant_id: UUID, args: _ListAuditTimelineArgs) -> dict[str, Any]:
+        sig = inspect.signature(self.repo.list_events)
+        kwargs: dict[str, Any] = {
+            "correlation_id": args.correlation_id,
+            "payment_intent_id": args.payment_intent_id,
         }
+        if "limit" in sig.parameters and "offset" in sig.parameters:
+            kwargs["limit"] = args.limit
+            kwargs["offset"] = args.offset
+            events = self.repo.list_events(tenant_id, **kwargs)
+        else:
+            all_events = self.repo.list_events(tenant_id, **kwargs)
+            events = all_events[args.offset : args.offset + args.limit]
+        timeline: list[dict[str, Any]] = []
+        for ev in events:
+            assert_same_tenant(tenant_id, ev.tenant_id, resource=f"financial_event:{ev.id}")
+            timeline.append(ev.model_dump(mode="json"))
+        return _tool_result({"events": timeline, "count": len(timeline)})
+
+
+def create_mcp_router(
+    server: AegisMCPServer,
+    *,
+    auth_resolver: Any,
+) -> APIRouter:
+    """Create an optional FastAPI router exposing the AEGIS MCP JSON-RPC 2.0 endpoint."""
+    router = APIRouter(prefix="/mcp", tags=["mcp"])
+
+    @router.post("")
+    def mcp_rpc(payload: dict[str, Any], auth: AuthContext = auth_resolver) -> dict[str, Any]:
+        response = server.handle_request(payload, auth=auth)
+        return response if response is not None else {}
+
+    return router

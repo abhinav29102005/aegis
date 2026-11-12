@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 from contracts import DecisionOutcome, ReplayRequest, ReplayResult
 from pydantic import BaseModel, Field
 
-from ghostpay.replay.engine import PolicyTimeMachine
+from ghostpay.counterfactual.simulator import simulate_counterfactual
 from ghostpay.timemachine.policies import CounterfactualPolicy
 
 
@@ -39,8 +39,7 @@ def compare_policies(
 
     for pol in policies:
         overrides = pol.to_overrides_dict()
-        pol_req = request.model_copy(update={"counterfactual_overrides": overrides})
-        res: ReplayResult = PolicyTimeMachine.replay(pol_req)
+        res: ReplayResult = simulate_counterfactual(request, overrides)
 
         entries.append(
             PolicyComparisonEntry(

@@ -66,24 +66,33 @@ class PaymentTrace(BaseModel):
         return _normalize_utc(v)  # type: ignore[return-value]
 
     def to_replay_request(self) -> ReplayRequest:
-        """Convert trace to a canonical ReplayRequest if minimal requirements are met.
+        """Convert trace to a canonical ReplayRequest, failing closed on missing artifacts."""
+        missing: list[str] = []
+        if self.recorded_passport is None:
+            missing.append("recorded_passport")
+        if self.recorded_decision is None:
+            missing.append("recorded_decision")
+        if self.quote_snapshot is None:
+            missing.append("quote_snapshot")
+        if self.recorded_merchant is None:
+            missing.append("recorded_merchant")
+        if self.proposal is None:
+            missing.append("proposal")
+        if self.payment_intent is None:
+            missing.append("payment_intent")
 
-        Fails closed with InsufficientEvidenceError instead of fabricating synthetic PurchaseProposal/PaymentIntent.
-        """
-        if not (self.recorded_passport and self.recorded_decision and self.quote_snapshot and self.recorded_merchant):
+        if missing:
             raise InsufficientEvidenceError(
-                f"Cannot construct ReplayRequest for trace {self.trace_id}: missing essential recorded contracts"
+                f"Insufficient evidence to construct ReplayRequest for trace {self.trace_id}: "
+                f"missing {', '.join(missing)}."
             )
 
-        if not self.proposal:
-            raise InsufficientEvidenceError(
-                f"Cannot construct ReplayRequest for trace {self.trace_id}: proposal missing from evidence trace"
-            )
-
-        if not self.payment_intent:
-            raise InsufficientEvidenceError(
-                f"Cannot construct ReplayRequest for trace {self.trace_id}: payment_intent missing from evidence trace"
-            )
+        assert self.recorded_passport is not None
+        assert self.recorded_decision is not None
+        assert self.quote_snapshot is not None
+        assert self.recorded_merchant is not None
+        assert self.proposal is not None
+        assert self.payment_intent is not None
 
         return ReplayRequest(
             tenant_id=self.tenant_id,
@@ -98,6 +107,7 @@ class PaymentTrace(BaseModel):
             policy_version=self.policy_version,
             events=self.ordered_events,
             evidence_records=self.authorization_evidence,
+            evaluation_time=self.recorded_decision.decided_at,
         )
 
 

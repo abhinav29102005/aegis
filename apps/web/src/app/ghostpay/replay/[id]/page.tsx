@@ -7,7 +7,7 @@ import { AppShell } from "@/components/AppShell";
 import { StatusBadge } from "@/components/StatusBadge";
 import { apiRequest, type ReplayResultRecord } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
-import { formatIsoDateTime } from "@/lib/format";
+import { formatIsoDateTime, truncateId } from "@/lib/format";
 
 export default function GhostPayReplayDetailPage() {
   const params = useParams<{ id: string }>();
@@ -232,14 +232,31 @@ export default function GhostPayReplayDetailPage() {
             </div>
             <div className="divide-y divide-aegis-border">
               {replay.timeline.map((entry) => (
-                <div key={`${entry.sequence_number}-${entry.event_type}`} className="flex flex-wrap items-center justify-between gap-2 px-5 py-3 text-xs">
-                  <div>
-                    <span className="font-mono text-slate-400">#{entry.sequence_number}</span>{" "}
-                    <span className="font-semibold text-white">{entry.event_type}</span>{" "}
-                    <span className="text-slate-400">({entry.source} · {entry.actor})</span>
-                    <p className="mt-0.5 text-slate-300">{entry.summary}</p>
+                <div key={`${entry.sequence_number}-${entry.event_type}`} className="flex flex-wrap items-start justify-between gap-2 px-5 py-3 text-xs">
+                  <div className="space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-mono text-slate-400">#{entry.sequence_number}</span>
+                      <span className="font-semibold text-white">{entry.event_type}</span>
+                      <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[11px] text-slate-300">
+                        {entry.actor_type}: {entry.actor_id}
+                      </span>
+                      {entry.integrity_verified !== undefined && (
+                        <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                          entry.integrity_verified
+                            ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
+                            : "bg-rose-500/10 text-rose-400 border border-rose-500/30"
+                        }`}>
+                          {entry.integrity_verified ? "✓ Verified" : "✗ Integrity Fail"}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-slate-300">{entry.summary}</p>
+                    <div className="flex flex-wrap items-center gap-4 font-mono text-[11px] text-slate-400">
+                      <span>Hash: <span className="text-sky-300">{truncateId(entry.event_hash, 12)}</span></span>
+                      <span>Prev: <span className="text-slate-400">{entry.previous_event_hash ? truncateId(entry.previous_event_hash, 12) : "GENESIS"}</span></span>
+                    </div>
                   </div>
-                  <span className="font-mono text-[11px] text-slate-400">{formatIsoDateTime(entry.timestamp)}</span>
+                  <span className="font-mono text-[11px] text-slate-400">{formatIsoDateTime(entry.occurred_at)}</span>
                 </div>
               ))}
             </div>

@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import importlib
 import pkgutil
-from datetime import UTC
+from datetime import UTC, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -14,6 +14,7 @@ from contracts import (
     DecisionOutcome,
     PassportStatus,
     ReplayRequest,
+    compute_payload_hash,
     compute_quote_hash,
 )
 from contracts.fixtures import (
@@ -137,6 +138,19 @@ def _make_client() -> DirectMockClient:
     return DirectMockClient()
 
 
+def _canonical_fixture() -> dict:
+    fixture = build_authorized_39_purchase_fixture()
+    canonical_evidence = [
+        rec.model_copy(update={"content_hash": compute_payload_hash(rec.content)})
+        for rec in fixture["evidence_records"]
+    ]
+    fixture["evidence_records"] = canonical_evidence
+    fixture["replay_request"] = fixture["replay_request"].model_copy(
+        update={"evidence_records": canonical_evidence}
+    )
+    return fixture
+
+
 # ---------------------------------------------------------------------------
 # P0: Strict Pydantic v2 Counterfactual Override Validation
 # ---------------------------------------------------------------------------
@@ -144,7 +158,7 @@ def _make_client() -> DirectMockClient:
 
 def test_override_iso_datetime_string_converts_and_evaluates() -> None:
     """ISO datetime strings must parse into timezone-aware UTC datetimes, never stay str."""
-    fixture = build_authorized_39_purchase_fixture()
+    fixture = _canonical_fixture()
     req = fixture["replay_request"]
 
     # Expired relative to eval_time -> recomputed outcome becomes DENY without TypeError
@@ -163,7 +177,7 @@ def test_override_iso_datetime_string_converts_and_evaluates() -> None:
     ["not-a-timestamp", "2026-13-45T00:00:00Z", 1700000000, True, ""],
 )
 def test_override_invalid_datetime_rejected(bad_timestamp: object) -> None:
-    fixture = build_authorized_39_purchase_fixture()
+    fixture = _canonical_fixture()
     req = fixture["replay_request"]
     with pytest.raises(OverrideValidationError):
         simulate_counterfactual(req, {"expires_at": bad_timestamp})
@@ -179,7 +193,7 @@ def test_override_invalid_datetime_rejected(bad_timestamp: object) -> None:
 
 def test_override_uuid_strings_convert_and_allow_merchant() -> None:
     """UUID strings in allowed_merchant_ids must coerce to UUID so allowlist checks succeed."""
-    fixture = build_authorized_39_purchase_fixture()
+    fixture = _canonical_fixture()
     req = fixture["replay_request"]
     unknown_merchant = fixture["unknown_merchant"]
 
@@ -205,7 +219,7 @@ def test_override_uuid_strings_convert_and_allow_merchant() -> None:
     ],
 )
 def test_override_invalid_uuid_rejected(bad_merchant_ids: object) -> None:
-    fixture = build_authorized_39_purchase_fixture()
+    fixture = _canonical_fixture()
     req = fixture["replay_request"]
     with pytest.raises(OverrideValidationError):
         simulate_counterfactual(req, {"allowed_merchant_ids": bad_merchant_ids})
@@ -223,7 +237,7 @@ def test_override_invalid_uuid_rejected(bad_merchant_ids: object) -> None:
 
 
 def test_override_nested_merchant_dict_validates_and_rejects_bad_fields() -> None:
-    fixture = build_authorized_39_purchase_fixture()
+    fixture = _canonical_fixture()
     req = fixture["replay_request"]
     unknown_merchant = fixture["unknown_merchant"]
 
@@ -291,7 +305,7 @@ def test_override_nested_merchant_dict_validates_and_rejects_bad_fields() -> Non
     ],
 )
 def test_override_invalid_values_and_unknown_fields_return_422(bad_overrides: dict[str, object]) -> None:
-    fixture = build_authorized_39_purchase_fixture()
+    fixture = _canonical_fixture()
     req = fixture["replay_request"]
 
     with pytest.raises(OverrideValidationError):
@@ -325,7 +339,7 @@ def test_override_invalid_values_and_unknown_fields_return_422(bad_overrides: di
 def test_immutable_identity_and_execution_overrides_rejected(
     immutable_overrides: dict[str, object],
 ) -> None:
-    fixture = build_authorized_39_purchase_fixture()
+    fixture = _canonical_fixture()
     req = fixture["replay_request"]
 
     with pytest.raises(OverrideValidationError):
@@ -341,7 +355,7 @@ def test_immutable_identity_and_execution_overrides_rejected(
 
 
 def test_cross_tenant_merchant_override_raises_403() -> None:
-    fixture = build_authorized_39_purchase_fixture()
+    fixture = _canonical_fixture()
     req = fixture["replay_request"]
 
     with pytest.raises(TenantIsolationError):
@@ -366,7 +380,7 @@ def test_cross_tenant_merchant_override_raises_403() -> None:
 
 
 def test_original_request_and_nested_objects_remain_unmutated_on_simulation() -> None:
-    fixture = build_authorized_39_purchase_fixture()
+    fixture = _canonical_fixture()
     req = fixture["replay_request"]
     snapshot_before = copy.deepcopy(req.model_dump())
 
@@ -392,7 +406,7 @@ def test_original_request_and_nested_objects_remain_unmutated_on_simulation() ->
 
 
 def test_baseline_replay_rejects_nonempty_counterfactual_overrides() -> None:
-    fixture = build_authorized_39_purchase_fixture()
+    fixture = _canonical_fixture()
     req = fixture["replay_request"]
 
     # Empty overrides allowed
@@ -431,7 +445,7 @@ def test_baseline_replay_rejects_nonempty_counterfactual_overrides() -> None:
 
 
 def test_supported_and_unsupported_policy_versions() -> None:
-    fixture = build_authorized_39_purchase_fixture()
+    fixture = _canonical_fixture()
     req = fixture["replay_request"]
 
     assert DEFAULT_POLICY_VERSION == "policy-v1"
@@ -459,7 +473,7 @@ def test_supported_and_unsupported_policy_versions() -> None:
 
 def test_policy_version_mismatch_cannot_produce_consistent() -> None:
     """If recorded decision/passport version differs from executed evaluator, drift must be flagged."""
-    fixture = build_authorized_39_purchase_fixture()
+    fixture = _canonical_fixture()
     req = fixture["replay_request"]
 
     mismatched_decision = req.recorded_decision.model_copy(update={"policy_version": "policy-v0"})
@@ -484,7 +498,7 @@ def test_production_env_rejects_raw_tenant_header_without_auth_middleware(
     monkeypatch.setenv("APP_ENV", "production")
     get_settings.cache_clear()
     try:
-        fixture = build_authorized_39_purchase_fixture()
+        fixture = _canonical_fixture()
         req = fixture["replay_request"]
         client = _make_client()
 
@@ -513,7 +527,7 @@ def test_production_env_rejects_raw_tenant_header_without_auth_middleware(
 
 
 def test_cross_tenant_approval_record_and_nested_entities_denied() -> None:
-    fixture = build_authorized_39_purchase_fixture()
+    fixture = _canonical_fixture()
     req = fixture["replay_request"]
 
     bad_intent_req = req.model_copy(
@@ -551,7 +565,7 @@ def test_ghostpay_has_no_payment_execution_dependencies() -> None:
 
 
 def test_repeated_replay_and_simulation_are_deterministically_equivalent() -> None:
-    fixture = build_authorized_39_purchase_fixture()
+    fixture = _canonical_fixture()
     req = fixture["replay_request"]
 
     r1 = ReplayEngine.replay(req)
@@ -568,7 +582,7 @@ def test_repeated_replay_and_simulation_are_deterministically_equivalent() -> No
 
 
 def test_cross_correlation_event_fails_integrity_verification() -> None:
-    fixture = build_authorized_39_purchase_fixture()
+    fixture = _canonical_fixture()
     req = fixture["replay_request"]
 
     foreign_corr_event = req.events[0].model_copy(
@@ -584,13 +598,18 @@ def test_cross_correlation_event_fails_integrity_verification() -> None:
 
 def test_replay_eval_time_never_uses_wall_clock_time() -> None:
     """Evaluation uses explicit evaluation_time or recorded_decision.decided_at (not wall clock)."""
-    fixture = build_authorized_39_purchase_fixture()
+    fixture = _canonical_fixture()
     req = fixture["replay_request"]
 
-    # Historical passport expires in 2026-12-10; wall clock may be in 2026-11-12 or later,
+    # Historical quote expires at 2026-11-11T10:15:00Z and passport at 2026-12-10;
     # explicit evaluation_time controls expiry deterministically.
-    before_exp = req.model_copy(update={"evaluation_time": req.recorded_passport.expires_at})
+    before_exp = req.model_copy(
+        update={"evaluation_time": req.quote_snapshot.expires_at - timedelta(seconds=1)}
+    )
     assert ReplayEngine.replay(before_exp).recomputed_outcome == DecisionOutcome.ALLOW
+
+    at_passport_exp = req.model_copy(update={"evaluation_time": req.recorded_passport.expires_at})
+    assert ReplayEngine.replay(at_passport_exp).recomputed_outcome == DecisionOutcome.DENY
 
     # Explicitly test quote_hash helper compatibility stays untouched
     assert req.quote_snapshot.quote_hash == compute_quote_hash(
@@ -627,7 +646,7 @@ def test_router_mounts_under_v1_and_generates_valid_openapi_schema() -> None:
     assert health.json() == {"status": "ok", "service": "ghostpay"}
 
     # Confirm custom ReplayRequest preserves UTC timestamps via contracts
-    fixture = build_authorized_39_purchase_fixture()
+    fixture = _canonical_fixture()
     raw_req = fixture["replay_request"].model_copy(
         update={"evaluation_time": fixture["replay_request"].recorded_decision.decided_at.replace(tzinfo=UTC)}
     )

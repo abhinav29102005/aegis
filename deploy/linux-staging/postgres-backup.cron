@@ -1,0 +1,9 @@
+# /etc/cron.d/aegis-postgres-backup
+# Automated daily PostgreSQL logical backup for AEGIS Linux VPS staging/prod.
+# For managed PostgreSQL (RDS / Cloud SQL / Neon), enable provider PITR snapshots in addition to this job.
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+# Run daily at 02:15 UTC
+15 2 * * * root /opt/aegis/agentpay-nexus/deploy/linux-staging/postgres-backup.sh >> /var/log/aegis-pg-backup.log 2>&1

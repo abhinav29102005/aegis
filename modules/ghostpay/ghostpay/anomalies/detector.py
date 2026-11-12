@@ -7,7 +7,9 @@ from typing import Any
 from contracts import (
     AuthorizationDecision,
     DecisionOutcome,
+    FinancialEventType,
     PassportStatus,
+    PaymentState,
     ReplayRequest,
     compute_quote_hash,
 )
@@ -23,20 +25,24 @@ def detect_anomalies(
     integrity_errors: list[str] | None = None,
     executed_policy_version: str | None = None,
 ) -> list[str]:
-    """Detect anomalies including merchant substitution, amount spikes, expired passports, and quote mismatches."""
+    """Detect forensic anomalies while avoiding false positives on legitimate DENY decisions."""
     anomalies: list[str] = []
+
+    decision = original_decision or request.recorded_decision
+    recomp_outcome = recomputed_outcome if recomputed_outcome is not None else decision.outcome
+    recomp_reasons = (
+        recomputed_reason_codes if recomputed_reason_codes is not None else decision.reason_codes
+    )
+    is_legitimate_deny = decision.outcome == DecisionOutcome.DENY
 
     proposal = request.proposal
     quote = request.quote_snapshot
     passport = request.recorded_passport
     merchant = request.recorded_merchant
     intent = request.payment_intent
-    orig_dec = original_decision or request.recorded_decision
-    recomp_out = recomputed_outcome if recomputed_outcome is not None else (orig_dec.outcome if orig_dec else DecisionOutcome.ALLOW)
-    recomp_reasons = recomputed_reason_codes if recomputed_reason_codes is not None else (orig_dec.reason_codes if orig_dec else [])
-    eval_time = request.evaluation_time or (orig_dec.decided_at if orig_dec else quote.created_at)
+    eval_time = request.evaluation_time or decision.decided_at
 
-    # 1. Merchant substitution detection
+    # 1. Cross-artifact merchant substitution (always anomalous regardless of DENY)
     if merchant.id != proposal.merchant_id:
         anomalies.append(
             f"MERCHANT_SUBSTITUTION: Recorded merchant ({merchant.id}) differs from proposal merchant ({proposal.merchant_id})."
@@ -45,19 +51,17 @@ def detect_anomalies(
         anomalies.append(
             f"MERCHANT_SUBSTITUTION: Recorded merchant ({merchant.id}) differs from quote merchant ({quote.merchant_id})."
         )
-    both_denied = (
-        orig_dec is not None
-        and orig_dec.outcome == DecisionOutcome.DENY
-        and recomp_out == DecisionOutcome.DENY
-    )
-
-    if not both_denied:
-        if merchant.id not in passport.allowed_merchant_ids and not passport.allow_unknown_merchants:
+    # 2. Policy-violation anomalies (suppressed when Guardian already legitimately DENY'd)
+    if not is_legitimate_deny:
+        if (
+            passport.allowed_merchant_ids
+            and merchant.id not in passport.allowed_merchant_ids
+            and not passport.allow_unknown_merchants
+        ):
             anomalies.append(
                 f"MERCHANT_SUBSTITUTION: Merchant ({merchant.id}, '{merchant.name}') is not allowlisted in passport ({passport.id})."
             )
 
-        # 2. Amount spike detection
         if proposal.amount_minor > passport.per_tx_limit_minor:
             anomalies.append(
                 f"AMOUNT_SPIKE: Amount {proposal.amount_minor} exceeds per-transaction limit of {passport.per_tx_limit_minor}."
@@ -66,44 +70,56 @@ def detect_anomalies(
             anomalies.append(
                 f"AMOUNT_SPIKE: Amount {proposal.amount_minor} exceeds passport available budget of {passport.available_budget_minor}."
             )
+        if proposal.amount_minor >= 100000:
+            anomalies.append(
+                f"HIGH_RISK_AMOUNT: Transaction amount {proposal.amount_minor} exceeds high-value threshold (100000 minor)."
+            )
 
-    # 3. Expired passport detection
-    if passport.status == PassportStatus.EXPIRED:
-        anomalies.append(
-            f"EXPIRED_PASSPORT: Spending passport {passport.id} is marked EXPIRED."
-        )
-    elif eval_time > passport.expires_at:
-        anomalies.append(
-            f"EXPIRED_PASSPORT: Evaluation time {eval_time.isoformat()} is after passport expiration {passport.expires_at.isoformat()}."
-        )
-    elif passport.status == PassportStatus.REVOKED:
-        anomalies.append(
-            f"REVOKED_PASSPORT: Spending passport {passport.id} is REVOKED."
-        )
+        if passport.status == PassportStatus.EXPIRED:
+            anomalies.append(
+                f"EXPIRED_PASSPORT: Spending passport {passport.id} is marked EXPIRED."
+            )
+        elif eval_time >= passport.expires_at:
+            anomalies.append(
+                f"EXPIRED_PASSPORT: Evaluation time {eval_time.isoformat()} is at or after passport expiration {passport.expires_at.isoformat()}."
+            )
+        elif passport.status == PassportStatus.REVOKED:
+            anomalies.append(
+                f"REVOKED_PASSPORT: Spending passport {passport.id} is REVOKED."
+            )
+        elif passport.status == PassportStatus.PAUSED:
+            anomalies.append(
+                f"PAUSED_PASSPORT: Spending passport {passport.id} is PAUSED."
+            )
 
-    # 4. Quote mismatch detection
+        allowed_currencies = (
+            {c.upper() for c in passport.allowed_currencies}
+            if passport.allowed_currencies
+            else {passport.currency.upper()}
+        )
+        if quote.currency.upper() not in allowed_currencies:
+            anomalies.append(
+                f"CURRENCY_MISMATCH: Quote currency ({quote.currency}) is not permitted by passport ({sorted(allowed_currencies)})."
+            )
+
+    # 3. Quote mismatch & tampering detection (always anomalous)
     if proposal.amount_minor != quote.amount_minor:
         anomalies.append(
             f"QUOTE_MISMATCH: Proposal amount ({proposal.amount_minor}) differs from quote snapshot amount ({quote.amount_minor})."
         )
-    if proposal.currency != quote.currency:
+    if proposal.currency.upper() != quote.currency.upper():
         anomalies.append(
             f"QUOTE_MISMATCH: Proposal currency ({proposal.currency}) differs from quote currency ({quote.currency})."
-        )
-    if quote.currency != passport.currency:
-        anomalies.append(
-            f"CURRENCY_MISMATCH: Quote currency ({quote.currency}) differs from passport currency ({passport.currency})."
         )
     if intent.quote_hash and quote.quote_hash and intent.quote_hash != quote.quote_hash:
         anomalies.append(
             f"QUOTE_MISMATCH: Payment intent quote hash ({intent.quote_hash}) does not match quote snapshot ({quote.quote_hash})."
         )
-    if orig_dec and orig_dec.quote_hash and quote.quote_hash and orig_dec.quote_hash != quote.quote_hash:
+    if decision.quote_hash and quote.quote_hash and decision.quote_hash != quote.quote_hash:
         anomalies.append(
-            f"QUOTE_MISMATCH: Original authorization decision quote hash ({orig_dec.quote_hash}) does not match quote snapshot ({quote.quote_hash})."
+            f"QUOTE_MISMATCH: Original authorization decision quote hash ({decision.quote_hash}) does not match quote snapshot ({quote.quote_hash})."
         )
 
-    # Recheck quote snapshot hash integrity
     computed_q_hash = compute_quote_hash(
         merchant_id=quote.merchant_id,
         amount_minor=quote.amount_minor,
@@ -115,23 +131,47 @@ def detect_anomalies(
             f"QUOTE_MISMATCH: Quote snapshot hash {quote.quote_hash} does not match computed hash {computed_q_hash}."
         )
 
-    # 5. Authorization drift detection
-    if orig_dec:
-        if orig_dec.outcome != recomp_out:
+    # 4. Execution despite DENY check
+    event_types = [ev.event_type for ev in request.events]
+    if is_legitimate_deny and (
+        intent.state == PaymentState.SUCCEEDED
+        or FinancialEventType.PAYPAL_CAPTURE_VERIFIED in event_types
+    ):
+        anomalies.append(
+            "EXECUTION_DESPITE_DENY: Payment completed or captured despite DENY authorization decision."
+        )
+
+    # 5. Execution & provider timeline anomalies (non-DENY)
+    if not is_legitimate_deny:
+        if FinancialEventType.PAYMENT_FAILED in event_types:
             anomalies.append(
-                f"AUTHORIZATION_DRIFT: Decision outcome drifted from {orig_dec.outcome.value} to {recomp_out.value}."
+                "PAYMENT_EXECUTION_FAILED: Timeline contains explicit payment failure event."
             )
-        elif set(orig_dec.reason_codes) != set(recomp_reasons):
+        if (
+            FinancialEventType.PAYPAL_CAPTURE_REQUESTED in event_types
+            and FinancialEventType.PAYPAL_CAPTURE_VERIFIED not in event_types
+            and FinancialEventType.PAYMENT_FAILED not in event_types
+        ):
             anomalies.append(
-                f"AUTHORIZATION_DRIFT: Reason codes changed from {[r.value for r in orig_dec.reason_codes]} to {[r.value for r in recomp_reasons]}."
+                "UNCERTAIN_PROVIDER_STATE: Capture requested but neither verified nor failed."
             )
 
-    # 6. Policy version mismatch detection
+    # 6. Authorization drift detection
+    if decision.outcome != recomp_outcome:
+        anomalies.append(
+            f"AUTHORIZATION_DRIFT: Decision outcome drifted from {decision.outcome.value} to {recomp_outcome.value}."
+        )
+    elif set(decision.reason_codes) != set(recomp_reasons):
+        anomalies.append(
+            f"AUTHORIZATION_DRIFT: Reason codes changed from {[r.value for r in decision.reason_codes]} to {[r.value for r in recomp_reasons]}."
+        )
+
+    # 7. Policy version mismatch detection
     active_policy_version = executed_policy_version or request.policy_version
-    if orig_dec and orig_dec.policy_version != active_policy_version:
+    if decision.policy_version != active_policy_version:
         anomalies.append(
             f"POLICY_VERSION_MISMATCH: Replayed under '{active_policy_version}', "
-            f"recorded_decision used '{orig_dec.policy_version}'."
+            f"recorded_decision used '{decision.policy_version}'."
         )
     if passport.policy_version != active_policy_version:
         anomalies.append(
@@ -139,7 +179,7 @@ def detect_anomalies(
             f"recorded_passport specifies '{passport.policy_version}'."
         )
 
-    # 7. Integrity failure anomalies
+    # 8. Integrity failure anomalies
     if integrity_errors:
         for err in integrity_errors:
             anomalies.append(f"INTEGRITY_VIOLATION: {err}")

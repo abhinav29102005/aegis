@@ -1,4 +1,4 @@
-.PHONY: setup test test-backend test-sdk-ts test-web lint typecheck migrate api worker web up down
+.PHONY: setup test test-pg test-cov test-backend test-sdk-ts test-web lint typecheck audit migrate api worker web up down compose-smoke
 
 setup:
 	uv sync --python 3.12
@@ -6,6 +6,12 @@ setup:
 	cd apps/web && npm install --no-audit --no-fund
 
 test: test-backend test-sdk-ts test-web
+
+test-pg:
+	AEGIS_TEST_POSTGRES_URL=$${AEGIS_TEST_POSTGRES_URL:-postgresql+psycopg://aegis:aegis_dev_password@127.0.0.1:5432/aegis_platform} uv run pytest -v
+
+test-cov:
+	uv run pytest -v --cov=packages --cov=modules --cov=services --cov-report=term-missing
 
 test-backend:
 	uv run pytest -v
@@ -23,6 +29,11 @@ typecheck:
 	cd packages/sdk-typescript && npm run typecheck
 	cd apps/web && npm run typecheck
 
+audit:
+	uv export --frozen --no-emit-workspace --no-hashes -o /tmp/aegis-reqs.txt && uv run pip-audit -r /tmp/aegis-reqs.txt --desc
+	cd packages/sdk-typescript && npm audit --omit=dev
+	cd apps/web && npm audit --omit=dev
+
 migrate:
 	cd packages/database && uv run alembic upgrade head
 
@@ -36,7 +47,24 @@ web:
 	cd apps/web && npm run dev
 
 up:
-	docker compose up -d postgres migrate api worker web
+	docker compose up -d postgres redis migrate api worker web
 
 down:
 	docker compose down
+
+compose-smoke:
+	docker compose up -d --build postgres redis migrate api worker
+	@for i in $$(seq 1 30); do \
+		if curl -sf "http://127.0.0.1:$${API_PORT:-8000}/ready"; then \
+			echo ""; \
+			break; \
+		fi; \
+		if [ "$$i" -eq 30 ]; then \
+			docker compose logs api migrate postgres; \
+			docker compose down -v --remove-orphans; \
+			exit 1; \
+		fi; \
+		sleep 2; \
+	done
+	docker compose exec -T worker python -m aegis_worker.main --healthcheck
+	docker compose down -v --remove-orphans

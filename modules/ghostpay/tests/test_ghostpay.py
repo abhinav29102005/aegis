@@ -7,6 +7,7 @@ from contracts import (
     DecisionOutcome,
     DecisionReasonCode,
     PassportStatus,
+    compute_payload_hash,
     compute_quote_hash,
 )
 from contracts.fixtures import (
@@ -20,9 +21,22 @@ from ghostpay.errors import OverrideValidationError
 from ghostpay.replay import ReplayEngine
 
 
+def _canonical_fixture() -> dict:
+    fixture = build_authorized_39_purchase_fixture()
+    canonical_evidence = [
+        rec.model_copy(update={"content_hash": compute_payload_hash(rec.content)})
+        for rec in fixture["evidence_records"]
+    ]
+    fixture["evidence_records"] = canonical_evidence
+    fixture["replay_request"] = fixture["replay_request"].model_copy(
+        update={"evidence_records": canonical_evidence}
+    )
+    return fixture
+
+
 def test_1_identical_inputs_and_policy_version_produce_identical_results() -> None:
     """Scenario 1: Identical inputs and policy version produce identical results (CONSISTENT)."""
-    fixture = build_authorized_39_purchase_fixture()
+    fixture = _canonical_fixture()
     req = fixture["replay_request"]
 
     res1 = ReplayEngine.replay(req)
@@ -46,7 +60,7 @@ def test_1_identical_inputs_and_policy_version_produce_identical_results() -> No
 
 def test_2_merchant_substitution_changes_authorization_outcome() -> None:
     """Scenario 2: Merchant substitution changes authorization outcome (DRIFT_DETECTED)."""
-    fixture = build_authorized_39_purchase_fixture()
+    fixture = _canonical_fixture()
     req = fixture["replay_request"]
     unknown_merchant = fixture["unknown_merchant"]
 
@@ -64,7 +78,7 @@ def test_2_merchant_substitution_changes_authorization_outcome() -> None:
 
 def test_3_amount_increase_above_limit_changes_authorization_outcome() -> None:
     """Scenario 3: Amount increase above limit changes authorization outcome (DRIFT_DETECTED)."""
-    fixture = build_authorized_39_purchase_fixture()
+    fixture = _canonical_fixture()
     req = fixture["replay_request"]
 
     # $85.00 exceeds $75.00 per-transaction limit
@@ -97,7 +111,7 @@ def test_3_amount_increase_above_limit_changes_authorization_outcome() -> None:
 
 def test_4_expired_passport_prevents_eligibility() -> None:
     """Scenario 4: Expired passport prevents eligibility (DENY, DENIED_PASSPORT_EXPIRED)."""
-    fixture = build_authorized_39_purchase_fixture()
+    fixture = _canonical_fixture()
     req = fixture["replay_request"]
 
     expired_passport = req.recorded_passport.model_copy(update={"status": PassportStatus.EXPIRED})
@@ -113,7 +127,7 @@ def test_4_expired_passport_prevents_eligibility() -> None:
 
 def test_5_counterfactual_policies_do_not_mutate_original_records() -> None:
     """Scenario 5: Counterfactual policies do not mutate original records."""
-    fixture = build_authorized_39_purchase_fixture()
+    fixture = _canonical_fixture()
     req = fixture["replay_request"]
 
     orig_tx_limit = req.recorded_passport.per_tx_limit_minor
@@ -146,7 +160,7 @@ def test_counterfactual_all_nine_supported_overrides_individually() -> None:
     """Verify all 9 individual counterfactual overrides function without mutation."""
     from datetime import timedelta
 
-    fixture = build_authorized_39_purchase_fixture()
+    fixture = _canonical_fixture()
     req = fixture["replay_request"]
     unknown_merchant = fixture["unknown_merchant"]
 
@@ -211,7 +225,7 @@ def test_counterfactual_all_nine_supported_overrides_individually() -> None:
 
 def test_6_missing_evidence_is_explicitly_reported() -> None:
     """Scenario 6: Missing evidence is explicitly reported (missing_evidence populated, INCOMPLETE_EVIDENCE)."""
-    fixture = build_authorized_39_purchase_fixture()
+    fixture = _canonical_fixture()
     req = fixture["replay_request"]
 
     # Remove PAYPAL_CAPTURE evidence while payment intent state is SUCCEEDED
@@ -234,7 +248,7 @@ def test_6_missing_evidence_is_explicitly_reported() -> None:
 
 def test_7_event_ordering_is_deterministic_even_when_input_events_are_shuffled() -> None:
     """Scenario 7: Event ordering is deterministic even when input events are shuffled."""
-    fixture = build_authorized_39_purchase_fixture()
+    fixture = _canonical_fixture()
     req = fixture["replay_request"]
     original_events = list(req.events)
 
@@ -255,7 +269,7 @@ def test_7_event_ordering_is_deterministic_even_when_input_events_are_shuffled()
 
 def test_8_cross_tenant_evidence_access_is_denied() -> None:
     """Scenario 8: Cross-tenant evidence/record access is denied (TenantIsolationError)."""
-    fixture = build_authorized_39_purchase_fixture()
+    fixture = _canonical_fixture()
     req = fixture["replay_request"]
 
     # Mismatched evidence tenant
@@ -279,7 +293,7 @@ def test_8_cross_tenant_evidence_access_is_denied() -> None:
 
 def test_9_tampered_records_fail_integrity_checks() -> None:
     """Scenario 9: Tampered event or evidence records fail integrity checks (integrity_valid=False, INTEGRITY_FAILURE)."""
-    fixture = build_authorized_39_purchase_fixture()
+    fixture = _canonical_fixture()
     req = fixture["replay_request"]
 
     # 1. Tamper with event payload without updating event_hash
@@ -310,7 +324,7 @@ def test_9_tampered_records_fail_integrity_checks() -> None:
 
 def test_10_replay_does_not_trigger_payment_execution() -> None:
     """Scenario 10: Replay does not trigger payment execution (executed_payment=False)."""
-    fixture = build_authorized_39_purchase_fixture()
+    fixture = _canonical_fixture()
     req = fixture["replay_request"]
 
     res = ReplayEngine.replay(req)

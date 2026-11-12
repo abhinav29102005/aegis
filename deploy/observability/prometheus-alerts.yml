@@ -1,0 +1,73 @@
+groups:
+  - name: aegis-platform-alerts
+    interval: 30s
+    rules:
+      - alert: AegisHighHttp5xxRate
+        expr: |
+          (
+            sum(rate(aegis_http_requests_total{status_code=~"5.."}[5m]))
+            / clamp_min(sum(rate(aegis_http_requests_total[5m])), 1)
+          ) > 0.02
+        for: 5m
+        labels:
+          severity: critical
+          service: aegis-api
+        annotations:
+          summary: "AEGIS API 5xx error rate exceeds 2%"
+          description: "More than 2% of HTTP requests returned 5xx over the last 5 minutes (current value: {{ $value | humanizePercentage }})."
+
+      - alert: AegisElevatedCheckoutCaptureLatency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le, route) (
+              rate(aegis_http_request_duration_seconds_bucket{route=~"/v1/guardian/checkout.*|/v1/guardian/intents/.*/capture"}[5m])
+            )
+          ) > 1.5
+        for: 5m
+        labels:
+          severity: warning
+          service: aegis-api
+        annotations:
+          summary: "AEGIS checkout/capture p95 latency above 1.5s"
+          description: "Route {{ $labels.route }} p95 latency is {{ $value }}s over the last 5 minutes."
+
+      - alert: AegisOutboxDeadLetterQueueNonEmpty
+        expr: sum(aegis_outbox_dead_letters) > 0
+        for: 2m
+        labels:
+          severity: critical
+          service: aegis-worker
+        annotations:
+          summary: "AEGIS transactional outbox has dead-lettered events"
+          description: "{{ $value }} outbox event(s) exhausted max retries and moved to dead-letter state."
+
+      - alert: AegisOutboxStalledLeases
+        expr: sum(aegis_outbox_stalled_leases) > 0
+        for: 3m
+        labels:
+          severity: warning
+          service: aegis-worker
+        annotations:
+          summary: "AEGIS outbox worker has stalled leases"
+          description: "{{ $value }} outbox lease(s) exceeded lease expiry without completion; check worker health."
+
+      - alert: AegisDatabaseConnectionFailures
+        expr: sum(rate(aegis_db_connection_errors_total[5m])) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: aegis-database
+        annotations:
+          summary: "AEGIS PostgreSQL connection failures detected"
+          description: "Database connection or readiness probe failures detected at {{ $value }} errors/sec."
+
+      - alert: AegisHighLlmCostSpike
+        expr: sum(increase(aegis_llm_estimated_cost_usd_total[1h])) > 25
+        for: 5m
+        labels:
+          severity: warning
+          service: aegis-disputeos
+        annotations:
+          summary: "AEGIS LLM cost spike exceeds $25/hour"
+          description: "Estimated LLM spend reached ${{ $value }} in the last 1 hour."

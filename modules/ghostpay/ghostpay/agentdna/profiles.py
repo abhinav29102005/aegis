@@ -54,17 +54,17 @@ def build_agent_profile(
     cutoff_time: datetime | None = None,
     exclude_trace_id: UUID | None = None,
 ) -> AgentBehaviorProfile:
-    """Build a versioned, reproducible AgentBehaviorProfile strictly prior to cutoff_time.
-
-    Deduplicates trace_ids, enforces tenant-isolation, and prevents future data leakage.
-    """
+    """Build a versioned, reproducible AgentBehaviorProfile strictly prior to cutoff_time."""
+    norm_cutoff = _normalize_utc(cutoff_time)
     seen_trace_ids: set[UUID] = set()
-    sanitized_history: list[PaymentTrace] = []
-    c_time = _normalize_utc(cutoff_time) if cutoff_time else None
+    eligible_traces: list[PaymentTrace] = []
 
     for tr in history:
         if tr.tenant_id != tenant_id:
-            raise CrossTenantAccessError(f"Cross-tenant trace {tr.trace_id} detected in history")
+            raise CrossTenantAccessError(
+                f"Tenant isolation breach in agent profile history: "
+                f"trace {tr.trace_id} tenant {tr.tenant_id} != {tenant_id}"
+            )
         if tr.agent_id != agent_id:
             continue
         if tr.trace_id in seen_trace_ids:
@@ -72,26 +72,26 @@ def build_agent_profile(
         seen_trace_ids.add(tr.trace_id)
         if exclude_trace_id and tr.trace_id == exclude_trace_id:
             continue
-        if c_time:
-            tr_created = _normalize_utc(tr.created_at)
-            if tr_created and tr_created >= c_time:
-                continue
-        sanitized_history.append(tr)
+        created_utc = _normalize_utc(tr.created_at)
+        if norm_cutoff is not None and created_utc is not None and created_utc >= norm_cutoff:
+            continue
+        eligible_traces.append(tr)
 
     features = extract_agent_features(
-        sanitized_history,
-        cutoff_time=cutoff_time,
+        eligible_traces,
+        cutoff_time=norm_cutoff,
         exclude_trace_id=exclude_trace_id,
     )
 
     now = _utc_now()
-    if sanitized_history:
-        sorted_h = sorted(sanitized_history, key=lambda t: t.created_at)
+    if eligible_traces:
+        sorted_h = sorted(eligible_traces, key=lambda t: _normalize_utc(t.created_at) or now)
         start_time = sorted_h[0].created_at
         end_time = sorted_h[-1].created_at
     else:
-        start_time = now
-        end_time = now
+        fallback_time = norm_cutoff or now
+        start_time = fallback_time
+        end_time = fallback_time
 
     baseline = {
         "mean_amount_minor": features.mean_amount_minor,

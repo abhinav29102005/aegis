@@ -12,8 +12,9 @@ from contracts.fixtures import (
     MERCHANT_UNKNOWN_ID,
 )
 
+from ghostpay.counterfactual import simulate_counterfactual
 from ghostpay.domain.exceptions import IllegalSideEffectError
-from ghostpay.replay.engine import PolicyTimeMachine
+from ghostpay.replay import PolicyTimeMachine, ReplayEngine
 from ghostpay.testing import make_test_trace
 from ghostpay.timemachine.comparison import compare_policies
 from ghostpay.timemachine.policies import CounterfactualPolicy
@@ -27,10 +28,7 @@ def test_t07_original_allowed_purchase_becomes_denied_under_stricter_limit(
     assert req.recorded_decision.outcome == DecisionOutcome.ALLOW
 
     # Stricter per-transaction limit: $20.00 (2000 minor) against a $39.00 purchase
-    stricter_req = req.model_copy(
-        update={"counterfactual_overrides": {"per_tx_limit_minor": 2000}}
-    )
-    result = PolicyTimeMachine.replay(stricter_req)
+    result = simulate_counterfactual(req, {"per_tx_limit_minor": 2000})
 
     assert result.original_outcome == DecisionOutcome.ALLOW
     assert result.recomputed_outcome == DecisionOutcome.DENY
@@ -46,15 +44,13 @@ def test_t08_merchant_substitution_is_rejected_under_alternative_allowlist(
     req: ReplayRequest = authorized_39_fixture["replay_request"]
 
     # Substitute merchant with an unknown / unapproved merchant
-    sub_req = req.model_copy(
-        update={
-            "counterfactual_overrides": {
-                "merchant_override": MERCHANT_UNKNOWN_ID,
-                "allow_unknown_merchants": False,
-            }
-        }
+    result = simulate_counterfactual(
+        req,
+        {
+            "merchant_override": MERCHANT_UNKNOWN_ID,
+            "allow_unknown_merchants": False,
+        },
     )
-    result = PolicyTimeMachine.replay(sub_req)
 
     assert result.recomputed_outcome == DecisionOutcome.DENY
     assert DecisionReasonCode.DENIED_MERCHANT_NOT_ALLOWLISTED in result.recomputed_reason_codes
@@ -69,10 +65,7 @@ def test_t09_approval_threshold_change_produces_expected_escalation(
 
     # Lower human approval threshold from $50.00 (5000 minor) to $25.00 (2500 minor)
     # The $39.00 purchase now requires human approval!
-    escalate_req = req.model_copy(
-        update={"counterfactual_overrides": {"human_approval_threshold_minor": 2500}}
-    )
-    result = PolicyTimeMachine.replay(escalate_req)
+    result = simulate_counterfactual(req, {"human_approval_threshold_minor": 2500})
 
     assert result.recomputed_outcome == DecisionOutcome.ESCALATE
     assert DecisionReasonCode.ESCALATED_REQUIRES_HUMAN_APPROVAL in result.recomputed_reason_codes
@@ -87,7 +80,7 @@ def test_t10_missing_historical_budget_state_returns_insufficient_evidence() -> 
         update={"recorded_passport": None, "recorded_decision": None}
     )
 
-    result = PolicyTimeMachine.replay_trace(trace_missing)
+    result = ReplayEngine.replay_trace(trace_missing)
     assert result.consistency_status == "INCOMPLETE_EVIDENCE"
     assert "INSUFFICIENT_EVIDENCE" in result.missing_evidence
     assert result.executed_payment is False
@@ -99,8 +92,8 @@ def test_t11_replaying_same_trace_and_policy_produces_identical_results(
     """T11: Replaying the same trace and policy produces identical results and digests."""
     req: ReplayRequest = authorized_39_fixture["replay_request"]
 
-    res1 = PolicyTimeMachine.replay(req)
-    res2 = PolicyTimeMachine.replay(req)
+    res1 = ReplayEngine.replay(req)
+    res2 = ReplayEngine.replay(req)
 
     assert res1.recomputed_outcome == res2.recomputed_outcome
     assert res1.recomputed_reason_codes == res2.recomputed_reason_codes
@@ -114,13 +107,13 @@ def test_t12_replay_cannot_invoke_paypal_reserve_or_mutate_state() -> None:
     """T12: Replay cannot invoke PayPal, reserve budgets, capture funds, or mutate ledger state."""
     # Attempting to call side-effect methods on replay engine raises IllegalSideEffectError
     with pytest.raises((IllegalSideEffectError, PermissionError)):
-        PolicyTimeMachine.capture_payment()
+        ReplayEngine.capture_payment()
 
     with pytest.raises((IllegalSideEffectError, PermissionError)):
-        PolicyTimeMachine.reserve_budget()
+        ReplayEngine.reserve_budget()
 
     with pytest.raises((IllegalSideEffectError, PermissionError)):
-        PolicyTimeMachine.release_reservation()
+        ReplayEngine.release_reservation()
 
 
 def test_t13_multiple_policy_comparisons_produce_independent_results(

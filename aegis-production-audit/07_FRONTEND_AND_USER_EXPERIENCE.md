@@ -1,49 +1,33 @@
 # 07 — Frontend & Product Experience Audit (`apps/web/`)
 
-**Stack:** Next.js `15.1.6`, React `19`, TypeScript, Tailwind CSS `3.4.17`, `lucide-react` (`apps/web/package.json`)  
-**Build Check Observed:** `npm run typecheck`, `npm run lint` (0 errors), `npm test` (3 format tests), `npm run build` (`14` routes built cleanly).  
-**Crucial Caveat:** Next.js builds cleanly **only because there are zero UI/integration/E2E tests and client types silently mask broken backend API contracts.**
+**Status as of `2026-11-12` (`integration/nexus`, Post-M1+M2+M3):** **`HttpOnly` COOKIE BFF, ALL 5 CONTRACT SCREENS, M2 BACKEND WIRING (`/approve` DECLINE, `/refund`, `/cases`, `/resolve`), & COMMERCIAL/LEGAL PAGES BUILT & PASSING NODE TESTS; LIVE CHROMIUM PLAYWRIGHT + LIVE `web` COMPOSE BOOT STILL `NOT VERIFIED`.**  
+**Stack:** Next.js `15.5.29` (`next: ^15.1.6`), React `19.0.0`, TypeScript `^5.7.2`, Tailwind CSS `3.4.17`, `lucide-react`
 
 ---
 
-## 1. Cross-Cutting Product & Security Issues
+## 1. Cross-Cutting Product & Security Fixes Integrated (`apps/web/`)
 
-1. **[CRITICAL] Client/Backend Contract Drift Breaks 5 Core Flows:** UI interfaces in `apps/web/src/lib/api.ts` and page components were authored against outdated enum/field names that no longer match `packages/contracts` / `packages/security`.
-2. **[HIGH] JWT Persisted in `window.localStorage` Without Verification (`auth-context.tsx:23,29-50,80-105`):**
-   - Stores full bearer JWT in `localStorage["aegis.session.v1"]`, making any future XSS defect equivalent to full session takeover across orgs.
-   - On page load, `AuthProvider` never validates the stored token via `GET /v1/auth/me`.
-   - `apiRequest()` (`api.ts:204-258`) has **no request timeout (`AbortController`)**, **no retry**, and **no HTTP 401 session expiration eviction**.
-   - Org switcher (`AppShell.tsx:144`) fires `void switchOrganization(...)` with no error handling/toast on failure.
-3. **[MEDIUM] Accessibility & Responsive Polish Gaps:** Only `/dashboard` uses `.table-wrapper` + `<th scope="col">`; 7 other table pages (`payments`, `payments/[id]`, `ghostpay`, `disputes`, `audit`, `developer`, `settings`) omit `<th scope="col">`; `login/page.tsx:99` uses `role="status"` instead of `role="alert"` on error banners.
-4. **[MEDIUM] No Pagination, No Text Search & Hidden Operational Surfaces:** Every list screen fetches fixed limits (`30`/`50`/`100`) with zero next/previous pagination or search input. Multiple implemented backend capabilities (`POST /v1/orgs`, `/v1/orgs/service-accounts`, `PATCH /v1/guardian/passports/{id}`, `DELETE /v1/webhooks/endpoints/{id}`, `GET /v1/webhooks/deliveries`, `GET/POST /v1/worker/outbox`, `POST /v1/disputeos/cases`, `/ghostpay/investigations` create, `/ghostpay/agents/{id}`) have zero UI exposure.
-
----
-
-## 2. Route-by-Route Truth Table (`14` Built Routes)
-
-| Route | Line Count | Maturity Rating | Observed Contract Mismatches, Broken Controls & UX Findings |
-| :--- |---:| :--- | :--- |
-| `/` (`src/app/page.tsx`) | 93 | **Rendered** | Auth redirect hub (`/dashboard` vs `/login`), no functional actions. |
-| `/login` (`src/app/login/page.tsx`) | 241 | **Functional** | Login & signup work; stores JWT in `localStorage`; error banner uses `role="status"` instead of `role="alert"`. |
-| `/dashboard` (`src/app/dashboard/page.tsx`) | 183 | **Fully Integrated** | Matches `GET /v1/overview/metrics` + real budget/dispute/dead-letter counters + accessible `.table-wrapper` (`<th scope="col">`). **No fake metrics.** Needs auto-refresh/401 eviction. |
-| `/agents` (`src/app/agents/page.tsx`) | 394 | **Functional (Partially Broken)** | Agent create + status toggle work. **BUG (`HIGH`, L208,363):** Merchant creation & allowlist toggle check `hasPermission("merchants:write")`, which **does not exist** in `packages/security/security/auth.py` (backend requires `"passports:write"`). **Merchant controls NEVER render for any user!** |
-| `/passports` (`src/app/passports/page.tsx`) | 313 | **Functional** | Create & revoke work; `allow_unknown_merchants` hardcoded `false`; no `PATCH` policy editor; `loadData` `useCallback` re-fetches all data whenever `agentId` or `selectedMerchantIds` changes (`L52`). |
-| `/payments` (`src/app/payments/page.tsx`) | 481 | **Functional (Contract Drift)** | Proposal submit, checkout, approve-only (`approved: true`) work. **BUG (`MEDIUM`, L18-31):** `PAYMENT_STATES` filter lists invalid backend states (`PROPOSED`, `POLICY_EVALUATED`, `BUYER_APPROVED`, `CAPTURE_IN_PROGRESS`, `REJECTED`) and omits `CREATED`, `POLICY_CHECK`, `CAPTURE_PENDING`, `CANCELLED`. No search, pagination, or Reject action. |
-| `/payments/[id]` (`src/app/payments/[id]/page.tsx`) | 421 | **Critically Broken (`Functional`)** | **BUG (`CRITICAL`, L235):** Capture button only renders when `intent.state === "BUYER_APPROVED"` — backend transitions to `CAPTURE_PENDING`, so **Capture button is UNREACHABLE!** **BUG (`HIGH`, L49-57,316,360-370):** Reads non-existent `attempt.status`, `attempt.paypal_capture_id`, and `approval.approved_at` (backend uses `state`, `verified_capture.paypal_capture_id`, `decided_at`), rendering `"UNKNOWN"`/`"—"`, and ignores `paypal_approval_url`. No `buyer-declined` or reject controls. |
-| `/ghostpay` (`src/app/ghostpay/page.tsx`) | 190 | **Fully Integrated** | Lists DB investigations (`consistency_status`, `drift_detected`) and links to replay page. Lacks pagination, text search, `POST /investigations`, and Agent DNA views. |
-| `/ghostpay/replay/[id]` (`src/app/ghostpay/replay/[id]/page.tsx`) | 251 | **Functional (Broken Timeline)** | Replay & counterfactual slider work against `*-by-payment/*`, **but timeline (`L234-244`, `api.ts:157-164`) reads undefined `source`, `actor`, `timestamp`** (backend emits `actor_type`, `actor_id`, `occurred_at`), rendering `( · )` and `—`. |
-| `/disputes` (`src/app/disputes/page.tsx`) | 181 | **Functional** | Lists/filters cases & seeds clearly tagged `SYNTHETIC_DEMO` cases; missing non-synthetic `POST /cases` creation form & pagination. |
-| `/disputes/[id]` (`src/app/disputes/[id]/page.tsx`) | 538 | **Functional (Broken Analysis UI)** | **BUG (`HIGH`, L25-39,327-357):** Expects `latest_analysis.summary`, `model_used`, `evidence_citations`, `contradictions: [{code, severity, summary}]`, while backend `DisputeAnalysis` emits `grounded_summary`, `generated_with_llm`, `citations`, `contradictions: list[str]`. Summary & contradictions render **blank**! `source_type` hardcoded `"DELIVERY_RECEIPT"` (`L148`); missing `/evidence` JSON form & `/report` export. |
-| `/audit` (`src/app/audit/page.tsx`) | 214 | **Functional** | Live audit event + admin audit logs & correlation hash-chain verification (`L50` `api.ts`: `previous_hash` vs backend `previous_event_hash`). No pagination or event_type filter. |
-| `/developer` (`src/app/developer/page.tsx`) | 404 | **Broken Defaults (`422`)** | **BUG (`HIGH`, L47,231-234):** Defaults API key role to `"DEVELOPER"` and offers `DEVELOPER`, `AGENT_RUNTIME`, `FINANCE_ADMIN`, `VIEWER` — **3 of 4 return HTTP `422`** (valid roles: `OWNER`, `ADMIN`, `OPERATOR`, `AUDITOR`, `AGENT_SERVICE`, `VIEWER`). Missing webhook disable, deliveries table, worker outbox viewer/requeue, & service accounts. |
-| `/settings` (`src/app/settings/page.tsx`) | 284 | **Broken Roles (`422`)** | **BUG (`HIGH`, L20-28,37):** Member invite/role dropdown offers `FINANCE_ADMIN`, `RISK_ANALYST`, `DISPUTE_OPERATOR`, `DEVELOPER`, `AGENT_RUNTIME` (defaults to `RISK_ANALYST`) — **5 of 7 return HTTP `422`!** |
+1. **`HttpOnly` Cookie Session BFF (`GAP-018` CLOSED):** Route handlers (`/api/auth/login`, `/api/auth/signup`, `/api/auth/logout`, `/api/auth/me`, `/api/auth/switch-org`, `/api/proxy/[...path]`) store tokens in `HttpOnly; SameSite=Lax` cookie `aegis_session` (`0` `localStorage` JWT hits in `apps/web/src/`). Protected via `middleware.ts` + security headers (`CSP`, `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`).
+2. **All 5 Broken Backend Contract Screens Aligned & Now End-to-End Supported by M2 (`GAP-004` CLOSED):**
+   - `/payments/[id]`: Capture keys on `activeAttempt?.state === "CAPTURE_PENDING"`, reads `verified_capture?.paypal_capture_id`, `paypal_approval_url`, `approval.decided_at`, and triggers real M2 **Decline (`approved: false`)** & **Refund (`POST /refund`)** routes.
+   - `/agents`: Uses `"passports:write"` permission + search/pagination.
+   - `/developer` & `/settings`: Uses the 6 canonical `Role`s (`OWNER`, `ADMIN`, `OPERATOR`, `AUDITOR`, `AGENT_SERVICE`, `VIEWER`) + Service Accounts, Webhook Deliveries, & Outbox DLQ views.
+   - `/ghostpay/replay/[id]`: Displays `occurred_at`, `actor_type`, `actor_id`, `previous_event_hash` + PG-persisted `POST /v1/ghostpay/investigations` & Agent DNA.
+   - `/disputes/[id]`: Renders `DisputeAnalysis` (`grounded_summary`, `generated_with_llm`, `citations`, `contradictions`), SLA `response_due_by`, non-synthetic `POST /cases`, real M2 `POST /resolve`, & `/report` export.
+3. **Commercial, Onboarding & Legal Surfaces:** `/onboarding` wizard, `/status`, `/legal/terms`, `/legal/privacy`, `/legal/dpa`, and `/settings` Billing & Quotas / Privacy Export & Erasure tabs.
 
 ---
 
-## 3. Persona Evaluation
-- **Merchant Administrator:** Blocked — cannot add merchants in UI (`merchants:write` bug), cannot invite admins/operators cleanly (`/settings` `422`), cannot capture payments (`/payments/[id]` unreachable button).
-- **AI Agent Developer:** Blocked — `/developer` default key role returns `422`; cannot inspect webhook delivery failures or requeue dead-letter outbox events in UI despite backend endpoints existing.
-- **Risk Analyst:** Mixed — `/dashboard`, `/audit`, and `/ghostpay` counterfactual simulation work, but replay timeline actor/timestamps render blank and Agent DNA profiling has zero UI.
-- **Dispute Operations Analyst:** Blocked — `/disputes/[id]` hides analysis summary & contradictions behind schema mismatch (`summary` vs `grounded_summary`), cannot create real disputes or view deadlines/reports in UI, and submit falsely says `SUBMITTED` without calling PayPal.
-- **Enterprise Security Administrator:** Unsatisfied — JWT in `localStorage`, no session management/MFA/SSO UI, no security alerts, broken role taxonomy between docs (`7` roles), UI (`7` roles), and API (`6` roles).
+## 2. Verification Results & Remaining Frontend Gates
 
+- **Verified Post-Edit (`apps/web`):**
+  - `npm run typecheck`: PASS (`tsc --noEmit`).
+  - `npm run lint`: PASS (`✔ No ESLint warnings or errors`).
+  - `npm test` (`tests/format.test.mjs`): `3/3` PASS.
+  - `node --test tests/console_e2e_journeys.test.mjs`: `7/7` user journeys PASS.
+  - `npm run build` (`next build`): **`24` routes across `19` App Router pages + `6` BFF API routes built cleanly**.
+  - Cross-stack API/UI harness (`tests/e2e/test_console_journeys_e2e.py` against FastAPI ASGI): PASS inside full `313 passed` suite.
+- **Remaining Gaps (`NOT VERIFIED` / Advisory):**
+  1. **Live Chromium Playwright Execution (`NOT VERIFIED`):** `apps/web/tests/playwright_e2e_journeys.spec.ts` (`90` lines) still has no `@playwright/test` dependency in `apps/web/package.json` and has not run inside a live browser against `next start` + `aegis_api`.
+  2. **Next.js Security Advisory (`npm audit --omit=dev`):** Reports **`2` vulnerabilities (`1` moderate, `1` high)** in transitive `postcss` under `next@15.5.29` (fix available via `next@16.4.6`).
+  3. **Compose `web` Container (`NOT VERIFIED`):** `make compose-smoke` boots `postgres`, `redis`, `migrate`, `api`, and `worker`; live `docker compose up web` health remains `NOT VERIFIED`.

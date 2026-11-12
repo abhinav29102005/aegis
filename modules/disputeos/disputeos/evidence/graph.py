@@ -1,12 +1,15 @@
-"""Evidence provenance graph models and builder for DisputeOS."""
+"""Evidence provenance graph models and causal builder for DisputeOS."""
 
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
 from contracts import DisputeCase, EvidenceRecord, EvidenceSourceType
 from pydantic import BaseModel, Field
 from security import assert_same_tenant
+
+from disputeos.ingestion.normalizer import verify_evidence_digest
 
 
 class EvidenceNode(BaseModel):
@@ -18,6 +21,10 @@ class EvidenceNode(BaseModel):
     source_ref: str
     content_hash: str
     is_synthetic: bool
+    collected_at: datetime | None = None
+    payment_intent_id: UUID | None = None
+    correlation_id: UUID | None = None
+    digest_verified: bool = True
 
 
 class EvidenceEdge(BaseModel):
@@ -51,6 +58,40 @@ _LIFECYCLE_STAGES: tuple[tuple[EvidenceSourceType, str], ...] = (
     (EvidenceSourceType.CUSTOMER_MESSAGE, "DISPUTED_IN"),
 )
 
+_STAGE_INDEX: dict[EvidenceSourceType, int] = {
+    stage_type: idx for idx, (stage_type, _) in enumerate(_LIFECYCLE_STAGES)
+}
+_STAGE_RELATION: dict[int, str] = {
+    idx: relation for idx, (_, relation) in enumerate(_LIFECYCLE_STAGES)
+}
+_CAUSAL_REF_KEYS: tuple[str, ...] = (
+    "proposal_id",
+    "quote_snapshot_id",
+    "paypal_order_id",
+    "paypal_capture_id",
+    "tracking_number",
+)
+
+
+def _is_causally_linked(src: EvidenceRecord, dst: EvidenceRecord) -> bool:
+    """Return True if src causally precedes dst on intent/correlation, time, and artifact refs."""
+    if src.payment_intent_id is not None and dst.payment_intent_id is not None:
+        if src.payment_intent_id != dst.payment_intent_id:
+            return False
+    elif src.correlation_id != dst.correlation_id:
+        return False
+
+    if src.collected_at > dst.collected_at:
+        return False
+
+    for key in _CAUSAL_REF_KEYS:
+        src_val = src.content.get(key)
+        dst_val = dst.content.get(key)
+        if src_val and dst_val and str(src_val).strip() != str(dst_val).strip():
+            return False
+
+    return True
+
 
 def _is_causally_linked(src: EvidenceRecord, dst: EvidenceRecord) -> bool:
     """Determine whether two evidence records have causal linkage."""
@@ -66,12 +107,21 @@ def _is_causally_linked(src: EvidenceRecord, dst: EvidenceRecord) -> bool:
 
 
 def build_evidence_graph(case: DisputeCase, evidence: list[EvidenceRecord]) -> EvidenceGraph:
-    """Build a tenant-verified evidence provenance graph for a dispute case."""
+    """Build a tenant-verified, causally linked evidence provenance graph for a dispute case."""
     nodes: list[EvidenceNode] = []
     edges: list[EvidenceEdge] = []
-    by_type: dict[EvidenceSourceType, list[EvidenceRecord]] = {}
+    by_stage: dict[int, list[EvidenceRecord]] = {}
 
-    for rec in evidence:
+    sorted_evidence = sorted(
+        evidence,
+        key=lambda rec: (
+            rec.collected_at,
+            _STAGE_INDEX.get(rec.source_type, len(_LIFECYCLE_STAGES)),
+            str(rec.id),
+        ),
+    )
+
+    for rec in sorted_evidence:
         assert_same_tenant(case.tenant_id, rec.tenant_id, "evidence_record")
         nodes.append(
             EvidenceNode(
@@ -81,6 +131,10 @@ def build_evidence_graph(case: DisputeCase, evidence: list[EvidenceRecord]) -> E
                 source_ref=rec.source_ref,
                 content_hash=rec.content_hash,
                 is_synthetic=rec.is_synthetic,
+                collected_at=rec.collected_at,
+                payment_intent_id=rec.payment_intent_id,
+                correlation_id=rec.correlation_id,
+                digest_verified=verify_evidence_digest(rec),
             )
         )
         edges.append(
@@ -90,24 +144,22 @@ def build_evidence_graph(case: DisputeCase, evidence: list[EvidenceRecord]) -> E
                 relation="EVIDENCE_FOR_CASE",
             )
         )
-        by_type.setdefault(rec.source_type, []).append(rec)
+        stage_idx = _STAGE_INDEX.get(rec.source_type)
+        if stage_idx is not None:
+            by_stage.setdefault(stage_idx, []).append(rec)
 
-    present_stages = [
-        (stage_type, relation)
-        for stage_type, relation in _LIFECYCLE_STAGES
-        if stage_type in by_type
-    ]
-    for idx in range(len(present_stages) - 1):
-        src_type, relation = present_stages[idx]
-        dst_type, _ = present_stages[idx + 1]
-        src_records = by_type[src_type]
-        dst_records = by_type[dst_type]
-
-        matched_any = False
-        for src_rec in src_records:
-            for dst_rec in dst_records:
-                if _is_causally_linked(src_rec, dst_rec):
-                    matched_any = True
+    for dst_rec in sorted_evidence:
+        dst_stage = _STAGE_INDEX.get(dst_rec.source_type)
+        if dst_stage is None:
+            continue
+        for cand_stage in range(dst_stage - 1, -1, -1):
+            candidates = by_stage.get(cand_stage)
+            if not candidates:
+                continue
+            linked = [src_rec for src_rec in candidates if _is_causally_linked(src_rec, dst_rec)]
+            if linked:
+                relation = _STAGE_RELATION[cand_stage]
+                for src_rec in linked:
                     edges.append(
                         EvidenceEdge(
                             from_id=str(src_rec.id),
@@ -115,15 +167,7 @@ def build_evidence_graph(case: DisputeCase, evidence: list[EvidenceRecord]) -> E
                             relation=relation,
                         )
                     )
-        if not matched_any and src_records and dst_records:
-            # Fallback to single chronological pair to maintain pipeline connectivity
-            edges.append(
-                EvidenceEdge(
-                    from_id=str(src_records[0].id),
-                    to_id=str(dst_records[0].id),
-                    relation=relation,
-                )
-            )
+                break
 
     return EvidenceGraph(
         dispute_case_id=case.id,

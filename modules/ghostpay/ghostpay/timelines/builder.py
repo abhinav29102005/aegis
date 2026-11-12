@@ -16,7 +16,7 @@ from contracts import (
 from security.hashing import compute_financial_event_hash
 
 
-def _format_event_summary(event: FinancialEvent) -> str:
+def format_event_summary(event: FinancialEvent) -> str:
     """Produce deterministic human-readable summary for a financial event."""
     t = event.event_type
     p = event.payload or {}
@@ -75,7 +75,7 @@ def _format_event_summary(event: FinancialEvent) -> str:
     return f"Event {t.value} recorded by {actor_str}."
 
 
-def _correlate_evidence_ids(
+def correlate_evidence_ids(
     event: FinancialEvent,
     evidence_records: Sequence[EvidenceRecord],
 ) -> list[UUID]:
@@ -150,7 +150,7 @@ def build_timeline(
         entry_integrity = hash_ok and prev_ok and mono_ok
 
         expected_prev = ev.event_hash
-        ev_ids = _correlate_evidence_ids(ev, ev_list)
+        ev_ids = correlate_evidence_ids(ev, ev_list)
 
         timeline.append(
             ReplayTimelineEntry(
@@ -160,7 +160,7 @@ def build_timeline(
                 actor_type=ev.actor_type,
                 actor_id=ev.actor_id,
                 occurred_at=ev.occurred_at,
-                summary=_format_event_summary(ev),
+                summary=format_event_summary(ev),
                 evidence_ids=ev_ids,
                 integrity_verified=entry_integrity,
             )
@@ -169,5 +169,5 @@ def build_timeline(
     return timeline
 
 
-format_event_summary = _format_event_summary
-correlate_evidence_ids = _correlate_evidence_ids
+_format_event_summary = format_event_summary
+_correlate_evidence_ids = correlate_evidence_ids

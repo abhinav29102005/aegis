@@ -5,15 +5,22 @@ from __future__ import annotations
 from uuid import UUID
 
 from contracts import (
+    ApprovalRecord,
+    AuthorizationDecision,
     EvidenceRecord,
     FinancialEvent,
+    Merchant,
     PaymentIntent,
+    PurchaseProposal,
+    QuoteSnapshot,
+    SpendingPassport,
 )
 from security import compute_financial_event_hash
 
 from ghostpay.domain.exceptions import (
     CrossTenantAccessError,
 )
+from ghostpay.provenance.verifier import verify_evidence_digest
 
 
 class TraceValidator:
@@ -27,12 +34,29 @@ class TraceValidator:
         events: list[FinancialEvent] | None = None,
         evidence_records: list[EvidenceRecord] | None = None,
         intent: PaymentIntent | None = None,
+        proposal: PurchaseProposal | None = None,
+        quote_snapshot: QuoteSnapshot | None = None,
+        recorded_decision: AuthorizationDecision | None = None,
+        recorded_passport: SpendingPassport | None = None,
+        recorded_merchant: Merchant | None = None,
+        approval_record: ApprovalRecord | None = None,
     ) -> None:
         """Enforce strict tenant boundary across all trace components."""
-        if intent is not None and intent.tenant_id != expected_tenant_id:
-            raise CrossTenantAccessError(
-                f"Tenant isolation breach: intent tenant {intent.tenant_id} != expected {expected_tenant_id}"
-            )
+        entities: list[tuple[str, object | None]] = [
+            ("intent", intent),
+            ("proposal", proposal),
+            ("quote_snapshot", quote_snapshot),
+            ("recorded_decision", recorded_decision),
+            ("recorded_passport", recorded_passport),
+            ("recorded_merchant", recorded_merchant),
+            ("approval_record", approval_record),
+        ]
+        for label, entity in entities:
+            if entity is not None and getattr(entity, "tenant_id", None) != expected_tenant_id:
+                raise CrossTenantAccessError(
+                    f"Tenant isolation breach: {label} tenant {getattr(entity, 'tenant_id', None)} "
+                    f"!= expected {expected_tenant_id}"
+                )
 
         if events:
             for ev in events:
@@ -62,6 +86,10 @@ class TraceValidator:
         seen_sequences: set[int] = set()
 
         sorted_events = sorted(events, key=lambda e: (e.occurred_at, e.sequence_number))
+
+        distinct_tenants = {ev.tenant_id for ev in sorted_events}
+        if len(distinct_tenants) > 1:
+            errors.append("CROSS_TENANT_EVENT_CHAIN: Events belong to multiple tenants")
 
         for idx, ev in enumerate(sorted_events):
             expected_seq = idx + 1
@@ -119,9 +147,7 @@ class TraceValidator:
         cls,
         evidence_records: list[EvidenceRecord],
     ) -> tuple[bool, list[str]]:
-        """Validate evidence content hashes."""
-        from ghostpay.provenance.verifier import verify_evidence_digest
-
+        """Validate evidence content hashes via the unified provenance verifier."""
         errors: list[str] = []
         for rec in evidence_records:
             valid, err = verify_evidence_digest(rec)

@@ -1,6 +1,7 @@
 """Canonical shared contracts for AgentPay Nexus."""
 
 from contracts.enums import (
+    VALID_DISPUTE_TRANSITIONS,
     VALID_PAYMENT_TRANSITIONS,
     ApprovalStatus,
     DecisionOutcome,
@@ -13,17 +14,25 @@ from contracts.enums import (
     PassportStatus,
     PaymentState,
     ReservationStatus,
+    assert_dispute_transition,
     assert_payment_transition,
+    can_transition_dispute,
     can_transition_payment,
 )
-from contracts.hashing import canonical_json, compute_payload_hash, compute_quote_hash
+from contracts.hashing import (
+    canonical_json,
+    compute_payload_hash,
+    compute_quote_hash,
+)
 from contracts.models import (
     AgentIdentity,
     AP2CheckoutMandate,
+    AP2MandatePayload,
     AP2PaymentMandate,
     ApprovalRecord,
     AuthorizationDecision,
     BudgetReservation,
+    DeflectionAlert,
     DisputeAnalysis,
     DisputeCase,
     DisputeEvidenceCitation,
@@ -39,9 +48,11 @@ from contracts.models import (
     ReplayResult,
     ReplayTimelineEntry,
     SpendingPassport,
+    StripeEventEnvelope,
     StripePaymentIntentPayload,
     StripeSharedPaymentToken,
     StripeSmartDisputePayload,
+    TAPTokenPayload,
     Tenant,
     TokenProvenanceProof,
     VerifiedPayPalCapture,
@@ -49,18 +60,22 @@ from contracts.models import (
 )
 from contracts.policy_v1 import (
     CURRENCY_EXPONENTS,
+    decimal_str_to_minor,
     evaluate_policy_v1,
     evaluate_policy_v1_rules,
     format_minor_to_major,
     get_currency_exponent,
+    minor_to_decimal_str,
     parse_major_to_minor,
 )
 from contracts.providers import PaymentProviderAdapter
 
 __all__ = [
     "CURRENCY_EXPONENTS",
+    "VALID_DISPUTE_TRANSITIONS",
     "VALID_PAYMENT_TRANSITIONS",
     "AP2CheckoutMandate",
+    "AP2MandatePayload",
     "AP2PaymentMandate",
     "AgentIdentity",
     "ApprovalRecord",
@@ -69,6 +84,7 @@ __all__ = [
     "BudgetReservation",
     "DecisionOutcome",
     "DecisionReasonCode",
+    "DeflectionAlert",
     "DisputeAnalysis",
     "DisputeCase",
     "DisputeEvidenceCitation",
@@ -93,22 +109,27 @@ __all__ = [
     "ReplayTimelineEntry",
     "ReservationStatus",
     "SpendingPassport",
+    "StripeEventEnvelope",
     "StripePaymentIntentPayload",
     "StripeSharedPaymentToken",
     "StripeSmartDisputePayload",
+    "TAPTokenPayload",
     "Tenant",
     "TokenProvenanceProof",
     "VerifiedPayPalCapture",
     "X402SettlementProof",
+    "assert_dispute_transition",
     "assert_payment_transition",
+    "can_transition_dispute",
     "can_transition_payment",
     "canonical_json",
     "compute_payload_hash",
     "compute_quote_hash",
+    "decimal_str_to_minor",
     "evaluate_policy_v1",
     "evaluate_policy_v1_rules",
     "format_minor_to_major",
     "get_currency_exponent",
+    "minor_to_decimal_str",
     "parse_major_to_minor",
 ]
-

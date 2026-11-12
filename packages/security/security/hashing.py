@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import time
 from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
@@ -93,4 +94,72 @@ def verify_financial_event_chain(events: Sequence[FinancialEvent]) -> tuple[bool
         expected_prev = ev.event_hash
 
     return len(errors) == 0, errors
+
+
+def sign_webhook_payload(
+    secret: str,
+    raw_body: bytes | str,
+    timestamp: int | None = None,
+) -> tuple[int, str]:
+    """Compute replay-protected ``(timestamp, hmac_sha256_hex)`` for an outbound webhook body."""
+    ts = int(time.time()) if timestamp is None else int(timestamp)
+    body_str = raw_body.decode("utf-8") if isinstance(raw_body, bytes) else raw_body
+    signed_message = f"{ts}.{body_str}".encode()
+    sig = hmac.new(secret.encode("utf-8"), signed_message, hashlib.sha256).hexdigest()
+    return ts, sig
+
+
+def format_aegis_signature(
+    secret: str,
+    raw_body: bytes | str,
+    timestamp: int | None = None,
+) -> str:
+    """Format canonical ``X-Aegis-Signature`` header value ``t=<ts>,v1=<hex>``."""
+    ts, sig = sign_webhook_payload(secret, raw_body, timestamp=timestamp)
+    return f"t={ts},v1={sig}"
+
+
+def verify_aegis_signature(
+    secret: str,
+    raw_body: bytes | str,
+    header_value: str,
+    tolerance_seconds: int = 300,
+    now_ts: int | None = None,
+) -> bool:
+    """Verify a replay-protected ``t=<ts>,v1=<hex>`` webhook signature in constant time."""
+    if not header_value or not secret:
+        return False
+
+    ts: int | None = None
+    signatures: list[str] = []
+    for part in header_value.split(","):
+        item = part.strip()
+        if "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if key == "t":
+            if ts is not None:
+                return False
+            try:
+                ts = int(value)
+            except ValueError:
+                return False
+        elif key == "v1" and value:
+            signatures.append(value)
+
+    if ts is None or not signatures:
+        return False
+
+    current = int(time.time()) if now_ts is None else int(now_ts)
+    if tolerance_seconds >= 0 and abs(current - ts) > tolerance_seconds:
+        return False
+
+    _, expected_sig = sign_webhook_payload(secret, raw_body, timestamp=ts)
+    matched = False
+    for provided in signatures:
+        if hmac.compare_digest(expected_sig, provided):
+            matched = True
+    return matched
 

@@ -11,13 +11,24 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
-from contracts import ApprovalRecord, ApprovalStatus, FinancialEventType
+from contracts import (
+    ApprovalRecord,
+    ApprovalStatus,
+    DecisionReasonCode,
+    FinancialEventType,
+    PassportStatus,
+    QuoteSnapshot,
+    SpendingPassport,
+    compute_quote_hash,
+)
 
 from guardian.domain.exceptions import (
     ApprovalExpiredError,
     ApprovalMismatchError,
     ApprovalNotFoundError,
     GuardianError,
+    InvalidStateTransitionError,
+    PolicyDeniedError,
 )
 
 try:
@@ -164,6 +175,8 @@ class ApprovalService:
         current_currency: str,
         current_quote_hash: str,
         payment_intent_id: UUID | None = None,
+        quote: QuoteSnapshot | None = None,
+        passport: SpendingPassport | None = None,
         now: datetime | None = None,
     ) -> ApprovalRecord:
         current_time = now or _utc_now()
@@ -171,7 +184,13 @@ class ApprovalService:
         if record is None:
             raise ApprovalNotFoundError(f"ApprovalRecord {approval_id} not found")
 
-        if record.status == ApprovalStatus.EXPIRED or record.expires_at < current_time:
+        if payment_intent_id is not None and record.payment_intent_id != payment_intent_id:
+            raise ApprovalMismatchError(
+                f"Approval {approval_id} is bound to intent {record.payment_intent_id}, "
+                f"attempted for {payment_intent_id}"
+            )
+
+        if record.status == ApprovalStatus.EXPIRED or record.expires_at <= current_time:
             if record.status != ApprovalStatus.EXPIRED:
                 record = record.model_copy(update={"status": ApprovalStatus.EXPIRED})
                 self.repo.update_approval(record)
@@ -180,10 +199,12 @@ class ApprovalService:
             )
 
         if record.status == ApprovalStatus.CONSUMED:
-            raise GuardianError(f"Approval {approval_id} has already been consumed")
+            raise InvalidStateTransitionError(
+                f"Approval {approval_id} has already been consumed"
+            )
 
         if record.status != ApprovalStatus.APPROVED:
-            raise GuardianError(
+            raise InvalidStateTransitionError(
                 f"Approval {approval_id} cannot be consumed in status {record.status.value}"
             )
 
@@ -217,6 +238,73 @@ class ApprovalService:
                 f"Quote hash mismatch: approved for {record.bound_quote_hash}, "
                 f"attempted for {current_quote_hash}"
             )
+
+        target_intent_id = payment_intent_id or record.payment_intent_id
+        intent = None
+        if quote is None or passport is None:
+            get_intent_fn = getattr(self.repo, "get_intent", None)
+            if callable(get_intent_fn):
+                intent = get_intent_fn(tenant_id, target_intent_id)
+
+        quote_obj = quote
+        if quote_obj is None and intent is not None:
+            get_quote_fn = getattr(self.repo, "get_quote", None)
+            if callable(get_quote_fn):
+                quote_obj = get_quote_fn(tenant_id, intent.quote_snapshot_id)
+
+        if quote_obj is not None:
+            if quote_obj.expires_at <= current_time:
+                raise ApprovalExpiredError(
+                    f"Quote {quote_obj.id} expired at {quote_obj.expires_at.isoformat()}"
+                )
+            recomputed_hash = compute_quote_hash(
+                merchant_id=quote_obj.merchant_id,
+                amount_minor=quote_obj.amount_minor,
+                currency=quote_obj.currency,
+                line_items=quote_obj.line_items,
+            )
+            if (
+                recomputed_hash != current_quote_hash
+                or quote_obj.quote_hash != current_quote_hash
+                or recomputed_hash != record.bound_quote_hash
+            ):
+                raise ApprovalMismatchError(
+                    "Quote hash re-verification failed at approval consumption time"
+                )
+            if (
+                quote_obj.merchant_id != current_merchant_id
+                or quote_obj.amount_minor != current_amount_minor
+                or quote_obj.currency.upper() != current_currency.upper()
+            ):
+                raise ApprovalMismatchError(
+                    "Quote snapshot parameters no longer match bound approval"
+                )
+
+        passport_obj = passport
+        if passport_obj is None and intent is not None:
+            get_passport_fn = getattr(self.repo, "get_passport", None)
+            if callable(get_passport_fn):
+                passport_obj = get_passport_fn(tenant_id, intent.passport_id)
+
+        if passport_obj is not None:
+            if passport_obj.status == PassportStatus.REVOKED:
+                raise PolicyDeniedError(
+                    f"SpendingPassport {passport_obj.id} is REVOKED",
+                    reason_codes=[DecisionReasonCode.DENIED_PASSPORT_REVOKED.value],
+                )
+            if passport_obj.status == PassportStatus.PAUSED:
+                raise PolicyDeniedError(
+                    f"SpendingPassport {passport_obj.id} is PAUSED",
+                    reason_codes=[DecisionReasonCode.DENIED_PASSPORT_PAUSED.value],
+                )
+            if (
+                passport_obj.status == PassportStatus.EXPIRED
+                or passport_obj.expires_at <= current_time
+            ):
+                raise PolicyDeniedError(
+                    f"SpendingPassport {passport_obj.id} has expired",
+                    reason_codes=[DecisionReasonCode.DENIED_PASSPORT_EXPIRED.value],
+                )
 
         # Mark as consumed
         consumed_record = record.model_copy(
