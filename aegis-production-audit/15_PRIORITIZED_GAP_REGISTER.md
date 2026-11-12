@@ -37,8 +37,7 @@
 
 ---
 
-## 2. Remaining Pre-Launch Action List (Non-Code External & Dependency Items Only)
-1. **External Sandbox & Provider Execution (`NOT VERIFIED`):** Obtain PayPal Sandbox credentials to run `packages/paypal/tests/test_live_sandbox_optional.py` live (`create -> approve -> capture -> refund -> dispute -> webhook`), plus test-mode Stripe Billing, live LLM evals, remote S3/R2 upload, & SMTP.
-2. **Real Browser Playwright (`NOT VERIFIED`):** Install `@playwright/test` in `apps/web/package.json` and run `apps/web/tests/playwright_e2e_journeys.spec.ts` against `next start` + `aegis_api`.
-3. **Supply-Chain CVE Updates:** Upgrade `langgraph` (`>=0.4.4+` ecosystem / `langgraph-sdk>=0.4.4`) & `pytest>=9.0.3` for `pip-audit`, and upgrade `next` (`16.4.6`) or transitive `postcss` in `apps/web` before public beta/commercial release.
-4. **Ops, Legal & Compliance Sign-Off:** Deploy `deploy/linux-staging/` to target Linux VPS, benchmark RPS load capacity, complete external legal counsel review of `/legal/*` & `DPA`, run external pen-test, and prepare SOC 2 Type II controls.
+## 2. Remaining Pre-Launch Action List (RC1 Post-Merge Blockers & External Gates)
+1. **`[RC1-BLOCKER-1]` Fix `tenants FOR UPDATE` Burst Deadlock (`FAIL`):** Acquire tenant serialization lock at the start of `GuardianService.submit_proposal()` before taking FK `FOR KEY SHARE` locks so `LedgerRepository.append_financial_event()` does not deadlock under same-tenant burst concurrency (`98.0%` error in `load_benchmark.py`; `test_parallel_payment_proposal_idempotency` failed on PG16).
+2. **`[RC1-BLOCKER-2]` External Sandbox & Provider Execution (`BLOCKED / NOT VERIFIED`):** Provision `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID` to run `packages/paypal/tests/test_live_sandbox_optional.py` live, plus test-mode Stripe Billing, live LLM evals, remote S3/R2 upload, & SMTP. *(Note: Real Chromium Playwright `5/5` & `pip-audit`/`npm audit --omit=dev` `0` CVEs are now **CLOSED** in RC1.)*
+3. **Ops, Legal & Compliance Sign-Off (`NOT VERIFIED`):** Deploy `deploy/linux-staging/` to target Linux VPS with Certbot TLS, re-run `tests/load/load_benchmark.py` after deadlock fix, complete external legal counsel review of `/legal/*` & DPDPA disclosures, run external pen-test, and prepare SOC 2 Type II controls.
