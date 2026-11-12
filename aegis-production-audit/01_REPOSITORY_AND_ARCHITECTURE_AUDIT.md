@@ -1,103 +1,75 @@
 # 01 — Repository & Architecture Forensic Audit
 
-**Audited Branch:** `integration/nexus` (`1be376e`)  
+**Audited Branch:** `integration/nexus` (`498043e`, post-M1 + M3 merge over baseline `7829095` / `1be376e`)  
 **Workspace Root:** `/home/bigboyaks/Projects/agentpay-nexus`  
-**Remote:** `origin -> https://github.com/abhinav29102005/agentpay-nexus.git`  
+**Remote:** `origin -> https://github.com/abhinav29102005/agentpay-nexus.git`
 
 ---
 
-## 1. Git, Branch, Worktree & SCM Forensics
+## 1. Git, Branch, Worktree & SCM Forensics (`2026-11-12` Sync State)
 
-| Check | Observed State (`VERIFIED`) | Risk / Finding |
+| Ref / Branch | Observed State (`VERIFIED`) | Sync Status & Risk |
 | :--- | :--- | :--- |
-| Current Branch & Status | `integration/nexus` @ `1be376e`; clean working tree | No uncommitted changes |
-| `main` Branch | `0108f84` (`origin/main`, `origin/HEAD`) | Behind `integration/nexus`; matches pre-integration contracts/guardian merge |
-| `feature/ghostpay` (local vs remote) | Local `ea3c73b`; **`origin/feature/ghostpay` is `2a243e1` (2 commits ahead: `c6c1cab`, `2a243e1`)** | **Branch divergence detected**: remote `feature/ghostpay` received extra commits after `ea3c73b`; unmerged into `integration/nexus` |
-| Unmerged Auxiliary Branches | `origin/feature/ghostpay-deployment` (`5bc08f6`), `origin/docs/ghostpay-plan` (`6280b17`) | Potential orphaned work or unreviewed deployment configs |
-| Integrated Feature Branches | `feature/disputeos` (`5c648c4`), `feature/guardian` (`894b903`) | Historical feature branches |
-| Local Safety Tags | `safety/ghostpay-local` (`e42812c`), `safety/ghostpay-remote` (`94bb16c`), `safety/ghostpay-pre-timemachine` (`f58f756`), `safety/ghostpay-remote-9173a39` (`9173a39`) | Cleanup needed post-stabilization |
-| Submodules / Worktrees | None (`git submodule status` empty; single worktree `/mnt/storage/Projects/agentpay-nexus`) | Clean |
+| `integration/nexus` | Local `498043e` (`origin/integration/nexus` @ `7829095` prior to push) | Merged `work/m1-platform-security-infra` (`d9ab7b8`) + `work/m3-web-sdks-qa` (`4b5d52f`) with **0 merge conflicts** (`141` files, `+31,275 / -2,132`) |
+| `work/m1-platform-security-infra` | Local + remote `d9ab7b8` | **COMPLETE & SYNCED** (`59` files changed, all inside M1 scope; PG16 & Compose smoke verified) |
+| `work/m2-financial-forensics-ai` | **ABSENT on `origin` and locally** | **MISSING / UNPUSHED (`BLOCKER`)** — Computer 2's Guardian/PayPal/GhostPay/DisputeOS/AI changes have not been pushed yet |
+| `work/m3-web-sdks-qa` | Local + remote `4b5d52f` | **PUSHED & MERGED** (`82` files changed inside M3 scope; minor cleanup needed: `79` Ruff issues + SDK parity vs M1's new endpoints) |
+| `main` | `0108f84` (`origin/main`, `origin/HEAD`) | Untouched legacy pre-integration snapshot |
+| `feature/ghostpay` | Local `ea3c73b` vs `origin/feature/ghostpay` `2a243e1` | Still 2 commits ahead on remote (`GAP-026` queued for M2 reconciliation) |
+| `packages/ui/` | Removed from git (`M3`), empty local dir remains on disk | Cleanup `rmdir packages/ui` safely when desired |
 
 ---
 
-## 2. Monorepo Structure & Actual Source Inventory (`31,159+` tracked LOC)
+## 2. Monorepo Structure & Actual Source Inventory (`integration/nexus` @ `498043e`)
 
-- **Shared Packages (`packages/`)**:
-  - `packages/contracts/` (`nexus-contracts`): Canonical Pydantic v2 models, enums (`PaymentState`, `DecisionOutcome`, `DecisionReasonCode`, `DisputeStatus`), JSON schema export (`schemas/contracts.schema.json`), SHA-256 `compute_quote_hash`.
-  - `packages/security/` (`nexus-security`): Env settings (`NexusSettings`), PBKDF2-SHA256 & HMAC API-key hashing, HS256 JWT, 6-role RBAC matrix (`auth.py`), SHA-256 financial event chain hashing (`hashing.py`), tenant guard (`tenant.py`).
-  - `packages/database/` (`nexus-database`): 27 SQLAlchemy 2.0 ORM tables (`orm.py`), `LedgerRepository` (`repository.py`), `PlatformRepository` (`platform_repo.py`), `LocalObjectStorage` (`storage.py`), Alembic migrations (`0001_initial_schema.py`, `0002_aegis_platform_extensions.py`).
-  - `packages/paypal/` (`nexus-paypal`): Isolated `PayPalSandboxClient` (`httpx` async Orders v2, signature verification, read-only `list_disputes`).
-  - `packages/sdk-python/` (`aegis-sdk`): Synchronous `httpx` client (`client.py`, 241 lines).
-  - `packages/sdk-typescript/` (`@aegis-platform/sdk`): Zero-dependency `fetch` + `node:crypto` client (`src/index.ts`, 284 lines).
-  - **`packages/ui/`**: **EMPTY DIRECTORY** (abandoned placeholder; actual UI is `apps/web/`).
-- **Domain Modules (`modules/`)**:
-  - `modules/agentpay-guardian/` (`agentpay-guardian`): Policy engine, passport/approval services, budget & payment coordinators, deterministic copilot stub, standalone router (unused in prod).
-  - `modules/ghostpay/` (`agentpay-ghostpay`): Hardened replay/counterfactual/anomalies/provenance/timelines **PLUS** duplicated `timemachine/`, `forensics/`, `ingestion/`, `agentdna/`, and `api/router.py` (directly mounted into unified API).
-  - `modules/disputeos/` (`disputeos`): Case service, ingestion normalizer, evidence graph & contradiction rules, deterministic analyzer + fake-tested LLM interface, PayPal adapter stub, standalone router (unused in prod).
-- **Applications & Services (`services/`, `apps/`)**:
-  - `services/api/` (`aegis-api`): FastAPI factory (`app.py`), auth/orgs, overview, `guardian_db.py`, `disputeos_db.py`, `webhooks.py`, GhostPay adapter (`adapters.py`), rate limiter, structured logging.
-  - `services/worker/` (`aegis-worker`): Durable outbox polling + HMAC webhook delivery + PayPal pending payment reconciliation.
-  - `apps/web/`: Next.js 15 + React 19 + Tailwind CSS App Router console (`14` routes).
-- **Empty / Stale Directories & Docs**:
-  - Empty dirs: `packages/ui/`, `scripts/`, `tests/adversarial/`, `tests/concurrency/`, `tests/e2e/`, `tests/integration/`.
-  - Stale docs: `README.md` (still labels Guardian, GhostPay, API, Web as "Scaffolded for team handoff"), `docs/TEAM_HANDOFF.md` (outdated pre-implementation checklist), `docs/AEGIS_PLATFORM_BUILD_REPORT.md` (lists 7 non-existent role names like `FINANCE_ADMIN`), `docs/sdk/INTEGRATION_GUIDE.md` (documents wrong `AEGIS-Signature: t=...,v1=...` header & `orgId` param).
+- **Shared Packages (`packages/`):**
+  - `packages/contracts/` (`nexus-contracts`): *Unchanged from `1be376e` (waiting on M2)* — Pydantic v2 models, enums, `compute_quote_hash`.
+  - `packages/security/` (`nexus-security`): *Updated by M1* — `settings.py` (env aliases + security posture validator), `auth.py` (strict 6 `Role`s, `OWNER` guard, TOTP MFA, OIDC claim validation), `tenant.py` (sanitized 403), `hashing.py` (`AEGIS-Signature: t=,v1=`), `ssrf.py`, `kms.py`, `erasure.py`.
+  - `packages/database/` (`nexus-database`): *Updated by M1* — **`37` SQLAlchemy 2.0 ORM tables** (`3` Alembic revisions `0001`–`0003`, PG `financial_events` immutability triggers, `spending_passport_snapshots`, `outbox_events` lease cols, `ghostpay_traces`, `ghostpay_agent_dna_profiles`, `llm_invocation_logs`, `paypal_webhook_events`, billing/erasure/invitations), `storage.py` (`LocalObjectStorage` + `S3ObjectStorage` WORM + streaming 10MB cap).
+  - `packages/paypal/` (`nexus-paypal`): *Unchanged from `1be376e` (waiting on M2)* — Mocked Orders v2 client (`JPY`/`BHD` bug + missing disputes/refunds).
+  - `packages/sdk-python/` (`aegis-sdk`): *Updated by M3* — `client.py` (`2,043` lines), `AsyncAegisClient`, `exceptions.py`, `pagination.py`, `webhook.py` (`AEGIS-Signature: t=,v1=`), `integrations/{langchain,openai_agents}.py`, `py.typed`, `README.md`, `6` test files (`72/96` OpenAPI ops = `75.0%`).
+  - `packages/sdk-typescript/` (`@aegis-platform/sdk`): *Updated by M3* — `client.ts` (`851` lines), `crypto.ts` (Node + Edge WebCrypto), `errors.ts` (fixed FastAPI `detail` parser), `types.ts`, `integrations/vercel-ai.ts`, `README.md`, `4` Vitest suites (`76/96` OpenAPI ops = `79.2%`).
+- **Domain Modules (`modules/`) — *ALL WAITING ON M2 (`work/m2-financial-forensics-ai`)*:**
+  - `modules/agentpay-guardian/`, `modules/ghostpay/`, `modules/disputeos/`: Still at `1be376e` (`approved=False` bug, `timemachine`/RAM split-brain, DisputeOS fake `SUBMITTED`, deterministic LLM stubs).
+- **Applications, Services, Infra & QA (`services/`, `apps/`, `deploy/`, `scripts/`, `tests/`):**
+  - `services/api/` (`aegis-api`): **`85` OpenAPI paths (`96` HTTP operations)** via M1 (`auth_orgs.py`, `billing.py`, `erasure.py`, `overview.py`, `webhooks.py`, `rate_limit.py` Redis + SHA-256 keys, `metrics.py` Prometheus + OTel, `deps.py` active principal enforcement, `app.py` GhostPay RBAC + security headers). *(Note: `guardian_db.py`, `disputeos_db.py`, `adapters.py` await M2.)*
+  - `services/worker/` (`aegis-worker`): Hardened by M1 — `AEGIS-Signature: t=,v1=`, runtime SSRF IPv4/IPv6 + no-redirect guard, response redaction, lease/reaper, `SKIP LOCKED` reconciliation, `asyncio.Semaphore` dispatch, `--healthcheck`.
+  - `apps/web/`: *Updated by M3* — Next.js `15.5.29` / React `19`, **`19` App Router pages + `6` BFF API routes** (`/api/auth/*`, `/api/proxy/[...path]`, `/onboarding`, `/status`, `/legal/{terms,privacy,dpa}`, zero `localStorage` JWTs, CSP/security headers).
+  - `deploy/`, `scripts/`: *Added by M1* — `backup_pitr.sh`, `restore_verify.sh`, Grafana dashboard, Prometheus alerts, Linux VPS systemd/Nginx/Compose prod manifests, EU/IN/US residency env examples.
+  - `tests/{adversarial,concurrency,e2e,integration}/`: *Populated by M3* — `5` QA suites (`14 passed, 2 failed`; not yet listed in root `pyproject.toml` `testpaths`).
 
 ---
 
-## 3. Accurate Component Dependency Graph
+## 3. Updated Component Dependency Graph (Post-M1 + M3 Sync)
 
 ```mermaid
 flowchart TD
-    WEB["apps/web (Next.js 15)"] -->|REST JSON / JWT| API["services/api (FastAPI, 69 paths / 78 ops)"]
-    SDKPY["packages/sdk-python (10/78 ops)"] -->|REST JSON| API
-    SDKTS["packages/sdk-typescript (20/78 ops)"] -->|REST JSON| API
+    WEB["apps/web (Next.js 15: 19 pages + 6 BFF routes, HttpOnly cookie)"] -->|Cookie Proxy / REST| API["services/api (FastAPI, 85 paths / 96 ops, Redis RL + /metrics + OTel)"]
+    SDKPY["packages/sdk-python (72/96 ops, Sync+Async, LangGraph/OpenAI)"] -->|REST JSON| API
+    SDKTS["packages/sdk-typescript (76/96 ops, Edge WebCrypto, Vercel AI)"] -->|REST JSON| API
 
-    API --> SEC["packages/security (JWT, RBAC, HMAC, Settings)"]
-    API --> DB["packages/database (27 ORM tables, LedgerRepository, PlatformRepository)"]
-    API --> PP["packages/paypal (PayPalSandboxClient)"]
-    API --> GUARD["modules/agentpay-guardian (used via guardian_db.py)"]
-    API --> DISP["modules/disputeos (used via disputeos_db.py)"]
-    API --> GHOST["modules/ghostpay (router mounted directly via adapters.py!)"]
+    API --> SEC["packages/security (M1: 6 Roles, SSRF, KMS, Erasure, Aliases)"]
+    API --> DB["packages/database (M1: 37 tables, PG triggers, Snapshots, S3/Local Storage)"]
+    API --> PP["packages/paypal (PRE-M2: Mocked Sandbox, 2-dec bug, no disputes)"]
+    API --> GUARD["modules/agentpay-guardian (PRE-M2: approved=False bug, daily cap missing)"]
+    API --> DISP["modules/disputeos (PRE-M2: fake SUBMITTED, no PayPal provide-evidence)"]
+    API --> GHOST["modules/ghostpay (M1 RBAC wired at app.py; PRE-M2 RAM/engine split)"]
 
-    WRK["services/worker (OutboxWorker)"] --> DB
+    WRK["services/worker (M1: Leases, SKIP LOCKED, Semaphore, SSRF, t=,v1=)"] --> DB
     WRK --> GUARD
     WRK --> PP
     WRK --> SEC
 
-    GUARD --> CONTRACTS["packages/contracts"]
-    GUARD --> SEC
-    GUARD --> PP
-    GHOST --> CONTRACTS
-    GHOST --> SEC
-    DISP --> CONTRACTS
-    DISP --> SEC
-    DB --> CONTRACTS
-    DB --> SEC
-    DB --> STORAGE["LocalObjectStorage (.aegis_data / ./var)"]
-    DB --> PG[("PostgreSQL 16 / SQLite tests")]
-    PP -.->|"Mocked in tests; LIVE UNVERIFIED"| PPSBX["PayPal Sandbox API"]
+    DB --> PG[("PostgreSQL 16 + WAL PITR + Triggers")]
+    API --> REDIS[("Redis Sliding-Window RL")]
+    DB --> OBJ["LocalObjectStorage / S3ObjectStorage (WORM)"]
+    PP -.->|"Mocked; LIVE UNVERIFIED"| PPSBX["PayPal Sandbox API"]
 ```
 
 ---
 
-## 4. Architectural Verdict: Integrated Platform vs. Coexisting Modules?
-
-**Verdict: PARTIALLY INTEGRATED (`~65%`) — Strong Shared Spine, Fractured Module Plumbing.**
-
-AEGIS is **not** merely unrelated folders sharing a Git repo:
-- **Genuinely unified core**: `contracts`, `security`, `database` (with a single 27-table PostgreSQL schema and canonical `financial_events` hash chain), `services/api`, `services/worker`, and `apps/web` genuinely share one identity model (`tenants`/`users`/`agents`), one `PaymentIntent` -> `FinancialEvent` ledger, and one transactional `OutboxEventRow`.
-- **Where integration fractures**:
-  1. **Three inconsistent integration patterns across the 3 domain modules**:
-     - *Guardian* and *DisputeOS* write clean platform DB routers (`guardian_db.py`, `disputeos_db.py`), leaving their standalone `router.py` files as insecure/in-memory dead code.
-     - *GhostPay* mounts its internal `modules/ghostpay/ghostpay/api/router.py` directly into `services/api/aegis_api/app.py:152-155`, bypassing `require_permission(...)` RBAC and splitting endpoints half into PostgreSQL (`*-by-payment/*`, `GET /investigations`) and half into volatile process RAM (`POST /investigations`, `/traces/*`, `/agents/*`).
-  2. **Contract drift at boundaries**: Backend Python refactored `PaymentState` (`CAPTURE_PENDING`), `Permission` (`passports:write`), `Role` (6 roles), `DisputeAnalysis` (`grounded_summary`, `citations`), and `X-AEGIS-Signature` (`sha256=...`) without updating `apps/web`, both SDKs, or `docs/`.
-  3. **GhostPay internal duplication**: Two separate engines (`replay/engine.py` vs `timemachine/replay.py`), two provenance modules (`provenance/verifier.py` vs `forensics/provenance.py`), two timeline builders, and two anomaly detectors coexist in the same package, AND Guardian vs GhostPay disagree on `"policy-v1"` semantics.
-
----
-
-## 5. Dependencies, License & Secret Exposure Risks
-
-- **License**: `LICENSE` (`1-21`) is permissive **MIT** (`Copyright (c) 2026 AgentPay Nexus Contributors`). Third-party inspirations documented cleanly in `research/repositories/REUSE_MATRIX.md` (zero GPL contamination observed).
-- **Secret Exposure**: `git ls-files` confirms `.env` is excluded (`.gitignore:34-37`) and only `.env.example` is tracked. Real PayPal/OpenAI/Google credentials are blank in source control (`VERIFIED IN CODE`).
-- **Config Secret Risk (`HIGH`)**: `.env.example` and `docker-compose.yml` pass `JWT_SECRET`, `RATE_LIMIT_RPM`, and `EVIDENCE_STORAGE_DIR`, whereas `packages/security/security/settings.py:32-52` reads `NEXUS_JWT_SECRET`, `AEGIS_RATE_LIMIT_RPM`, and `AEGIS_EVIDENCE_STORAGE_DIR` — causing silent fallback to `NEXUS_SIGNING_SECRET` (or dev secrets if `APP_ENV` defaults to `development`). Also CI (`ci.yml:69-78`) only checks committed `.env*` filenames, not secret patterns (`gitleaks`), and dependencies/Actions lack vulnerability scans or SHA pinning.
-
+## 4. Architectural Integration Verdict (`498043e`)
+**Verdict: INFRASTRUCTURE, SECURITY, UI & SDKS UNIFIED (`~80%`); CORE FINANCIAL ENGINE STILL PRE-M2.**
+- **What M1 + M3 Resolved cleanly:** Boundary ownership worked — M1 and M3 merged with **zero git conflicts**. The GhostPay `app.py` RBAC bypass (`GAP-002`), frontend-backend enum/field contract drift (`GAP-004`), Compose env mismatches (`GAP-006`), `ADMIN->OWNER` escalation (`GAP-008`), webhook SSRF (`GAP-003`), signature contract mismatch (`GAP-014`), rate-limit collision (`GAP-007`), `localStorage` JWT (`GAP-018`), PG immutability triggers (`GAP-020`), and observability/backup tooling (`GAP-021`) are all fixed and verified in code.
+- **Remaining Architectural Split (Awaiting M2):** `modules/{agentpay-guardian,ghostpay,disputeos}`, `packages/{contracts,paypal}`, `adapters.py`, `guardian_db.py`, and `disputeos_db.py` are unchanged from `1be376e`. M1 already added the PG repository hooks (`save_passport_snapshot`, `save_ghostpay_trace`, `save_agent_dna_profile`, `log_llm_invocation`, `CUSTOMER.DISPUTE.*` webhook dispatch) — they sit ready waiting for `work/m2-financial-forensics-ai` to wire into them.
+- **Minor Sync Friction Found:** M1 added `18` new endpoints (`78 -> 96`), dropping M3's SDK OpenAPI parity below the `85%` gate (`75.0%` Py / `79.2%` TS); M3's `concurrency_env` fixture hardcoded SQLite WAL instead of `AEGIS_TEST_POSTGRES_URL`; and M3 left `79` Ruff lint errors (`F401`, `I001`, `2` `F821` in `test_pagination.py`).

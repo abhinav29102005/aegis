@@ -1,57 +1,43 @@
 # 06 — Backend API, PostgreSQL & Background Worker Audit
 
+**Status as of `2026-11-12` (`integration/nexus` @ `498043e`):** **M1 HARDENING COMPLETE & VERIFIED AGAINST PG16 + LIVE REDIS/COMPOSE; M2 ROUTERS (`guardian_db`, `disputeos_db`, `adapters`) STILL AWAIT PUSH.**  
 **Scope:** `services/api/`, `services/worker/`, `packages/database/`
 
 ---
 
 ## 1. API Engineering Assessment (`services/api/`)
 
-- **Versioning & Surface (`services/api/aegis_api/app.py`):** Clean `/v1/*` path versioning (`69` OpenAPI paths, `78` HTTP operations verified live via `create_app().openapi()`, plus `/health` and `/ready`). No deprecation policy or header (`Sunset`, `X-API-Version`) defined yet.
-- **Correlation & Logging (`app.py:90-101`, `logging_config.py:10-34`):** Emits structured JSON logs carrying `X-Correlation-Id` (client-supplied header accepted unvalidated — should length/charset sanitize!).
-- **Authentication & Authorization (`deps.py`, `auth_orgs.py`, `rate_limit.py`):**
-  - **Positives:** Uniform `AuthContext` dependency on all routers in `services/api/aegis_api/routers/`; PBKDF2-SHA256 `600_000` iterations; HS256 JWT verified with `hmac.compare_digest`.
-  - **Defects:**
-    1. **[CRITICAL] GhostPay RBAC bypass (`app.py:152-155`):** Wired via `require_tenant_id` without checking `Permission.GHOSTPAY_READ` or `Permission.GHOSTPAY_SIMULATE`.
-    2. **[HIGH] `ADMIN -> OWNER` privilege escalation & arbitrary member hijacking (`auth_orgs.py:340-400,483-523`).**
-    3. **[HIGH] Env-var mismatch (`settings.py:32-52`):** `.env.example` / `docker-compose.yml` use `JWT_SECRET`, `JWT_ACCESS_TTL_MINUTES`, `RATE_LIMIT_RPM`, `EVIDENCE_STORAGE_DIR`; `NexusSettings` reads `NEXUS_JWT_SECRET`, `AEGIS_SESSION_TTL_MINUTES`, `AEGIS_RATE_LIMIT_RPM`, `AEGIS_EVIDENCE_STORAGE_DIR` — silently ignoring configured `.env` values!
-    4. **[HIGH] Global JWT rate-limiter bucket collision (`rate_limit.py:29-31`):** `tok:{auth[7:23]}` hashes the fixed HS256 header `eyJhbGciOiJIUzI1Ni`, locking ALL JWT users across ALL tenants into a single shared bucket (`240` rpm), while `_buckets` grows unboundedly in RAM (`REDIS_URL` unused).
-    5. **[MEDIUM] Inactive principal bypass (`deps.py:113-143`, `platform_repo.py:252-262`):** `ApiKeyRow` lookup omits checking `UserRow.is_active` and `ServiceAccountRow.status`. No `/v1/auth/logout` or `jti` revocation.
-- **Input Validation, Pagination, Idempotency & Errors:**
-  - **Error handling gaps:** `/ready` (`app.py:149`), `TenantIsolationError` (`tenant.py:15-18`), and handlers in `webhooks.py:175`, `guardian_db.py`, `disputeos_db.py` leak `str(exc)` and victim `tenant_id` UUIDs. Furthermore, `guardian_db.py:495-575` fails to catch `PayPalTimeoutError`, `PayPalAPIError`, or `GuardianError` on `/buyer-approved`, `/capture`, `/buyer-declined`, `/reconcile` (exposing raw HTTP `500`!).
-  - **Pagination gaps:** `/audit-events`, `/approvals`, `/payments`, `/worker/outbox`, `/investigations` have bounded `limit` (note `deliveries` & `outbox` lack `offset`), whereas `/orgs/members`, `/orgs/service-accounts`, `/orgs/api-keys`, `/guardian/agents`, `/guardian/merchants`, `/guardian/passports`, `/disputeos/cases`, `/webhooks/endpoints` return unbounded full lists.
-  - **HTTP Idempotency:** `IdempotencyRecordRow` (`orm.py:342-355`) is **dead schema** — never read or written. Only `PaymentIntent` & `PaymentAttempt` enforce DB-level idempotency keys.
-  - **PayPal Webhook Contracts (`webhooks.py:161-220`):** Verifies signature fail-closed via PayPal API, **but lacks PayPal `event.id` deduplication** and does not dispatch `CUSTOMER.DISPUTE.*` events.
+- **Expanded Versioned Surface (`app.py`):** Expanded from `69` paths / `78` ops to **`85` OpenAPI paths / `96` HTTP operations** across `/health`, `/ready`, `/metrics`, `/v1/auth/*`, `/v1/orgs/*`, `/v1/guardian/*`, `/v1/ghostpay/*`, `/v1/disputeos/*`, `/v1/webhooks/*`, `/v1/paypal/*`, `/v1/audit-events*`, `/v1/overview/*`, `/v1/billing/*`, and `/v1/privacy/*`.
+- **Resolved in M1:**
+  1. **GhostPay RBAC (`app.py`):** Router-level `require_permission(Permission.GHOSTPAY_READ)` closes anonymous/low-role GhostPay access (`test_rbac_negative_matrix.py` + `test_gateway_and_rate_limit.py` PASS). *(Method-level `GHOSTPAY_SIMULATE` inside `ghostpay/api/router.py` awaits M2.)*
+  2. **`ADMIN -> OWNER` Blocked + Invite Consent (`auth_orgs.py`):** Non-`OWNER` cannot grant `OWNER` role or issue `OWNER` keys; cross-org add replaced by invitations (`POST /v1/orgs/invitations/{token}/accept`); `/register` email verification tokens & per-IP throttling; TOTP MFA + OIDC SSO exchange routes added; `limit`/`offset` pagination added on org members/keys/service accounts/overview/webhooks.
+  3. **Rate Limiter (`rate_limit.py`):** Fixed HS256 prefix collision via `sha256(token)[:16]`, bounded bucket eviction, & live Redis sorted-set backend (`x-ratelimit-remaining` verified in live Compose).
+  4. **Error Sanitization & Active Principals (`deps.py`, `app.py`, `tenant.py`, `webhooks.py`):** `TenantIsolationError` omits victim UUIDs, `/ready` & webhook routes sanitize exceptions, and `deps.py` enforces `UserRow.is_active` & `ServiceAccountRow.status`.
+  5. **Prometheus `/metrics` & OTel (`metrics.py`, `logging_config.py`):** Live `/metrics` endpoint + trace/span ID log injection + security response headers.
+  6. **Commercial & Privacy Routers (`billing.py`, `erasure.py`):** Stripe subscription plans/checkout/portal/webhooks/metering + GDPR/DPDPA export & crypto-shredding erasure routes.
+- **Remaining Open Items (Awaiting M2):** `guardian_db.py:495-575` & `disputeos_db.py` still lack `PayPalTimeoutError`/`PayPalAPIError` error mapping, session detachment around outbound PayPal `await` calls, `/disputeos/cases/{id}/resolve`, and `limit`/`offset` pagination on M2 list routes. `IdempotencyRecordRow` remains unused.
 
 ---
 
 ## 2. PostgreSQL Integrity & Lifecycle (`packages/database/`)
 
-- **Schema & Migrations (`orm.py`, `alembic/versions/`):** `27` SQLAlchemy ORM tables across `0001_initial_schema.py` and `0002_aegis_platform_extensions.py` (tested up/down/up on PG16 in CI).
-  - **[LOW] Unfrozen initial migration:** `0001_initial_schema.py` runs `Base.metadata.create_all` dynamically against live `orm.py`, creating future migration drift risk if new models are added without updating `0001`.
-  - **[LOW] Missing FKs:** `OutboxEventRow.tenant_id`, `IdempotencyRecordRow.tenant_id`, `WebhookDeliveryRow.outbox_event_id`, and `PaymentIntentRow`'s secondary link columns lack DB-level foreign key constraints.
-- **Transaction Isolation, Locking & Concurrency:**
-  - **Budget reservations (`repository.py:513-584`):** Uses atomic conditional `UPDATE ... WHERE (total_budget_minor - spent_minor - reserved_minor) >= :amt` on PG (safe row lock under `READ COMMITTED`), verified by 2-thread PG16 race test. *(Note: `THREAT_MODEL_AND_TRUST_ASSUMPTIONS.md:8` inaccurately describes this as `SELECT ... FOR UPDATE`.)*
-  - **Outbox claiming (`platform_repo.py:598-599`):** Uses `WITH FOR UPDATE SKIP LOCKED` on PostgreSQL.
-  - **[MEDIUM] Unprotected concurrency paths:** `append_financial_event` (`repository.py:722-735`) queries max `sequence_number` without `FOR UPDATE` (concurrent appends to the same `correlation_id` collide on `uq_financial_event_corr_seq`), and `transition_intent` (`repository.py:419-436`) does an unlocked read-check-write.
-  - **Connection Pooling (`session.py:14-19`):** Uses `pool_pre_ping=True`, default SQLAlchemy queue pool (`pool_size=5, max_overflow=10`), **no explicit `pool_recycle` or `pool_timeout` or statement timeout**.
-- **Audit Immutability, Retention, Backups & Recovery:**
-  - **[MEDIUM] No DB-level immutability:** PostgreSQL users can execute `UPDATE`/`DELETE` on `financial_events` and `admin_audit_logs`; zero DB triggers or least-privilege DB role restrictions exist, and `admin_audit_logs` has no hash chain.
-  - **[MEDIUM] Retention & Disaster Recovery Absent:** `DisputeCaseMetadataRow.retention_until` (+2555 days) is never queried or enforced; zero `pg_dump` / WAL-G / PITR scripts, zero restore drills, and zero row-level encryption / column encryption for `WebhookEndpointRow.signing_secret` (`orm.py:492`).
+- **Schema & Migrations:** **`37` SQLAlchemy 2.0 ORM tables** (`3` Alembic revisions: `0001`, `0002`, `0003_production_hardening_and_extensions`), verified `upgrade head && downgrade base && upgrade head` on PostgreSQL 16.
+- **Resolved in M1:**
+  1. **DB-Level Audit Immutability (`0003`):** Trigger `trg_aegis_prevent_financial_event_mutation` (`BEFORE UPDATE OR DELETE ON financial_events`) raises exception on tamper (verified in PG16 integration tests and `restore_verify.sh`).
+  2. **Sequence Locking & Dispute Update Fixes (`repository.py`):** `append_financial_event` locks correlation sequence via `FOR UPDATE`; `save_dispute_case` & `save_evidence` persist all updatable fields cleanly; `save_passport_snapshot` & `get_passport_snapshot_for_decision` auto-record immutable passport snapshots.
+  3. **M2 Bridge & Production Tables (`orm.py`, `platform_repo.py`):** `spending_passport_snapshots`, `ghostpay_traces`, `ghostpay_agent_dna_profiles`, `llm_invocation_logs`, `paypal_webhook_events`, `org_invitations`, `email_verifications`, `billing_subscriptions`, `usage_meters`, `erasure_requests` created & unit-tested.
+  4. **Object Storage (`storage.py`):** Added `S3ObjectStorage` (S3/R2 + Governance/Compliance WORM Object Lock), streaming 10MB size-capped writes, and GDPR erasure/retention sweep helpers alongside `LocalObjectStorage`.
+  5. **Connection Pooling (`session.py`):** Added `pool_recycle`, `pool_timeout`, & PostgreSQL statement timeouts.
 
 ---
 
 ## 3. Background Worker Reliability (`services/worker/`)
 
-| Worker Aspect | Current Implementation (`processor.py`, `main.py`, `platform_repo.py`) | Verdict & Risk |
+| Worker Aspect | Current Status (`498043e`) | Observed Evidence |
 | :--- | :--- | :--- |
-| Outbox Atomicity | `append_financial_event(..., also_enqueue_outbox=True)` (`repository.py:763-776`) inserts `OutboxEventRow` in the same DB tx. | **VERIFIED IN CODE** |
-| Competing Worker Outbox Claim | `claim_due_outbox_events` (`platform_repo.py:598-599`) uses `FOR UPDATE SKIP LOCKED` on PG; commits `status="PROCESSING"` (`processor.py:51`). | **VERIFIED IN CODE** |
-| **Crash Recovery / Stuck Jobs** | **`PROCESSING` rows have NO `locked_at`/`lease_expires_at` and NO reaper.** Crash/OOM during HTTP POST strands rows in `PROCESSING` forever! | **MISSING (`HIGH`)** |
-| **Competing Payment Reconciliation** | `list_pending_provider_attempts` (`platform_repo.py:668-679`) issues plain `SELECT` **without `SKIP LOCKED`**. Multiple workers concurrently reconcile the same payment & retry infinitely on config errors! | **BROKEN (`HIGH`)** |
-| Retry / Exponential Backoff / DLQ | `mark_outbox_failed` (`platform_repo.py:616-640`): `min(300, 5 * 2**(attempts-1))`, transitions to `DEAD_LETTER` at `max_attempts=5` (no jitter). | **PARTIALLY IMPLEMENTED** |
-| **DLQ Requeue Bug** | `requeue_dead_letter_outbox` (`platform_repo.py:656-666`) leaves `attempts >= 5`; next single error immediately re-dead-letters with 0 retries. | **BROKEN (`MEDIUM`)** |
-| **Outbound Webhook SSRF** | `processor.py:57,92,105`: zero IP/CIDR/scheme restrictions + captures `resp.text[:250]` back to tenant API. | **MISSING (`CRITICAL`)** |
-| Outbound Webhook Signature | Sends `X-AEGIS-Signature: sha256=<hex>` over sorted JSON (no timestamp `t=`, conflicting with docs `AEGIS-Signature: t=...,v1=...`). | **DRIFT (`MEDIUM`)** |
-| Loop Exception Handling & Logs | `main.py:41` only catches `(OSError, RuntimeError, ValueError)` — `SQLAlchemyError` crashes daemon; uses `logging.basicConfig` instead of JSON logs; zero Prometheus metrics. | **PARTIALLY IMPLEMENTED (`MEDIUM`)** |
-| Clock Skew Sensitivity | `next_retry_at <= ts` uses worker Python wall clock instead of PostgreSQL `NOW()`. | **PARTIALLY IMPLEMENTED (`LOW`)** |
-
+| Crash Recovery (`locked_at` / `lease_expires_at`) | **FIXED & VERIFIED (`M1`)** | `platform_repo.py` sets lease columns + auto-reclaims expired `PROCESSING` rows (`test_platform_repo.py` & `test_worker.py` PASS). |
+| Multi-Worker Payment Reconciliation | **FIXED IN PG16 (`M1`)** | `list_pending_capture_attempts` uses `FOR UPDATE SKIP LOCKED` on PostgreSQL (`test_platform_repo.py`, `test_worker.py`). |
+| Outbox Concurrency Note (`SQLite` vs `PG16`) | **IMPORTANT TEST FINDING (`M3` Harness)** | `tests/concurrency/test_concurrency_harness.py::test_outbox_lease_claim_concurrency` **FAILED (`60` claimed vs `20` unique)** because the test fixture hardcoded SQLite WAL instead of `AEGIS_TEST_POSTGRES_URL` (SQLite lacks `SKIP LOCKED`). |
+| DLQ Requeue Reset & Backoff | **FIXED & VERIFIED (`M1`)** | `requeue_dead_letter_outbox` resets `attempts = 0`; exponential jitter backoff capped + loop resilience (`main.py`) verified. |
+| Outbound Webhook SSRF + Signature | **FIXED & VERIFIED (`M1`)** | `processor.py` validates DNS/IPv4/IPv6 at delivery, disables redirects (`follow_redirects=False`), redacts errors (`HTTP <status>`), & signs `AEGIS-Signature: t=<unix>,v1=<hex>`. |
+| Concurrent Dispatch & Worker Healthcheck | **FIXED & VERIFIED LIVE (`M1`)** | `asyncio.Semaphore` bounded dispatch + `python -m aegis_worker.main --healthcheck` verified live in Docker Compose (`worker_healthcheck=OK`). |
