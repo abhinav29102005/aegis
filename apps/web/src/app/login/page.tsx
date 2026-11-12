@@ -389,7 +389,7 @@ function LoginForm() {
                     name="organization_slug"
                     type="text"
                     required
-                    pattern="^[a-z0-9-]+$"
+                    pattern={"^[a-z0-9\\-]+$"}
                     autoCorrect="off"
                     autoCapitalize="none"
                     spellCheck={false}
