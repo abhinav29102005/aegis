@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
@@ -34,7 +35,7 @@ from contracts import (
     assert_payment_transition,
 )
 from security import assert_same_tenant, compute_financial_event_hash
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -863,6 +864,25 @@ class LedgerRepository:
     # ------------------------------------------------------------------
     # Append-Only Audit Trail & Transactional Outbox
     # ------------------------------------------------------------------
+    def _acquire_pg_xact_advisory_lock(self, namespace: str, key: str) -> None:
+        """Acquire a transaction-scoped PostgreSQL advisory lock without locking table rows."""
+        if not self._is_postgres():
+            return
+        digest = hashlib.sha256(f"{namespace}:{key}".encode()).digest()
+        lock_id = int.from_bytes(digest[:8], "big", signed=True)
+        self.session.execute(
+            text("SELECT pg_advisory_xact_lock(:lock_id)"),
+            {"lock_id": lock_id},
+        )
+
+    def acquire_proposal_idempotency_lock(
+        self, tenant_id: UUID, idempotency_key: str
+    ) -> None:
+        """Serialize concurrent proposal submissions sharing the same (tenant_id, idempotency_key)."""
+        self._acquire_pg_xact_advisory_lock(
+            "proposal_idemp", f"{tenant_id}:{idempotency_key}"
+        )
+
     def append_financial_event(
         self,
         *,
@@ -878,9 +898,10 @@ class LedgerRepository:
         """Append a hash-chained immutable FinancialEvent + optional transactional outbox entry."""
         is_pg = self._is_postgres()
         if is_pg:
-            # Serialize sequence allocation per tenant so concurrent appends never collide on seq=1 or seq=N+1.
-            self.session.scalar(
-                select(TenantRow.id).where(TenantRow.id == tenant_id).with_for_update()
+            # Serialize sequence allocation per (tenant_id, correlation_id) via advisory lock
+            # rather than TenantRow FOR UPDATE, which deadlocks against FK FOR KEY SHARE locks.
+            self._acquire_pg_xact_advisory_lock(
+                "fin_event_seq", f"{tenant_id}:{correlation_id}"
             )
         last_stmt = (
             select(FinancialEventRow)

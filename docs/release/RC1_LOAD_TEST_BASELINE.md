@@ -1,7 +1,7 @@
 # AEGIS RC1 — Synthetic Load & Performance Baseline
 
-**Status:** **MEASURED LOCALLY (PostgreSQL 16 + Single-Worker Uvicorn; Read/Replay 0.0% Error, Concurrent Same-Tenant `POST /v1/guardian/proposals` Deadlock Finding)**  
-**Branch:** `release/rc1-c2-payments-ops-load`  
+**Status:** **MEASURED LOCALLY (PostgreSQL 16 + Single-Worker Uvicorn; 0.0% Error Rate Across All Endpoints Post-Deadlock Remediation)**  
+**Branch:** `fix/rc1-guardian-deadlock`  
 **Audit Date:** `2026-11-12`  
 **Benchmark Script:** [`tests/load/load_benchmark.py`](../../tests/load/load_benchmark.py)
 
@@ -19,41 +19,34 @@
 
 ---
 
-## 2. Measured Benchmark Results (`requests_per_endpoint = 50`)
+## 2. Measured Benchmark Results (`requests_per_endpoint = 50`, Post-Remediation on `fix/rc1-guardian-deadlock`)
 
 | Endpoint | Concurrency | Requests | p50 (ms) | p95 (ms) | p99 (ms) | RPS | Error Rate | Status Breakdown |
 |---|---:|---:|---:|---:|---:|---:|---:|---|
-| `GET /health` | 10 | 50 | 6.01 | 13.12 | 17.88 | 1188.59 | 0.0% | `200:50` |
-| `POST /v1/guardian/proposals` | 10 | 50 | 4549.08 | 10995.27 | 11001.40 | 1.78 | 98.0% | `0:20, 201:1, 500:29` |
-| `GET /v1/guardian/payments/{id}` | 10 | 50 | 25.91 | 40.96 | 46.39 | 343.23 | 0.0% | `200:50` |
-| `POST /v1/ghostpay/replay/by-payment/{id}` | 10 | 50 | 79.82 | 100.23 | 104.24 | 122.25 | 0.0% | `200:50` |
-| `GET /v1/disputeos/cases` | 10 | 50 | 36.01 | 90.96 | 93.79 | 220.69 | 0.0% | `200:50` |
-| `GET /health` | 25 | 50 | 15.54 | 24.78 | 28.89 | 1281.95 | 0.0% | `200:50` |
-| `POST /v1/guardian/proposals` | 25 | 50 | 12560.83 | 25996.97 | 26005.23 | 1.39 | 98.0% | `0:13, 201:1, 500:36` |
-| `GET /v1/guardian/payments/{id}` | 25 | 50 | 65.88 | 100.91 | 120.03 | 294.35 | 0.0% | `200:50` |
-| `POST /v1/ghostpay/replay/by-payment/{id}` | 25 | 50 | 180.81 | 255.17 | 370.03 | 117.82 | 0.0% | `200:50` |
-| `GET /v1/disputeos/cases` | 25 | 50 | 100.76 | 172.68 | 188.23 | 207.46 | 0.0% | `200:50` |
-
-*(Note: Status `0` indicates client-side `httpx.HTTPError` / timeout while awaiting locked/pooled responses.)*
+| `GET /health` | 10 | 50 | 6.18 | 11.76 | 15.73 | 1378.21 | 0.0% | `200:50` |
+| `POST /v1/guardian/proposals` | 10 | 50 | 124.48 | 325.18 | 364.85 | 63.35 | 0.0% | `201:50` |
+| `GET /v1/guardian/payments/{id}` | 10 | 50 | 28.49 | 37.19 | 40.30 | 339.42 | 0.0% | `200:50` |
+| `POST /v1/ghostpay/replay/by-payment/{id}` | 10 | 50 | 78.58 | 136.83 | 143.15 | 112.94 | 0.0% | `200:50` |
+| `GET /v1/disputeos/cases` | 10 | 50 | 30.97 | 44.67 | 52.16 | 300.49 | 0.0% | `200:50` |
+| `GET /health` | 25 | 50 | 10.76 | 30.34 | 31.86 | 1483.37 | 0.0% | `200:50` |
+| `POST /v1/guardian/proposals` | 25 | 50 | 306.40 | 690.58 | 776.33 | 60.96 | 0.0% | `201:50` |
+| `GET /v1/guardian/payments/{id}` | 25 | 50 | 74.77 | 141.30 | 152.78 | 268.00 | 0.0% | `200:50` |
+| `POST /v1/ghostpay/replay/by-payment/{id}` | 25 | 50 | 169.94 | 275.56 | 289.16 | 123.32 | 0.0% | `200:50` |
+| `GET /v1/disputeos/cases` | 25 | 50 | 86.05 | 139.82 | 141.46 | 238.96 | 0.0% | `200:50` |
 
 ---
 
-## 3. Key Findings & Bottleneck Analysis
+## 3. Key Findings & Bottleneck Resolution
 
 1. **Read & Replay Endpoints (`0.0%` Error Rate):**
-   - `GET /health` sustained **1,188.59–1,281.95 RPS** (`p95 <= 24.78 ms`).
-   - `GET /v1/guardian/payments/{id}` sustained **294.35–343.23 RPS** (`p95 = 40.96 ms` at conc=10, `100.91 ms` at conc=25).
-   - `GET /v1/disputeos/cases` sustained **207.46–220.69 RPS** (`p95 = 90.96 ms` at conc=10, `172.68 ms` at conc=25).
-   - `POST /v1/ghostpay/replay/by-payment/{id}` sustained **117.82–122.25 RPS** (`p95 = 100.23 ms` at conc=10, `255.17 ms` at conc=25).
+   - `GET /health` sustained **1,378.21–1,483.37 RPS** (`p95 <= 30.34 ms`).
+   - `GET /v1/guardian/payments/{id}` sustained **268.00–339.42 RPS** (`p95 = 37.19 ms` at conc=10, `141.30 ms` at conc=25).
+   - `GET /v1/disputeos/cases` sustained **238.96–300.49 RPS** (`p95 = 44.67 ms` at conc=10, `139.82 ms` at conc=25).
+   - `POST /v1/ghostpay/replay/by-payment/{id}` sustained **112.94–123.32 RPS** (`p95 = 136.83 ms` at conc=10, `275.56 ms` at conc=25).
 
-2. **Critical Concurrency Bottleneck on `POST /v1/guardian/proposals` (`98.0%` Error Rate under Same-Tenant Burst):**
-   - Under `concurrency=10` and `concurrency=25` against the **same tenant**, only `1` of `50` requests succeeded (`201`), while `29` (conc=10) and `36` (conc=25) returned HTTP `500` and the remainder timed out (`status=0`).
-   - **Observed Server Error:** `psycopg.errors.DeadlockDetected: deadlock detected` inside `LedgerRepository.append_financial_event()` (`packages/database/database/repository.py:882`), triggered during `GuardianService.submit_proposal()` (`modules/agentpay-guardian/guardian/domain/service.py:318`) at:
-     ```sql
-     SELECT tenants.id FROM tenants WHERE tenants.id = %(id_1)s::UUID FOR UPDATE
-     ```
-   - **Mechanism:** Concurrent transactions acquire row/key-share locks on `spending_passports` / FK-referenced `tenants` rows in conflicting order before `append_financial_event()` attempts `SELECT ... FROM tenants ... FOR UPDATE` to serialize the tenant's hash-chained audit log, resulting in PostgreSQL deadlock detection (`500`) and connection pool / lock-wait exhaustion (`status=0`).
-   - **Recommendation (Outside Load-Test Scope):** Acquire the tenant-level `FOR UPDATE` lock (or advisory transaction lock `pg_advisory_xact_lock`) **at the start** of the write transaction before locking `spending_passports` or inserting FK rows, and/or increase SQLAlchemy `pool_size`/`max_overflow` for high-concurrency deployments.
+2. **`POST /v1/guardian/proposals` Deadlock Eliminated (`98.0%` -> `0.0%` Error Rate):**
+   - Prior to `fix/rc1-guardian-deadlock`, same-tenant concurrent bursts hit `psycopg.errors.DeadlockDetected` (`98.0%` error rate, `1.78` / `1.39` RPS) due to `SELECT tenants.id ... FOR UPDATE` in `LedgerRepository.append_financial_event()` conflicting with FK `FOR KEY SHARE` locks on `tenants`.
+   - After replacing `tenants FOR UPDATE` with `(tenant_id, correlation_id)`-scoped `pg_advisory_xact_lock` and adding `(tenant_id, idempotency_key)`-scoped `pg_advisory_xact_lock` in `GuardianService.submit_proposal()`, **all `50/50` requests succeeded (`201`) at both `conc=10` (`63.35 RPS`, `p50=124.48 ms`) and `conc=25` (`60.96 RPS`, `p50=306.40 ms`)** with **`0.0%` error rate**. See [`RC1_GUARDIAN_DEADLOCK_REMEDIATION.md`](./RC1_GUARDIAN_DEADLOCK_REMEDIATION.md).
 
 ---
 

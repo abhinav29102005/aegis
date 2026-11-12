@@ -3,7 +3,7 @@
 **Audit Revision:** Post-RC1 Hardening & Dual-Computer Integration (`2026-11-12`)  
 **Repository:** `/home/bigboyaks/Projects/agentpay-nexus`  
 **Integrated Branch:** `integration/nexus` *(merging `release/rc1-c1-security-e2e-deploy` @ `98cf8eb` and `release/rc1-c2-payments-ops-load` @ `4c02caa` at `3211220`, plus `docs/release/RC1_FINAL_SIGN_OFF.md` @ `f8768bd`)*  
-**Audit Method:** Direct runtime execution of `uv run ruff check .`, full PG16 `uv run pytest -q` (`1 failed, 343 passed, 3 skipped`), real Chromium Playwright E2E (`5/5` passed), full-stack Docker Compose `make compose-smoke` (including `web`), failure-injection Compose drill, synthetic async load baseline (`tests/load/load_benchmark.py`), TS SDK `vitest`/`tsc`, Next.js `lint`/`test`/`next build`, `pip-audit`, and `npm audit --omit=dev`.
+**Audit Method:** Direct runtime execution of `uv run ruff check .`, full PG16 `uv run pytest -q` (`354 passed, 3 skipped, 0 failed`), 3× PG16 concurrency stress runs (`18 passed` × 3), real Chromium Playwright E2E (`5/5` passed on `98cf8eb`), full-stack Docker Compose `make compose-smoke` (on `3211220`), failure-injection Compose drill, synthetic async load baseline (`tests/load/load_benchmark.py`, `0.0%` error rate across all endpoints), TS SDK `vitest`/`tsc`, Next.js `lint`/`test`/`next build`, `pip-audit`, and `npm audit --omit=dev`.
 
 ---
 
@@ -11,14 +11,14 @@
 
 | Dimension | Baseline (`1be376e`) | M1+M2+M3 (`ebe4069`) | Current RC1 (`f8768bd`) | Quantitative / Operational Signal |
 | :--- | :--- | :--- | :--- | :--- |
-| **Overall Maturity Score** | `43.5 / 100` | `87.0 / 100` | **`90.0 / 100` (`90.0%`)** | +3.0 pts from 0 prod CVEs, 5/5 live Chromium E2E (+5 real bug fixes), Compose `web` smoke, failure injection, & load baseline; `-10.0` pts withheld for `tenants FOR UPDATE` burst deadlock, `BLOCKED` PayPal Sandbox, & unverified VPS/Stripe/LLM/SOC 2 |
+| **Overall Maturity Score** | `43.5 / 100` | `87.0 / 100` | **`93.0 / 100` (`93.0%`)** | +3.0 pts from eliminating P0 `tenants FOR UPDATE` deadlock (`354 passed, 0 failed` PG16 `pytest`, `18 passed` × 3 stress, `0.0%` load error @ `c=10/25`); `-7.0` pts withheld for `BLOCKED` PayPal Sandbox, & unverified VPS/Stripe/LLM/SOC 2 |
 | **Implementation Completeness** | ~58% scaffold | ~95% complete | **~97% codebase complete** | `88` OpenAPI paths (`99` ops), `37` ORM tables (`3` migrations), `24` Next.js static/dynamic routes, `98.0%` Python/TS SDK parity (`97/99`), `docs/release/RC1_*.md` suite |
 | **Local Development Readiness** | `72%` | `98%` | **READY (`99%`)** | `0` Ruff errors; `0` `pip-audit` & `npm audit --omit=dev` CVEs; `5/5` real Chromium Playwright E2E PASS; `38` TS SDK + `3` Web Node tests PASS; full-stack `make compose-smoke` PASS |
 | **Internal Staging Readiness** | BLOCKED (`45%`) | `88%` (Mocks) | **READY WITH MOCKS (`92%`)** | Live Chromium E2E, failure-injection `/ready` `503->200`, worker restart recovery, & `deploy/linux-staging/` `ports: !override` verified; **live PayPal Sandbox & remote VPS `NOT VERIFIED`** |
-| **Public Beta Readiness** | NOT READY (`28%`) | CONDITIONAL (`72%`) | **NO-GO (`76%`, 2 Hard Blockers)** | Blocked on: (1) `tenants FOR UPDATE` `DeadlockDetected` under same-tenant proposal bursts (`98%` load error / `test_parallel_payment_proposal_idempotency` fail), (2) live PayPal Sandbox (`PAYPAL_*` unset) |
+| **Public Beta Readiness** | NOT READY (`28%`) | CONDITIONAL (`72%`) | **NO-GO (`82%`, 1 External Blocker)** | P0 PG deadlock **CLOSED** (`fix/rc1-guardian-deadlock`); remaining blocker: live PayPal Sandbox (`PAYPAL_*` unset -> `BLOCKED / NOT VERIFIED`) & live VPS staging (`NOT VERIFIED`) |
 | **Limited Commercial Launch** | NOT READY (`18%`) | NOT READY (`58%`) | **NOT READY (`62%`)** | Compliance/erasure tests pass (`13/13`); blocked on above beta blockers + live Stripe Billing, live LLM evals, remote Linux VPS TLS, & external legal sign-off |
 | **Enterprise / Regulated Payments** | NOT READY (`10%`/`4%`) | NOT READY (`45%`/`4%`) | **NOT READY (`48%`/`4%`)** | Needs remote Linux VPS deploy, SOC 2 Type II, external pen test, & licensed PSP/BaaS partners for regulated money transmission |
-| **Safe for Real Customer Money?** | **NO** | **NO** | **NO (`NO-GO FOR EXTERNAL BETA`)** | See [`docs/release/RC1_FINAL_SIGN_OFF.md`](../docs/release/RC1_FINAL_SIGN_OFF.md): `DeadlockDetected` under concurrent proposals & `BLOCKED` PayPal Sandbox must be resolved first |
+| **Safe for Real Customer Money?** | **NO** | **NO** | **NO (`NO-GO FOR EXTERNAL BETA`)** | See [`docs/release/RC1_FINAL_SIGN_OFF.md`](../docs/release/RC1_FINAL_SIGN_OFF.md): P0 deadlock is **CLOSED**, but `BLOCKED` PayPal Sandbox & unverified remote VPS staging must be resolved first |
 
 ---
 

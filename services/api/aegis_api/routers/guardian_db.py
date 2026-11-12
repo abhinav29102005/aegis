@@ -556,6 +556,7 @@ def submit_proposal(
     svc = _guardian_service(session, paypal_client)
     try:
         intent, decision = svc.submit_proposal(proposal=proposal, quote=quote)
+        session.commit()
         return ProposalSubmissionResponse(payment_intent=intent, decision=decision)
     except GuardianError as exc:
         raise _raise_http_for_guardian_error(exc) from exc

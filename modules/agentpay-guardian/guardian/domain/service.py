@@ -259,6 +259,11 @@ class GuardianService:
         auto_reserve_if_allowed: bool = True,
     ) -> tuple[PaymentIntent, AuthorizationDecision]:
         """Submit a purchase proposal, perform deterministic policy check, and transition intent."""
+        # 0. Narrow transaction-scoped advisory lock per (tenant_id, idempotency_key)
+        acquire_lock = getattr(self.repo, "acquire_proposal_idempotency_lock", None)
+        if callable(acquire_lock):
+            acquire_lock(proposal.tenant_id, proposal.idempotency_key)
+
         # 1. Idempotency verification
         existing_intent = self.repo.get_intent_by_idempotency(
             proposal.tenant_id, proposal.idempotency_key
