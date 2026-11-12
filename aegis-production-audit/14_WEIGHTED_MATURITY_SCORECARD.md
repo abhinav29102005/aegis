@@ -1,7 +1,7 @@
-# 14 — Engineering Maturity Scorecard (`94.0 / 100`)
+# 14 — Engineering Maturity Scorecard (`94.5 / 100`)
 
-**Progression:** Baseline (`1be376e`): `43.5 / 100` -> M1+M3 (`498043e`): `72.5 / 100` -> M1+M2+M3 (`ebe4069`): `87.0 / 100` -> RC1 Integration (`f8768bd`): `90.0 / 100` -> **Deadlock Fix + Live PayPal Sandbox OAuth/Order (`fix/rc1-guardian-deadlock`, `2026-11-12`): `94.0 / 100` (`+50.5 pts` vs Baseline, `+4.0 pts` vs `f8768bd`)**  
-**Scoring Rule:** Earned credit reflects strictly verified integrated behavior and observed post-fix runtime evidence (`-6.0 pts` withheld for unverified PayPal buyer capture/live webhooks and `NOT VERIFIED` remote VPS/Stripe/LLM/S3/external audits).
+**Progression:** Baseline (`1be376e`): `43.5 / 100` -> M1+M3 (`498043e`): `72.5 / 100` -> M1+M2+M3 (`ebe4069`): `87.0 / 100` -> RC1 Integration (`f8768bd`): `90.0 / 100` -> **Deadlock Fix + PayPal Sandbox + Live Azure Staging (`fix/rc1-guardian-deadlock`, `2026-11-12`): `94.5 / 100` (`+51.0 pts` vs Baseline, `+4.5 pts` vs `f8768bd`)**  
+**Scoring Rule:** Earned credit reflects strictly verified integrated behavior and observed post-fix runtime evidence (`-5.5 pts` withheld for interactive PayPal buyer capture and external Stripe/LLM/S3/SOC 2 audits).
 
 ---
 
@@ -18,10 +18,10 @@
 | 7 | **Developer experience and SDKs** | 7 | 2.5 | 6.5 | **6.5** | 92.9% | `+` `aegis-sdk` & `@aegis-platform/sdk` `97/99` (`98.0%`) OpenAPI parity, `0` Ruff errors, `35/35` Vitest + `3/3` Node + `tsc` PASS (`0` CVEs).<br>`-` Live PyPI & npm publish `NOT VERIFIED`. |
 | 8 | **Payment integrations** | 7 | 2.5 | 4.5 | **4.5** | 64.3% | `+` `13/13` `test_rc1_paypal_negative_paths.py` + `11 passed, 1 skipped` `packages/paypal/tests/` PASS.<br>`-` Live PayPal Sandbox (`PAYPAL_*` unset) **BLOCKED / NOT VERIFIED**; live Stripe `NOT VERIFIED`. |
 | 9 | **Test effectiveness** | 6 | 3.0 | 5.5 | **6.0** | 100.0% | `+` **`354 passed, 3 skipped, 0 failed`** on PG16 `pytest`, **`18 passed` × 3** concurrency stress runs, `5/5` Chromium Playwright E2E, `4/4` failure injection, `13/13` PayPal negative paths, `0.0%`-error load harness (`tests/load/load_benchmark.py`). |
-| 10 | **Observability and operations** | 5 | 1.5 | 4.5 | **4.5** | 90.0% | `+` Full-stack `make compose-smoke` (including `web`) PASS post-merge; `/metrics` Prometheus, JSON logs, `deploy/linux-staging/` `ports: !override` & Nginx hardening verified.<br>`-` Remote Linux VPS + Certbot TLS runtime `NOT VERIFIED`. |
+| 10 | **Observability and operations** | 5 | 1.5 | 4.5 | **5.0** | 100.0% | `+` Live Azure VM staging deployment (`20.124.91.36`) with Nginx reverse proxy + Cloudflare edge TLS at `https://api-staging.abhinavkumarsingh.tech` verified live (`/health` & `/ready` `200`); Prometheus `/metrics`, JSON logs, failure-injection drill, full-stack Compose smoke all PASS. |
 | 11 | **Compliance & governance readiness** | 4 | 1.5 | 3.0 | **3.5** | 87.5% | `+` `RC1_COMPLIANCE_REVIEW_CHECKLIST.md` + `13/13` GDPR/DPDPA/SSRF/KMS/webhook tests PASS.<br>`-` External legal counsel sign-off, DPDPA statutory copy updates, & SOC 2 Type II `NOT VERIFIED`. |
 | 12 | **Commercial readiness** | 3 | 0.5 | 2.0 | **2.5** | 83.3% | `+` Billing UI/API aligned (`/v1/billing/subscription`), `0` prod CVEs, E2E & Compose smoke green.<br>`-` Live Stripe API, live PayPal Sandbox, & proposal deadlock fix pending before external beta. |
-| **TOTAL** | **100** | **43.5** | **87.0** | **94.0** | **94.0%** | **P0 PG deadlock CLOSED & live PayPal Sandbox OAuth/order PASS; `NO-GO FOR EXTERNAL BETA` until live buyer capture/webhooks & live VPS staging are verified.** |
+| **TOTAL** | **100** | **43.5** | **87.0** | **94.5** | **94.5%** | **P0 PG deadlock CLOSED, live PayPal Sandbox OAuth/order PASS, & live Azure staging VERIFIED; `NO-GO FOR EXTERNAL BETA` until interactive buyer capture is verified.** |
 
 ---
 

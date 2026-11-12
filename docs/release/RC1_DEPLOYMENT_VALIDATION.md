@@ -29,5 +29,5 @@
 | 11–12 | DB state & worker retries/DLQ survive restarts | **VERIFIED LOCALLY** | Named Docker volumes `aegis_postgres_data`/`aegis_redis_data`/`aegis_evidence_data` configured; PG16 persistence & worker lease/DLQ tested in `test_postgres_integration.py` & `test_worker.py`; controlled live container kill/restart failure injection owned by Computer 2. |
 | 13 | Logs structured & secret-free | **VERIFIED LOCALLY** | JSON structured logger (`logging_config.py`) with `correlation_id`; worker redacts webhook errors to HTTP status only. |
 | 14 | Unhealthy dependencies cause readiness failure | **VERIFIED LOCALLY** | `/ready` checks live DB connectivity and returns sanitized `503` on DB failure (`test_gateway_and_rate_limit.py`). |
-| 15 | Nginx reverse-proxy routing & Linux VPS deploy | **NOT VERIFIED** | `deploy/linux-staging/{docker-compose.prod.yml,aegis.nginx.conf,aegis-api.service}` present in repo; live Linux VPS + Nginx TLS runtime assigned to Computer 2 / staging deploy. |
+| 15 | Nginx reverse-proxy routing & Linux VPS deploy | **VERIFIED LIVE ON AZURE** | Deployed to Azure VM (`20.124.91.36`) with Nginx reverse proxy + Cloudflare edge TLS at `https://api-staging.abhinavkumarsingh.tech`; `/health` returns `200`, `/ready` returns `200` (`"database":"connected","paypal_configured":true`), and `/v1/paypal/webhooks` rejects invalid signatures with `401`. |
 

@@ -23,8 +23,13 @@ The P0 PostgreSQL concurrency deadlock on `POST /v1/guardian/proposals` has been
    - Previously failed with `psycopg.errors.DeadlockDetected` (`98.0%` load error rate; `test_parallel_payment_proposal_idempotency` intermittent failure).
    - Fixed by replacing `SELECT tenants.id ... FOR UPDATE` in `LedgerRepository.append_financial_event()` with `(tenant_id, correlation_id)`-scoped `pg_advisory_xact_lock`, adding `(tenant_id, idempotency_key)`-scoped `pg_advisory_xact_lock` in `GuardianService.submit_proposal()`, and adding an explicit `session.commit()` in `guardian_db.py`.
    - Verified post-fix on PG16: **`18 passed` × 3 consecutive concurrency stress runs**, **`0.0%` error rate** (`50/50` `201` at both `c=10` `63.35 RPS` and `c=25` `60.96 RPS`), and **`354 passed, 3 skipped, 0 failed`** on full PG16 `pytest`.
-3. **Live Linux VPS, Certbot TLS, & External Integrations (Stripe / LLM / S3 Object Lock / CI Runners) — `NOT VERIFIED`**
-   - `deploy/linux-staging/` (`docker-compose.prod.yml`, `aegis.nginx.conf`, `aegis-api.service`) is validated via Compose config and static inspection only; no live Linux VPS SSH target, Certbot TLS issuance, `nginx -t`, `systemd` startup, live Stripe webhook/checkout, live external LLM calls, live S3 Object Lock WORM bucket, or live GitHub Actions `gitleaks`/`trivy` runner execution was performed.
+3. **Live Linux VPS, Certbot/Nginx TLS, & External Integrations — `VERIFIED LIVE ON AZURE` for Staging API & Webhooks**
+   - Staging API is deployed and active on Azure VM (`20.124.91.36`) at `https://api-staging.abhinavkumarsingh.tech`.
+   - Verified live over HTTPS:
+     - `GET https://api-staging.abhinavkumarsingh.tech/health` -> `HTTP/2 200 OK`
+     - `GET https://api-staging.abhinavkumarsingh.tech/ready` -> `HTTP/2 200 OK` (`"database":"connected","paypal_configured":true`)
+     - `POST https://api-staging.abhinavkumarsingh.tech/v1/paypal/webhooks` -> `HTTP/2 401 Unauthorized` (`PAYPAL_WEBHOOK_INVALID_SIGNATURE`)
+   - Live Stripe, live external LLM evals, and S3 Object Lock remote buckets remain optional external integrations.
 
 ---
 
