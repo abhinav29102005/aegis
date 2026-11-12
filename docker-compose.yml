@@ -50,7 +50,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-aegis}:${POSTGRES_PASSWORD:-aegis_dev_password}@postgres:5432/${POSTGRES_DB:-aegis_platform}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER:-aegis}:${POSTGRES_PASSWORD:-aegis_dev_password}@postgres:5432/${POSTGRES_DB:-aegis_platform}}
     command: ["sh", "-c", "cd /app/packages/database && alembic upgrade head"]
     restart: "no"
 
@@ -76,7 +76,7 @@ services:
       API_HOST: 0.0.0.0
       API_PORT: 8000
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3005,http://localhost:3000}
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-aegis}:${POSTGRES_PASSWORD:-aegis_dev_password}@postgres:5432/${POSTGRES_DB:-aegis_platform}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER:-aegis}:${POSTGRES_PASSWORD:-aegis_dev_password}@postgres:5432/${POSTGRES_DB:-aegis_platform}}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       NEXUS_SIGNING_SECRET: ${NEXUS_SIGNING_SECRET:-dev-only-change-in-production-signing-secret}
       JWT_SECRET: ${JWT_SECRET:-dev-only-change-in-production-jwt-secret}
@@ -141,7 +141,7 @@ services:
     environment:
       APP_ENV: ${APP_ENV:-development}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-aegis}:${POSTGRES_PASSWORD:-aegis_dev_password}@postgres:5432/${POSTGRES_DB:-aegis_platform}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER:-aegis}:${POSTGRES_PASSWORD:-aegis_dev_password}@postgres:5432/${POSTGRES_DB:-aegis_platform}}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       NEXUS_SIGNING_SECRET: ${NEXUS_SIGNING_SECRET:-dev-only-change-in-production-signing-secret}
       JWT_SECRET: ${JWT_SECRET:-dev-only-change-in-production-jwt-secret}
