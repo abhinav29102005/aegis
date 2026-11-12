@@ -350,6 +350,20 @@ class DeflectionAlertAdapter:
             "metadata": metadata or {},
         }
 
+    async def get_order_status(
+        self,
+        *,
+        order_id: str,
+    ) -> dict[str, Any]:
+        if self.gateway_url:
+            resp = await self._http.request("GET", f"/v1/deflection/orders/{order_id}")
+            return resp.json()
+        return {
+            "provider": self.provider_name,
+            "order_id": order_id,
+            "status": "ACTIVE",
+        }
+
     async def capture_order(
         self,
         *,

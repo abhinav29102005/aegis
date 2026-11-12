@@ -346,6 +346,23 @@ class AP2MandateAdapter:
         self._mandate_orders[order_id] = record
         return record
 
+    async def get_order_status(
+        self,
+        *,
+        order_id: str,
+    ) -> dict[str, Any]:
+        if self.facilitator_url:
+            resp = await self._http.request("GET", f"/v1/ap2/orders/{order_id}")
+            return resp.json()
+        order = self._mandate_orders.get(order_id)
+        if order:
+            return dict(order)
+        return {
+            "provider": self.provider_name,
+            "order_id": order_id,
+            "status": "NOT_FOUND",
+        }
+
     async def capture_order(
         self,
         *,

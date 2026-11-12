@@ -8,7 +8,7 @@ by AgentPay Guardian (pre-transaction authorization) and GhostPay
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import InvalidOperation, ROUND_HALF_UP, Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -68,12 +68,17 @@ def decimal_str_to_minor(amount_str: str, currency: str = "USD") -> int:
     """Parse major decimal string to integer minor units using exact arithmetic."""
     exp = get_currency_exponent(currency)
     s = amount_str.strip()
-    if exp == 0 and "." in s:
-        raise ValueError(f"Currency {currency} does not support fractional units: {amount_str}")
-    dec_val = Decimal(s)
+    try:
+        dec = Decimal(s)
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError(f"Invalid decimal amount: {amount_str!r}") from exc
     scale = Decimal(10) ** exp
-    minor_val = (dec_val * scale).to_integral_value(rounding=ROUND_HALF_UP)
-    return int(minor_val)
+    scaled = dec * scale
+    if scaled != scaled.to_integral_value():
+        raise ValueError(
+            f"Amount {amount_str!r} exceeds {exp} decimal places for currency {currency.upper()}"
+        )
+    return int(scaled)
 
 
 parse_major_to_minor = decimal_str_to_minor
@@ -268,7 +273,12 @@ def evaluate_policy_v1_rules(
     # 9. Approval Record validation (if provided)
     valid_approval = False
     if approval_record is not None:
-        if approval_record.status != ApprovalStatus.APPROVED:
+        if approval_record.tenant_id != proposal.tenant_id:
+            _add_denial(
+                DecisionReasonCode.DENIED_CROSS_TENANT,
+                "ApprovalRecord tenant does not match proposal tenant",
+            )
+        elif approval_record.status != ApprovalStatus.APPROVED:
             _add_denial(
                 DecisionReasonCode.DENIED_APPROVAL_REJECTED,
                 f"ApprovalRecord status is {approval_record.status}",

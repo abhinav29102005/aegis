@@ -202,7 +202,7 @@ class QuoteSnapshot(NexusBaseModel):
             self.quote_hash = computed
         elif self.quote_hash != computed:
             raise ValueError(
-                f"quote_hash mismatch: provided {self.quote_hash} != computed {computed}"
+                f"Quote hash mismatch: quote_hash mismatch: provided {self.quote_hash} != computed {computed}"
             )
         return self
 

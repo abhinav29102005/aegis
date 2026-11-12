@@ -73,6 +73,7 @@ def evaluate_deterministic_policy(
         merchant=merchant,
         quote=quote,
         agent=agent,
+        approval_record=approval_record,
         daily_spent_minor=daily_spent_minor,
         monthly_spent_minor=monthly_spent_minor,
         now=eval_time,
@@ -81,51 +82,7 @@ def evaluate_deterministic_policy(
         payment_intent_id=payment_intent_id,
     )
 
-    outcome = decision.outcome
-    reason_codes = list(decision.reason_codes)
-    violated_constraints = list(decision.violated_constraints)
-
-    # Human approval resolution only applies when policy-v1 escalated (never overrides DENY)
-    if outcome == DecisionOutcome.ESCALATE and approval_record is not None:
-        if approval_record.tenant_id != proposal.tenant_id:
-            return (
-                DecisionOutcome.DENY,
-                [DecisionReasonCode.DENIED_CROSS_TENANT],
-                ["APPROVAL_RECORD_CROSS_TENANT"],
-            )
-        if approval_record.status == ApprovalStatus.EXPIRED or (
-            approval_record.expires_at and eval_time >= approval_record.expires_at
-        ):
-            return (
-                DecisionOutcome.DENY,
-                [DecisionReasonCode.DENIED_APPROVAL_EXPIRED],
-                ["APPROVAL_RECORD_EXPIRED"],
-            )
-        if (
-            approval_record.bound_merchant_id != merchant.id
-            or approval_record.bound_amount_minor != proposal.amount_minor
-            or approval_record.bound_currency.upper() != proposal.currency.upper()
-            or approval_record.bound_quote_hash != quote.quote_hash
-        ):
-            return (
-                DecisionOutcome.DENY,
-                [DecisionReasonCode.DENIED_APPROVAL_MISMATCH],
-                ["APPROVAL_RECORD_MISMATCH"],
-            )
-        if approval_record.status == ApprovalStatus.REJECTED:
-            return (
-                DecisionOutcome.DENY,
-                [DecisionReasonCode.DENIED_APPROVAL_MISMATCH],
-                ["APPROVAL_RECORD_REJECTED"],
-            )
-        if approval_record.status in (ApprovalStatus.APPROVED, ApprovalStatus.CONSUMED):
-            return (
-                DecisionOutcome.ALLOW,
-                [DecisionReasonCode.OK_WITHIN_POLICY],
-                [],
-            )
-
-    return outcome, reason_codes, violated_constraints
+    return decision.outcome, list(decision.reason_codes), list(decision.violated_constraints)
 
 
 register_policy_evaluator(DEFAULT_POLICY_VERSION, evaluate_deterministic_policy)
