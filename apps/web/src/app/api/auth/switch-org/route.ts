@@ -32,12 +32,17 @@ export async function POST(request: Request) {
       return NextResponse.json(data, { status: res.status });
     }
 
+    const isSecure =
+      process.env.COOKIE_SECURE === "true" ||
+      (process.env.NODE_ENV === "production" &&
+        (request.headers.get("x-forwarded-proto") === "https" || request.url.startsWith("https:")));
+
     cookieStore.set({
       name: "aegis_tenant_id",
       value: orgId,
       httpOnly: true,
       sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
+      secure: isSecure,
       path: "/",
       maxAge: 60 * 60 * 24 * 7,
     });
