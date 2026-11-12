@@ -25,8 +25,14 @@ def test_tenant_isolation_guard() -> None:
     t1 = uuid4()
     t2 = uuid4()
     assert_same_tenant(t1, t1, "payment_intent")
-    with pytest.raises(TenantIsolationError):
+    with pytest.raises(TenantIsolationError) as exc_info:
         assert_same_tenant(t1, t2, "payment_intent")
+    msg = str(exc_info.value)
+    assert "Cross-tenant access denied" in msg
+    assert str(t1) not in msg
+    assert str(t2) not in msg
+    assert exc_info.value.expected_tenant_id == t1
+    assert exc_info.value.actual_tenant_id == t2
 
 
 def test_financial_event_chain_verification_and_tamper_detection() -> None:

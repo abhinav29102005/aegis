@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
-from sqlalchemy import Engine, create_engine, event
+from sqlalchemy import Engine, create_engine, event, text
 from sqlalchemy.orm import Session, sessionmaker
 
-from database.orm import Base
+from database.orm import (
+    PG_AUDIT_TRIGGER_CREATE_SQL,
+    PG_AUDIT_TRIGGER_DROP_SQL,
+    PG_AUDIT_TRIGGER_FUNCTION_SQL,
+    Base,
+)
 
 
 def create_db_engine(database_url: str, *, echo: bool = False) -> Engine:
@@ -32,7 +37,18 @@ def create_session_factory(engine: Engine) -> sessionmaker[Session]:
     return sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 
+def ensure_pg_audit_triggers(engine: Engine) -> None:
+    """Install PostgreSQL append-only immutability triggers on financial_events (no-op on SQLite)."""
+    if engine.dialect.name != "postgresql":
+        return
+    with engine.begin() as conn:
+        conn.execute(text(PG_AUDIT_TRIGGER_FUNCTION_SQL))
+        conn.execute(text(PG_AUDIT_TRIGGER_DROP_SQL))
+        conn.execute(text(PG_AUDIT_TRIGGER_CREATE_SQL))
+
+
 def init_db(engine: Engine) -> None:
-    """Create all tables (used for local SQLite test setups; Postgres uses Alembic)."""
+    """Create all tables and install DB-level audit triggers (Postgres uses Alembic in prod)."""
     Base.metadata.create_all(bind=engine)
+    ensure_pg_audit_triggers(engine)
 

@@ -8,10 +8,13 @@ import hmac
 import json
 import os
 import secrets
+import struct
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any
+from urllib.parse import quote
 from uuid import UUID, uuid4
 
 
@@ -54,6 +57,8 @@ class Permission(StrEnum):
     WEBHOOKS_MANAGE = "webhooks:manage"
     AUDIT_READ = "audit:read"
     WORKER_MANAGE = "worker:manage"
+    BILLING_MANAGE = "billing:manage"
+    PRIVACY_MANAGE = "privacy:manage"
 
 
 _READ_PERMISSIONS = frozenset({
@@ -114,6 +119,36 @@ def resolve_permissions(role: Role | str, explicit_scopes: list[str] | None = No
         if perm in base:
             allowed.add(perm)
     return frozenset(allowed)
+
+
+_ROLE_RANK: dict[Role, int] = {
+    Role.VIEWER: 10,
+    Role.AGENT_SERVICE: 20,
+    Role.AUDITOR: 30,
+    Role.OPERATOR: 40,
+    Role.ADMIN: 50,
+    Role.OWNER: 60,
+}
+
+
+def is_privilege_escalation(actor_role: Role | str, target_role: Role | str) -> bool:
+    """Return True if assigning ``target_role`` exceeds the privilege rank of ``actor_role``."""
+    actor = actor_role if isinstance(actor_role, Role) else Role(actor_role)
+    target = target_role if isinstance(target_role, Role) else Role(target_role)
+    return _ROLE_RANK[target] > _ROLE_RANK[actor]
+
+
+def validate_role_assignment(actor_role: Role | str, target_role: Role | str) -> Role:
+    """Enforce role assignment boundaries and prevent non-OWNER escalation to OWNER."""
+    actor = actor_role if isinstance(actor_role, Role) else Role(actor_role)
+    target = target_role if isinstance(target_role, Role) else Role(target_role)
+    if target == Role.OWNER and actor != Role.OWNER:
+        raise AuthorizationError("Only OWNER may assign the OWNER role")
+    if is_privilege_escalation(actor, target):
+        raise AuthorizationError(
+            f"Role {actor.value} cannot assign higher-privilege role {target.value}"
+        )
+    return target
 
 
 # ------------------------------------------------------------------
@@ -288,3 +323,160 @@ def verify_access_token(
         )
     except (KeyError, ValueError) as exc:
         raise AuthenticationError("Bearer token missing valid claims") from exc
+
+
+# ------------------------------------------------------------------
+# Pure-Stdlib TOTP MFA Helpers (RFC 6238 / RFC 4226)
+# ------------------------------------------------------------------
+def generate_totp_secret(length: int = 20) -> str:
+    """Generate a base32-encoded TOTP secret without padding."""
+    if length < 16:
+        raise ValueError("TOTP secret length must be at least 16 bytes")
+    return base64.b32encode(secrets.token_bytes(length)).decode("ascii").rstrip("=")
+
+
+def build_otpauth_uri(
+    secret: str,
+    account_name: str,
+    issuer: str = "AEGIS",
+    *,
+    digits: int = 6,
+    period: int = 30,
+) -> str:
+    """Build a standard ``otpauth://totp/...`` provisioning URI."""
+    clean_secret = secret.strip().replace(" ", "").upper()
+    label = f"{quote(issuer)}:{quote(account_name)}"
+    return (
+        f"otpauth://totp/{label}"
+        f"?secret={clean_secret}"
+        f"&issuer={quote(issuer)}"
+        f"&algorithm=SHA1&digits={digits}&period={period}"
+    )
+
+
+def _decode_base32_secret(secret: str) -> bytes:
+    normalized = secret.strip().replace(" ", "").upper()
+    if not normalized:
+        raise ValueError("Empty TOTP secret")
+    padded = normalized + ("=" * (-len(normalized) % 8))
+    return base64.b32decode(padded, casefold=True)
+
+
+def _compute_hotp(key: bytes, counter: int, digits: int = 6) -> str:
+    digest = hmac.new(key, struct.pack(">Q", counter), hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    binary = struct.unpack(">I", digest[offset : offset + 4])[0] & 0x7FFFFFFF
+    return str(binary % (10**digits)).zfill(digits)
+
+
+def _resolve_unix_ts(now: datetime | float | None) -> float:
+    if now is None:
+        return time.time()
+    if isinstance(now, datetime):
+        return (now.astimezone(UTC) if now.tzinfo else now.replace(tzinfo=UTC)).timestamp()
+    return float(now)
+
+
+def generate_totp_code(
+    secret: str,
+    *,
+    interval: int = 30,
+    digits: int = 6,
+    now: datetime | float | None = None,
+) -> str:
+    """Compute the current TOTP code for a base32 secret."""
+    key = _decode_base32_secret(secret)
+    counter = int(_resolve_unix_ts(now) // interval)
+    return _compute_hotp(key, counter, digits=digits)
+
+
+def verify_totp_code(
+    secret: str,
+    code: str,
+    window: int = 1,
+    *,
+    interval: int = 30,
+    digits: int = 6,
+    now: datetime | float | None = None,
+) -> bool:
+    """Verify a TOTP code within ``+-window`` time steps using constant-time comparison."""
+    cleaned_code = code.strip().replace(" ", "")
+    if len(cleaned_code) != digits or not cleaned_code.isdigit() or window < 0:
+        return False
+    try:
+        key = _decode_base32_secret(secret)
+    except (ValueError, TypeError):
+        return False
+    current_step = int(_resolve_unix_ts(now) // interval)
+    matched = False
+    for delta in range(-window, window + 1):
+        candidate = _compute_hotp(key, current_step + delta, digits=digits)
+        if hmac.compare_digest(candidate, cleaned_code):
+            matched = True
+    return matched
+
+
+# ------------------------------------------------------------------
+# OIDC ID Token Claims Verification Helper
+# ------------------------------------------------------------------
+def verify_oidc_claims(
+    claims: dict[str, Any],
+    *,
+    expected_issuer: str,
+    expected_audience: str,
+    expected_nonce: str | None = None,
+    now: datetime | float | None = None,
+    clock_skew_seconds: int = 60,
+) -> dict[str, Any]:
+    """Validate OIDC ID token claims (issuer, audience, expiry, subject, and nonce)."""
+    if not isinstance(claims, dict):
+        raise AuthenticationError("OIDC claims must be a mapping")
+
+    sub = claims.get("sub")
+    if not isinstance(sub, str) or not sub.strip():
+        raise AuthenticationError("OIDC token missing valid subject")
+
+    iss = claims.get("iss")
+    if not isinstance(iss, str) or iss != expected_issuer:
+        raise AuthenticationError("OIDC token issuer mismatch")
+
+    aud = claims.get("aud")
+    if isinstance(aud, str):
+        aud_valid = aud == expected_audience
+    elif isinstance(aud, list) and all(isinstance(item, str) for item in aud):
+        aud_valid = expected_audience in aud
+        if aud_valid and len(aud) > 1 and "azp" in claims:
+            aud_valid = claims.get("azp") == expected_audience
+    else:
+        aud_valid = False
+    if not aud_valid:
+        raise AuthenticationError("OIDC token audience mismatch")
+
+    exp = claims.get("exp")
+    if isinstance(exp, bool) or not isinstance(exp, (int, float)):
+        raise AuthenticationError("OIDC token missing valid expiration")
+
+    current_ts = _resolve_unix_ts(now)
+    if current_ts >= float(exp) + clock_skew_seconds:
+        raise AuthenticationError("OIDC token has expired")
+
+    nbf = claims.get("nbf")
+    if nbf is not None:
+        if isinstance(nbf, bool) or not isinstance(nbf, (int, float)):
+            raise AuthenticationError("OIDC token has invalid nbf claim")
+        if current_ts + clock_skew_seconds < float(nbf):
+            raise AuthenticationError("OIDC token is not yet valid")
+
+    iat = claims.get("iat")
+    if iat is not None:
+        if isinstance(iat, bool) or not isinstance(iat, (int, float)):
+            raise AuthenticationError("OIDC token has invalid iat claim")
+        if float(iat) > current_ts + clock_skew_seconds:
+            raise AuthenticationError("OIDC token issued in the future")
+
+    if expected_nonce is not None:
+        nonce = claims.get("nonce")
+        if not isinstance(nonce, str) or not hmac.compare_digest(nonce, expected_nonce):
+            raise AuthenticationError("OIDC token nonce mismatch")
+
+    return claims

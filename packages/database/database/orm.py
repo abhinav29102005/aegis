@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import (
     JSON,
@@ -12,13 +12,36 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
     Uuid,
+    event,
+    false,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+PG_AUDIT_TRIGGER_FUNCTION_SQL = """
+CREATE OR REPLACE FUNCTION aegis_prevent_financial_event_mutation()
+RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'financial_events is append-only; % is prohibited', TG_OP;
+END;
+$$ LANGUAGE plpgsql;
+""".strip()
+
+PG_AUDIT_TRIGGER_DROP_SQL = (
+    "DROP TRIGGER IF EXISTS trg_aegis_prevent_financial_event_mutation ON financial_events;"
+)
+
+PG_AUDIT_TRIGGER_CREATE_SQL = """
+CREATE TRIGGER trg_aegis_prevent_financial_event_mutation
+BEFORE UPDATE OR DELETE ON financial_events
+FOR EACH ROW EXECUTE FUNCTION aegis_prevent_financial_event_mutation();
+""".strip()
 
 
 def _utc_now() -> datetime:
@@ -169,6 +192,7 @@ class AuthorizationDecisionRow(Base):
     requires_human_approval: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     explanation: Mapped[str] = mapped_column(Text, nullable=False)
     policy_inputs: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    passport_snapshot_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
     decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
 
 
@@ -293,6 +317,10 @@ class DisputeCaseRow(Base):
     approved_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     response_payload_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    response_due_by: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolution_outcome: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    external_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
 
@@ -323,6 +351,9 @@ class DisputeAnalysisRow(Base):
 
 class OutboxEventRow(Base):
     __tablename__ = "outbox_events"
+    __table_args__ = (
+        Index("ix_outbox_events_status_lease_expires_at", "status", "lease_expires_at"),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     tenant_id: Mapped[UUID] = mapped_column(Uuid, index=True, nullable=False)
@@ -335,6 +366,9 @@ class OutboxEventRow(Base):
     next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     dead_lettered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    locked_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -366,6 +400,10 @@ class UserRow(Base):
     full_name: Mapped[str] = mapped_column(String(160), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
+    mfa_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
+    mfa_secret_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    erased_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
 
 
@@ -511,4 +549,154 @@ class WebhookDeliveryRow(Base):
     next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+
+# ----------------------------------------------------------------------
+# Production Hardening & Extensions (0003)
+# ----------------------------------------------------------------------
+class SpendingPassportSnapshotRow(Base):
+    __tablename__ = "spending_passport_snapshots"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(Uuid, index=True, nullable=False)
+    passport_id: Mapped[UUID] = mapped_column(Uuid, index=True, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
+    created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+
+class GhostPayTraceRow(Base):
+    __tablename__ = "ghostpay_traces"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "trace_id", name="uq_ghostpay_trace_tenant_trace"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(Uuid, index=True, nullable=False)
+    trace_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    agent_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    correlation_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False, default="")
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    recorded_decision_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+
+class GhostPayAgentDnaProfileRow(Base):
+    __tablename__ = "ghostpay_agent_dna_profiles"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "agent_id", name="uq_ghostpay_dna_tenant_agent"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(Uuid, index=True, nullable=False)
+    agent_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    profile_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+
+class LlmInvocationLogRow(Base):
+    __tablename__ = "llm_invocation_logs"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(Uuid, index=True, nullable=False)
+    correlation_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    module: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    estimated_cost_usd_micros: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+
+class PayPalWebhookEventRow(Base):
+    __tablename__ = "paypal_webhook_events"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    event_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    resource_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    payload_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+
+class OrgInvitationRow(Base):
+    __tablename__ = "org_invitations"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(Uuid, index=True, nullable=False)
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    invited_by_user_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+
+class EmailVerificationRow(Base):
+    __tablename__ = "email_verifications"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(Uuid, index=True, nullable=False)
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+
+class BillingSubscriptionRow(Base):
+    __tablename__ = "billing_subscriptions"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(Uuid, unique=True, nullable=False)
+    plan: Mapped[str] = mapped_column(String(32), nullable=False, default="FREE")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="ACTIVE")
+    stripe_customer_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    stripe_subscription_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    monthly_tx_quota: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+
+class UsageMeterRow(Base):
+    __tablename__ = "usage_meters"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "period_ym", "metric", name="uq_usage_meter_tenant_period_metric"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(Uuid, index=True, nullable=False)
+    period_ym: Mapped[str] = mapped_column(String(7), nullable=False)
+    metric: Mapped[str] = mapped_column(String(64), nullable=False)
+    count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+
+class ErasureRequestRow(Base):
+    __tablename__ = "erasure_requests"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(Uuid, index=True, nullable=False)
+    subject_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    subject_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    requested_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING")
+    details_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+@event.listens_for(FinancialEventRow.__table__, "after_create")
+def _install_pg_financial_event_trigger(target: Any, connection: Any, **kw: Any) -> None:
+    """Install append-only immutability trigger on PostgreSQL when financial_events is created."""
+    if connection.dialect.name == "postgresql":
+        connection.execute(text(PG_AUDIT_TRIGGER_FUNCTION_SQL))
+        connection.execute(text(PG_AUDIT_TRIGGER_DROP_SQL))
+        connection.execute(text(PG_AUDIT_TRIGGER_CREATE_SQL))
+
 

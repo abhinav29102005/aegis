@@ -6,7 +6,8 @@ from collections.abc import Generator
 from typing import Annotated
 from uuid import UUID
 
-from database import LedgerRepository, LocalObjectStorage, PlatformRepository
+from database import LedgerRepository, PlatformRepository, ServiceAccountRow
+from database.storage import ObjectStorage
 from fastapi import Depends, Header, HTTPException, Request, status
 from paypal import PayPalSandboxClient
 from security import (
@@ -40,7 +41,7 @@ def get_db_session(request: Request) -> Generator[Session, None, None]:
         session.close()
 
 
-def get_object_storage(request: Request) -> LocalObjectStorage:
+def get_object_storage(request: Request) -> ObjectStorage:
     return request.app.state.object_storage
 
 
@@ -130,6 +131,32 @@ def get_auth_context(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail={"error_code": "CROSS_TENANT_API_KEY", "message": "API key cannot access a different organization."},
                 )
+        if key_row.user_id is not None:
+            user = platform.get_user(key_row.user_id)
+            if user is None or not user.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail={"error_code": "USER_INACTIVE", "message": "User account is inactive or missing."},
+                )
+            membership = platform.get_membership(key_row.tenant_id, key_row.user_id)
+            if membership is None or membership.status != "ACTIVE":
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail={
+                        "error_code": "MEMBERSHIP_INACTIVE",
+                        "message": "Organization membership is inactive or missing.",
+                    },
+                )
+        if key_row.service_account_id is not None:
+            sa = session.get(ServiceAccountRow, key_row.service_account_id)
+            if sa is None or sa.status != "ACTIVE":
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail={
+                        "error_code": "SERVICE_ACCOUNT_INACTIVE",
+                        "message": "Service account is inactive or missing.",
+                    },
+                )
         role = Role(key_row.role)
         auth_ctx = AuthContext(
             tenant_id=key_row.tenant_id,
@@ -157,6 +184,12 @@ def get_auth_context(
 
 
 def require_tenant_id(auth: Annotated[AuthContext, Depends(get_auth_context)]) -> UUID:
+    return auth.tenant_id
+
+
+def require_ghostpay_read_tenant(
+    auth: Annotated[AuthContext, Depends(require_permission(Permission.GHOSTPAY_READ))],
+) -> UUID:
     return auth.tenant_id
 
 
