@@ -5,8 +5,53 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import UUID
+
+CURRENCY_EXPONENTS: dict[str, int] = {
+    "JPY": 0,
+    "HUF": 0,
+    "KRW": 0,
+    "TWD": 0,
+    "VND": 0,
+    "CLP": 0,
+    "ISK": 0,
+    "BHD": 3,
+    "JOD": 3,
+    "KWD": 3,
+    "OMR": 3,
+    "TND": 3,
+}
+
+
+def get_currency_exponent(currency: str) -> int:
+    """Return ISO 4217 minor-unit exponent for currency (default 2)."""
+    return CURRENCY_EXPONENTS.get(currency.strip().upper(), 2)
+
+
+def minor_to_decimal_str(amount_minor: int, currency: str) -> str:
+    """Convert integer minor units to an exact fixed-precision decimal string."""
+    exp = get_currency_exponent(currency)
+    quant = Decimal(10) ** (-exp)
+    value = (Decimal(amount_minor) * quant).quantize(quant)
+    return format(value, "f")
+
+
+def decimal_str_to_minor(value: str, currency: str) -> int:
+    """Convert a decimal amount string to exact integer minor units for currency."""
+    exp = get_currency_exponent(currency)
+    try:
+        dec = Decimal(str(value).strip())
+    except InvalidOperation as exc:
+        raise ValueError(f"Invalid decimal amount: {value!r}") from exc
+    scale = Decimal(10) ** exp
+    scaled = dec * scale
+    if scaled != scaled.to_integral_value():
+        raise ValueError(
+            f"Amount {value!r} exceeds {exp} decimal places for currency {currency.upper()}"
+        )
+    return int(scaled)
 
 
 def _json_default(value: Any) -> Any:

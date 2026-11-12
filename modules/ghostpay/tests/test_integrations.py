@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contracts import PaymentState
+from contracts import PaymentState, compute_payload_hash
 
 from ghostpay.domain.service import GhostPayService
 from ghostpay.integrations.disputeos import export_to_disputeos
@@ -39,13 +39,17 @@ def test_guardian_trace_adapter_preserves_capture_verification(
     authorized_39_fixture: dict,
 ) -> None:
     f = authorized_39_fixture
+    canonical_evidence = [
+        rec.model_copy(update={"content_hash": compute_payload_hash(rec.content)})
+        for rec in f["evidence_records"]
+    ]
     trace = guardian_adapter.from_guardian_records(
         intent=f["payment_intent"],
         proposal_quote=f["quote_snapshot"],
         passport=f["passport"],
         merchant=f["approved_merchant"],
         events=f["events"],
-        evidence_records=f["evidence_records"],
+        evidence_records=canonical_evidence,
         decision=f["decision"],
     )
 

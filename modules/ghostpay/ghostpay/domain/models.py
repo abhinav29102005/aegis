@@ -22,6 +22,8 @@ from contracts import (
 )
 from pydantic import BaseModel, Field, field_validator
 
+from ghostpay.domain.exceptions import InsufficientEvidenceError
+
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
@@ -63,58 +65,40 @@ class PaymentTrace(BaseModel):
     def _utc_created(cls, v: datetime) -> datetime:
         return _normalize_utc(v)  # type: ignore[return-value]
 
-    def to_replay_request(self) -> ReplayRequest | None:
-        """Convert trace to a canonical ReplayRequest if minimal requirements are met."""
-        if not (self.recorded_passport and self.recorded_decision and self.quote_snapshot and self.recorded_merchant):
-            return None
+    def to_replay_request(self) -> ReplayRequest:
+        """Convert trace to a canonical ReplayRequest, failing closed on missing artifacts."""
+        missing: list[str] = []
+        if self.recorded_passport is None:
+            missing.append("recorded_passport")
+        if self.recorded_decision is None:
+            missing.append("recorded_decision")
+        if self.quote_snapshot is None:
+            missing.append("quote_snapshot")
+        if self.recorded_merchant is None:
+            missing.append("recorded_merchant")
+        if self.proposal is None:
+            missing.append("proposal")
+        if self.payment_intent is None:
+            missing.append("payment_intent")
 
-        # Resolve proposal
-        if self.proposal:
-            prop = self.proposal
-        else:
-            prop = PurchaseProposal(
-                id=self.quote_snapshot.proposal_id,
-                tenant_id=self.tenant_id,
-                correlation_id=self.quote_snapshot.correlation_id,
-                agent_id=self.agent_id,
-                passport_id=self.recorded_passport.id,
-                merchant_id=self.recorded_merchant.id,
-                merchant_name=self.recorded_merchant.name,
-                amount_minor=self.quote_snapshot.amount_minor,
-                currency=self.quote_snapshot.currency,
-                line_items=self.quote_snapshot.line_items,
-                item_summary="Reconstructed purchase proposal",
-                rationale="Forensic trace replay",
-                idempotency_key=f"reconstructed-{self.trace_id}",
-                created_at=self.quote_snapshot.created_at,
+        if missing:
+            raise InsufficientEvidenceError(
+                f"Insufficient evidence to construct ReplayRequest for trace {self.trace_id}: "
+                f"missing {', '.join(missing)}."
             )
 
-        # Resolve payment_intent
-        if self.payment_intent:
-            intent = self.payment_intent
-        else:
-            intent = PaymentIntent(
-                id=self.payment_intent_id,
-                tenant_id=self.tenant_id,
-                correlation_id=self.quote_snapshot.correlation_id,
-                proposal_id=self.quote_snapshot.proposal_id,
-                agent_id=self.agent_id,
-                passport_id=self.recorded_passport.id,
-                merchant_id=self.recorded_merchant.id,
-                quote_snapshot_id=self.quote_snapshot.id,
-                quote_hash=self.quote_snapshot.quote_hash,
-                amount_minor=self.quote_snapshot.amount_minor,
-                currency=self.quote_snapshot.currency,
-                idempotency_key=f"reconstructed-intent-{self.trace_id}",
-                created_at=self.created_at,
-                updated_at=self.created_at,
-            )
+        assert self.recorded_passport is not None
+        assert self.recorded_decision is not None
+        assert self.quote_snapshot is not None
+        assert self.recorded_merchant is not None
+        assert self.proposal is not None
+        assert self.payment_intent is not None
 
         return ReplayRequest(
             tenant_id=self.tenant_id,
             correlation_id=self.quote_snapshot.correlation_id,
-            payment_intent=intent,
-            proposal=prop,
+            payment_intent=self.payment_intent,
+            proposal=self.proposal,
             quote_snapshot=self.quote_snapshot,
             recorded_passport=self.recorded_passport,
             recorded_merchant=self.recorded_merchant,
@@ -123,6 +107,7 @@ class PaymentTrace(BaseModel):
             policy_version=self.policy_version,
             events=self.ordered_events,
             evidence_records=self.authorization_evidence,
+            evaluation_time=self.recorded_decision.decided_at,
         )
 
 

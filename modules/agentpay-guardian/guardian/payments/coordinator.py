@@ -22,6 +22,7 @@ from contracts import (
     compute_payload_hash,
 )
 from paypal import (
+    PayPalAPIError,
     PayPalCaptureResult,
     PayPalOrderCreationResult,
     PayPalReconciliationResult,
@@ -32,6 +33,7 @@ from paypal import (
 from guardian.budgets.coordinator import BudgetCoordinator
 from guardian.domain.exceptions import (
     AttemptNotFoundError,
+    DuplicateIntentError,
     GuardianError,
     IntentNotFoundError,
     InvalidStateTransitionError,
@@ -60,41 +62,50 @@ class PaymentCoordinator:
         self.paypal_client = paypal_client
         self.budget_coordinator = budget_coordinator
 
-    async def create_checkout(
+    def prepare_checkout(
         self,
         *,
         intent: PaymentIntent,
         attempt_number: int = 1,
         idempotency_key: str,
-        return_url: str | None = None,
-        cancel_url: str | None = None,
-    ) -> PaymentAttempt:
+    ) -> tuple[PaymentIntent, PaymentAttempt | None]:
+        """Validate checkout state and check idempotent attempt reuse before PayPal I/O."""
+        list_attempts = getattr(self.repo, "list_attempts_for_intent", None)
+        attempts: list[PaymentAttempt] = []
+        if callable(list_attempts):
+            attempts = list_attempts(intent.tenant_id, intent.id)
+        elif intent.active_attempt_id is not None:
+            active_attempt = self.repo.get_attempt(intent.tenant_id, intent.active_attempt_id)
+            if active_attempt is not None:
+                attempts = [active_attempt]
+
+        for existing in attempts:
+            if existing.idempotency_key == idempotency_key:
+                if existing.attempt_number != attempt_number:
+                    raise DuplicateIntentError(
+                        f"Attempt idempotency key '{idempotency_key}' already bound to attempt {existing.attempt_number}"
+                    )
+                return intent, existing
+
         if intent.state != PaymentState.CHECKOUT_READY:
             raise InvalidStateTransitionError(
                 f"Cannot create checkout for intent in state {intent.state.value} "
                 f"(must be CHECKOUT_READY)"
             )
+        return intent, None
 
-        # Check if attempt already exists for this idempotency key
-        attempt_id = uuid4()
+    def finalize_checkout(
+        self,
+        *,
+        intent: PaymentIntent,
+        attempt_number: int,
+        idempotency_key: str,
+        order_result: PayPalOrderCreationResult,
+    ) -> PaymentAttempt:
+        """Persist created PayPal order attempt, intent transition, audit event, and evidence."""
         now = _utc_now()
-
-        # Call PayPal Sandbox to create order
-        try:
-            order_result: PayPalOrderCreationResult = await self.paypal_client.create_order(
-                amount_minor=intent.amount_minor,
-                currency=intent.currency,
-                reference_id=str(intent.id),
-                description=f"AgentPay Nexus order {intent.id}",
-                request_id=f"req-order-{intent.id}-{attempt_number}",
-                return_url=return_url,
-                cancel_url=cancel_url,
-            )
-        except Exception as exc:
-            raise GuardianError(f"Failed to create PayPal sandbox order: {exc}") from exc
-
         attempt = PaymentAttempt(
-            id=attempt_id,
+            id=uuid4(),
             tenant_id=intent.tenant_id,
             correlation_id=intent.correlation_id,
             payment_intent_id=intent.id,
@@ -109,7 +120,6 @@ class PaymentCoordinator:
         )
         saved_attempt = self.repo.save_attempt(attempt)
 
-        # Transition intent to AWAITING_PAYPAL_BUYER
         self.repo.transition_intent(
             tenant_id=intent.tenant_id,
             intent_id=intent.id,
@@ -117,7 +127,6 @@ class PaymentCoordinator:
             active_attempt_id=saved_attempt.id,
         )
 
-        # Financial event
         self.repo.append_financial_event(
             tenant_id=intent.tenant_id,
             correlation_id=intent.correlation_id,
@@ -134,7 +143,6 @@ class PaymentCoordinator:
             },
         )
 
-        # Evidence record
         evidence_content: dict[str, Any] = {
             "paypal_order_id": order_result.paypal_order_id,
             "amount_minor": intent.amount_minor,
@@ -157,6 +165,87 @@ class PaymentCoordinator:
         )
         return saved_attempt
 
+    def record_checkout_failure(
+        self,
+        *,
+        intent: PaymentIntent,
+        reason: str,
+    ) -> PaymentIntent:
+        """Release held budget reservation and mark intent FAILED when order creation fails."""
+        if intent.reservation_id:
+            self.budget_coordinator.release(
+                tenant_id=intent.tenant_id,
+                correlation_id=intent.correlation_id,
+                payment_intent_id=intent.id,
+                reservation_id=intent.reservation_id,
+                actor_type="PAYMENT_COORDINATOR",
+                actor_id="guardian-payments",
+                reason=f"Checkout order creation failed: {reason}",
+            )
+
+        current_intent = self.repo.get_intent(intent.tenant_id, intent.id) or intent
+        if current_intent.state == PaymentState.CHECKOUT_READY:
+            current_intent = self.repo.transition_intent(
+                tenant_id=intent.tenant_id,
+                intent_id=intent.id,
+                target_state=PaymentState.FAILED,
+            )
+
+        self.repo.append_financial_event(
+            tenant_id=intent.tenant_id,
+            correlation_id=intent.correlation_id,
+            payment_intent_id=intent.id,
+            event_type=FinancialEventType.PAYMENT_FAILED,
+            actor_type="PAYMENT_COORDINATOR",
+            actor_id="guardian-payments",
+            payload={
+                "stage": "create_checkout",
+                "error": reason,
+            },
+        )
+        return current_intent
+
+    async def create_checkout(
+        self,
+        *,
+        intent: PaymentIntent,
+        attempt_number: int = 1,
+        idempotency_key: str,
+        return_url: str | None = None,
+        cancel_url: str | None = None,
+    ) -> PaymentAttempt:
+        _, existing = self.prepare_checkout(
+            intent=intent,
+            attempt_number=attempt_number,
+            idempotency_key=idempotency_key,
+        )
+        if existing is not None:
+            return existing
+
+        try:
+            order_result: PayPalOrderCreationResult = await self.paypal_client.create_order(
+                amount_minor=intent.amount_minor,
+                currency=intent.currency,
+                reference_id=str(intent.id),
+                description=f"AgentPay Nexus order {intent.id}",
+                request_id=f"req-order-{intent.id}-{attempt_number}",
+                return_url=return_url,
+                cancel_url=cancel_url,
+            )
+        except (PayPalTimeoutError, PayPalAPIError) as exc:
+            self.record_checkout_failure(intent=intent, reason=str(exc))
+            raise
+        except (ValueError, RuntimeError) as exc:
+            self.record_checkout_failure(intent=intent, reason=str(exc))
+            raise GuardianError(f"Failed to create PayPal sandbox order: {exc}") from exc
+
+        return self.finalize_checkout(
+            intent=intent,
+            attempt_number=attempt_number,
+            idempotency_key=idempotency_key,
+            order_result=order_result,
+        )
+
     def record_buyer_approval(
         self,
         *,
@@ -173,6 +262,15 @@ class PaymentCoordinator:
         if intent is None:
             raise IntentNotFoundError(f"PaymentIntent {intent_id} not found")
 
+        if attempt.payment_intent_id != intent.id:
+            raise InvalidStateTransitionError(
+                f"PaymentAttempt {attempt_id} does not belong to PaymentIntent {intent_id}"
+            )
+        if intent.state != PaymentState.AWAITING_PAYPAL_BUYER:
+            raise InvalidStateTransitionError(
+                f"Cannot record buyer approval for intent in state {intent.state.value} "
+                f"(must be AWAITING_PAYPAL_BUYER)"
+            )
         if attempt.paypal_order_id is None:
             raise GuardianError("Cannot record buyer approval on attempt without paypal_order_id")
 
@@ -215,27 +313,40 @@ class PaymentCoordinator:
         )
         return saved_attempt
 
-    async def capture_order(
+    def prepare_capture(
         self,
         *,
         tenant_id: UUID,
         intent_id: UUID,
         attempt_id: UUID,
     ) -> tuple[PaymentIntent, PaymentAttempt]:
+        """Validate CAPTURE_PENDING state and log capture request prior to PayPal HTTP I/O."""
         intent = self.repo.get_intent(tenant_id, intent_id)
         if intent is None:
             raise IntentNotFoundError(f"PaymentIntent {intent_id} not found")
+
+        if intent.state != PaymentState.CAPTURE_PENDING:
+            raise InvalidStateTransitionError(
+                f"Cannot capture PaymentIntent {intent_id} in state {intent.state.value} "
+                f"(must be CAPTURE_PENDING)"
+            )
 
         attempt = self.repo.get_attempt(tenant_id, attempt_id)
         if attempt is None:
             raise AttemptNotFoundError(f"PaymentAttempt {attempt_id} not found")
 
+        if attempt.payment_intent_id != intent.id:
+            raise InvalidStateTransitionError(
+                f"PaymentAttempt {attempt_id} does not belong to PaymentIntent {intent_id}"
+            )
+        if attempt.state != PaymentState.CAPTURE_PENDING:
+            raise InvalidStateTransitionError(
+                f"Cannot capture PaymentAttempt {attempt_id} in state {attempt.state.value} "
+                f"(must be CAPTURE_PENDING)"
+            )
         if attempt.paypal_order_id is None:
             raise GuardianError("Cannot capture attempt without paypal_order_id")
 
-        now = _utc_now()
-
-        # Audit capture request
         self.repo.append_financial_event(
             tenant_id=tenant_id,
             correlation_id=intent.correlation_id,
@@ -250,97 +361,109 @@ class PaymentCoordinator:
                 "currency": intent.currency,
             },
         )
+        return intent, attempt
 
-        try:
-            capture_result: PayPalCaptureResult = await self.paypal_client.capture_order(
-                paypal_order_id=attempt.paypal_order_id,
-                expected_amount_minor=intent.amount_minor,
-                expected_currency=intent.currency,
-                request_id=f"cap-{intent.id}-{attempt.attempt_number}",
-            )
-        except PayPalTimeoutError:
-            # Handle timeout -> transition to PENDING_PROVIDER
-            timeout_attempt = attempt.model_copy(
-                update={
-                    "state": PaymentState.PENDING_PROVIDER,
-                    "failure_code": "PAYPAL_CAPTURE_TIMEOUT",
-                    "failure_reason": "PayPal capture timed out; awaiting reconciliation",
-                    "updated_at": _utc_now(),
-                }
-            )
-            saved_attempt = self.repo.update_attempt(timeout_attempt)
-            updated_intent = self.repo.transition_intent(
-                tenant_id=tenant_id,
-                intent_id=intent_id,
-                target_state=PaymentState.PENDING_PROVIDER,
-                active_attempt_id=saved_attempt.id,
-            )
+    def record_capture_timeout(
+        self,
+        *,
+        tenant_id: UUID,
+        intent: PaymentIntent,
+        attempt: PaymentAttempt,
+    ) -> tuple[PaymentIntent, PaymentAttempt]:
+        timeout_attempt = attempt.model_copy(
+            update={
+                "state": PaymentState.PENDING_PROVIDER,
+                "failure_code": "PAYPAL_CAPTURE_TIMEOUT",
+                "failure_reason": "PayPal capture timed out; awaiting reconciliation",
+                "updated_at": _utc_now(),
+            }
+        )
+        saved_attempt = self.repo.update_attempt(timeout_attempt)
+        updated_intent = self.repo.transition_intent(
+            tenant_id=tenant_id,
+            intent_id=intent.id,
+            target_state=PaymentState.PENDING_PROVIDER,
+            active_attempt_id=saved_attempt.id,
+        )
 
-            self.repo.append_financial_event(
-                tenant_id=tenant_id,
-                correlation_id=intent.correlation_id,
-                payment_intent_id=intent_id,
-                event_type=FinancialEventType.PAYPAL_TIMEOUT_PENDING,
-                actor_type="PAYMENT_COORDINATOR",
-                actor_id="guardian-payments",
-                payload={
-                    "attempt_id": str(attempt_id),
-                    "paypal_order_id": attempt.paypal_order_id,
-                    "reason": "Capture call timed out",
-                },
-            )
-            return updated_intent, saved_attempt
+        self.repo.append_financial_event(
+            tenant_id=tenant_id,
+            correlation_id=intent.correlation_id,
+            payment_intent_id=intent.id,
+            event_type=FinancialEventType.PAYPAL_TIMEOUT_PENDING,
+            actor_type="PAYMENT_COORDINATOR",
+            actor_id="guardian-payments",
+            payload={
+                "attempt_id": str(attempt.id),
+                "paypal_order_id": attempt.paypal_order_id,
+                "reason": "Capture call timed out",
+            },
+        )
+        return updated_intent, saved_attempt
 
-        except Exception as exc:
-            # Capture failure -> transition to FAILED and release budget
-            fail_attempt = attempt.model_copy(
-                update={
-                    "state": PaymentState.FAILED,
-                    "failure_code": "PAYPAL_CAPTURE_FAILED",
-                    "failure_reason": str(exc),
-                    "updated_at": _utc_now(),
-                }
-            )
-            saved_attempt = self.repo.update_attempt(fail_attempt)
-            updated_intent = self.repo.transition_intent(
-                tenant_id=tenant_id,
-                intent_id=intent_id,
-                target_state=PaymentState.FAILED,
-                active_attempt_id=saved_attempt.id,
-            )
+    def record_capture_failure(
+        self,
+        *,
+        tenant_id: UUID,
+        intent: PaymentIntent,
+        attempt: PaymentAttempt,
+        error_message: str,
+    ) -> tuple[PaymentIntent, PaymentAttempt]:
+        fail_attempt = attempt.model_copy(
+            update={
+                "state": PaymentState.FAILED,
+                "failure_code": "PAYPAL_CAPTURE_FAILED",
+                "failure_reason": error_message[:500],
+                "updated_at": _utc_now(),
+            }
+        )
+        saved_attempt = self.repo.update_attempt(fail_attempt)
+        updated_intent = self.repo.transition_intent(
+            tenant_id=tenant_id,
+            intent_id=intent.id,
+            target_state=PaymentState.FAILED,
+            active_attempt_id=saved_attempt.id,
+        )
 
-            if intent.reservation_id:
-                self.budget_coordinator.release(
-                    tenant_id=tenant_id,
-                    correlation_id=intent.correlation_id,
-                    payment_intent_id=intent.id,
-                    reservation_id=intent.reservation_id,
-                    reason=f"Capture failed: {exc}",
-                )
-
-            self.repo.append_financial_event(
+        if intent.reservation_id:
+            self.budget_coordinator.release(
                 tenant_id=tenant_id,
                 correlation_id=intent.correlation_id,
-                payment_intent_id=intent_id,
-                event_type=FinancialEventType.PAYMENT_FAILED,
-                actor_type="PAYMENT_COORDINATOR",
-                actor_id="guardian-payments",
-                payload={
-                    "attempt_id": str(attempt_id),
-                    "paypal_order_id": attempt.paypal_order_id,
-                    "error": str(exc),
-                },
+                payment_intent_id=intent.id,
+                reservation_id=intent.reservation_id,
+                reason=f"Capture failed: {error_message}",
             )
-            return updated_intent, saved_attempt
 
-        # Capture succeeded and verified!
+        self.repo.append_financial_event(
+            tenant_id=tenant_id,
+            correlation_id=intent.correlation_id,
+            payment_intent_id=intent.id,
+            event_type=FinancialEventType.PAYMENT_FAILED,
+            actor_type="PAYMENT_COORDINATOR",
+            actor_id="guardian-payments",
+            payload={
+                "attempt_id": str(attempt.id),
+                "paypal_order_id": attempt.paypal_order_id,
+                "error": error_message,
+            },
+        )
+        return updated_intent, saved_attempt
+
+    def finalize_capture(
+        self,
+        *,
+        tenant_id: UUID,
+        intent: PaymentIntent,
+        attempt: PaymentAttempt,
+        capture_result: PayPalCaptureResult,
+    ) -> tuple[PaymentIntent, PaymentAttempt]:
+        now = _utc_now()
         verified_capture = capture_result.verified_capture
         if verified_capture.paypal_status != "COMPLETED":
             raise GuardianError(
                 f"Capture not completed: status is {verified_capture.paypal_status}"
             )
 
-        # Atomically convert budget reservation to spent!
         if intent.reservation_id:
             self.budget_coordinator.capture(
                 tenant_id=tenant_id,
@@ -360,7 +483,7 @@ class PaymentCoordinator:
 
         updated_intent = self.repo.transition_intent(
             tenant_id=tenant_id,
-            intent_id=intent_id,
+            intent_id=intent.id,
             target_state=PaymentState.SUCCEEDED,
             active_attempt_id=saved_attempt.id,
         )
@@ -368,12 +491,12 @@ class PaymentCoordinator:
         self.repo.append_financial_event(
             tenant_id=tenant_id,
             correlation_id=intent.correlation_id,
-            payment_intent_id=intent_id,
+            payment_intent_id=intent.id,
             event_type=FinancialEventType.PAYPAL_CAPTURE_VERIFIED,
             actor_type="PAYMENT_COORDINATOR",
             actor_id="guardian-payments",
             payload={
-                "attempt_id": str(attempt_id),
+                "attempt_id": str(attempt.id),
                 "paypal_order_id": attempt.paypal_order_id,
                 "paypal_capture_id": verified_capture.paypal_capture_id,
                 "verified_amount_minor": verified_capture.verified_amount_minor,
@@ -394,7 +517,7 @@ class PaymentCoordinator:
             EvidenceRecord(
                 tenant_id=tenant_id,
                 correlation_id=intent.correlation_id,
-                payment_intent_id=intent_id,
+                payment_intent_id=intent.id,
                 source_type=EvidenceSourceType.PAYPAL_CAPTURE,
                 source_ref=f"paypal:{verified_capture.paypal_capture_id}",
                 title=f"Verified PayPal Capture ({verified_capture.paypal_capture_id})",
@@ -405,6 +528,48 @@ class PaymentCoordinator:
             )
         )
         return updated_intent, saved_attempt
+
+    async def capture_order(
+        self,
+        *,
+        tenant_id: UUID,
+        intent_id: UUID,
+        attempt_id: UUID,
+    ) -> tuple[PaymentIntent, PaymentAttempt]:
+        intent, attempt = self.prepare_capture(
+            tenant_id=tenant_id,
+            intent_id=intent_id,
+            attempt_id=attempt_id,
+        )
+        assert attempt.paypal_order_id is not None
+
+        try:
+            capture_result: PayPalCaptureResult = await self.paypal_client.capture_order(
+                paypal_order_id=attempt.paypal_order_id,
+                expected_amount_minor=intent.amount_minor,
+                expected_currency=intent.currency,
+                request_id=f"cap-{intent.id}-{attempt.attempt_number}",
+            )
+        except PayPalTimeoutError:
+            return self.record_capture_timeout(
+                tenant_id=tenant_id,
+                intent=intent,
+                attempt=attempt,
+            )
+        except (PayPalAPIError, ValueError, RuntimeError) as exc:
+            return self.record_capture_failure(
+                tenant_id=tenant_id,
+                intent=intent,
+                attempt=attempt,
+                error_message=str(exc),
+            )
+
+        return self.finalize_capture(
+            tenant_id=tenant_id,
+            intent=intent,
+            attempt=attempt,
+            capture_result=capture_result,
+        )
 
     def handle_buyer_declined(
         self,
@@ -421,6 +586,19 @@ class PaymentCoordinator:
         attempt = self.repo.get_attempt(tenant_id, attempt_id)
         if attempt is None:
             raise AttemptNotFoundError(f"PaymentAttempt {attempt_id} not found")
+
+        if attempt.payment_intent_id != intent.id:
+            raise InvalidStateTransitionError(
+                f"PaymentAttempt {attempt_id} does not belong to PaymentIntent {intent_id}"
+            )
+        if intent.state not in (
+            PaymentState.CHECKOUT_READY,
+            PaymentState.AWAITING_PAYPAL_BUYER,
+            PaymentState.PENDING_PROVIDER,
+        ):
+            raise InvalidStateTransitionError(
+                f"Cannot mark buyer declined for intent in state {intent.state.value}"
+            )
 
         now = _utc_now()
         cancelled_attempt = attempt.model_copy(
@@ -440,7 +618,6 @@ class PaymentCoordinator:
             active_attempt_id=saved_attempt.id,
         )
 
-        # Release held budget reservation
         if intent.reservation_id:
             self.budget_coordinator.release(
                 tenant_id=tenant_id,
@@ -465,7 +642,7 @@ class PaymentCoordinator:
         )
         return updated_intent, saved_attempt
 
-    async def reconcile_pending(
+    def prepare_reconcile(
         self,
         *,
         tenant_id: UUID,
@@ -480,21 +657,36 @@ class PaymentCoordinator:
         if attempt is None:
             raise AttemptNotFoundError(f"PaymentAttempt {attempt_id} not found")
 
+        if attempt.payment_intent_id != intent.id:
+            raise InvalidStateTransitionError(
+                f"PaymentAttempt {attempt_id} does not belong to PaymentIntent {intent_id}"
+            )
+        if intent.state not in (
+            PaymentState.PENDING_PROVIDER,
+            PaymentState.CAPTURE_PENDING,
+            PaymentState.AWAITING_PAYPAL_BUYER,
+        ):
+            raise InvalidStateTransitionError(
+                f"Cannot reconcile PaymentIntent {intent_id} in state {intent.state.value}"
+            )
         if attempt.paypal_order_id is None:
             raise GuardianError("Cannot reconcile attempt without paypal_order_id")
+        return intent, attempt
 
-        reconcile_res: PayPalReconciliationResult = await self.paypal_client.reconcile_order(
-            paypal_order_id=attempt.paypal_order_id,
-            expected_amount_minor=intent.amount_minor,
-            expected_currency=intent.currency,
-        )
-
+    def finalize_reconcile(
+        self,
+        *,
+        tenant_id: UUID,
+        intent: PaymentIntent,
+        attempt: PaymentAttempt,
+        reconcile_res: PayPalReconciliationResult,
+    ) -> tuple[PaymentIntent, PaymentAttempt]:
         now = _utc_now()
         if (
             reconcile_res.verified_capture
             and reconcile_res.verified_capture.paypal_status == "COMPLETED"
         ):
-            # Capture confirmed during reconciliation
+            verified_capture = reconcile_res.verified_capture
             if intent.reservation_id:
                 self.budget_coordinator.capture(
                     tenant_id=tenant_id,
@@ -505,7 +697,7 @@ class PaymentCoordinator:
 
             succ_attempt = attempt.model_copy(
                 update={
-                    "verified_capture": reconcile_res.verified_capture,
+                    "verified_capture": verified_capture,
                     "state": PaymentState.SUCCEEDED,
                     "updated_at": now,
                 }
@@ -513,7 +705,7 @@ class PaymentCoordinator:
             saved_attempt = self.repo.update_attempt(succ_attempt)
             updated_intent = self.repo.transition_intent(
                 tenant_id=tenant_id,
-                intent_id=intent_id,
+                intent_id=intent.id,
                 target_state=PaymentState.SUCCEEDED,
                 active_attempt_id=saved_attempt.id,
             )
@@ -521,20 +713,47 @@ class PaymentCoordinator:
             self.repo.append_financial_event(
                 tenant_id=tenant_id,
                 correlation_id=intent.correlation_id,
-                payment_intent_id=intent_id,
+                payment_intent_id=intent.id,
                 event_type=FinancialEventType.PAYPAL_CAPTURE_VERIFIED,
                 actor_type="RECONCILIATION_SERVICE",
                 actor_id="guardian-reconciler",
                 payload={
-                    "attempt_id": str(attempt_id),
+                    "attempt_id": str(attempt.id),
                     "paypal_order_id": attempt.paypal_order_id,
+                    "paypal_capture_id": verified_capture.paypal_capture_id,
+                    "verified_amount_minor": verified_capture.verified_amount_minor,
+                    "verified_currency": verified_capture.verified_currency,
+                    "verification_hash": verified_capture.verification_hash,
                     "status": "COMPLETED_VIA_RECONCILIATION",
                 },
+            )
+
+            capture_evidence: dict[str, Any] = {
+                "paypal_order_id": verified_capture.paypal_order_id,
+                "capture_id": verified_capture.paypal_capture_id,
+                "status": verified_capture.paypal_status,
+                "verified_amount_minor": verified_capture.verified_amount_minor,
+                "verified_currency": verified_capture.verified_currency,
+                "verification_hash": verified_capture.verification_hash,
+                "reconciled": True,
+            }
+            self.repo.save_evidence(
+                EvidenceRecord(
+                    tenant_id=tenant_id,
+                    correlation_id=intent.correlation_id,
+                    payment_intent_id=intent.id,
+                    source_type=EvidenceSourceType.PAYPAL_CAPTURE,
+                    source_ref=f"paypal:{verified_capture.paypal_capture_id}",
+                    title=f"Reconciled PayPal Capture ({verified_capture.paypal_capture_id})",
+                    content=capture_evidence,
+                    content_hash=compute_payload_hash(capture_evidence),
+                    is_synthetic=False,
+                    collected_at=now,
+                )
             )
             return updated_intent, saved_attempt
 
         if reconcile_res.order_status in ("VOIDED", "CANCELLED", "EXPIRED"):
-            # Provider confirms order was voided/cancelled
             cancel_attempt = attempt.model_copy(
                 update={
                     "state": PaymentState.CANCELLED,
@@ -546,7 +765,7 @@ class PaymentCoordinator:
             saved_attempt = self.repo.update_attempt(cancel_attempt)
             updated_intent = self.repo.transition_intent(
                 tenant_id=tenant_id,
-                intent_id=intent_id,
+                intent_id=intent.id,
                 target_state=PaymentState.CANCELLED,
                 active_attempt_id=saved_attempt.id,
             )
@@ -561,5 +780,176 @@ class PaymentCoordinator:
                 )
             return updated_intent, saved_attempt
 
-        # Still pending or unconfirmed
         return intent, attempt
+
+    async def reconcile_pending(
+        self,
+        *,
+        tenant_id: UUID,
+        intent_id: UUID,
+        attempt_id: UUID,
+    ) -> tuple[PaymentIntent, PaymentAttempt]:
+        intent, attempt = self.prepare_reconcile(
+            tenant_id=tenant_id,
+            intent_id=intent_id,
+            attempt_id=attempt_id,
+        )
+        assert attempt.paypal_order_id is not None
+
+        reconcile_res: PayPalReconciliationResult = await self.paypal_client.reconcile_order(
+            paypal_order_id=attempt.paypal_order_id,
+            expected_amount_minor=intent.amount_minor,
+            expected_currency=intent.currency,
+        )
+        return self.finalize_reconcile(
+            tenant_id=tenant_id,
+            intent=intent,
+            attempt=attempt,
+            reconcile_res=reconcile_res,
+        )
+
+    def prepare_refund(
+        self,
+        *,
+        tenant_id: UUID,
+        intent_id: UUID,
+        attempt_id: UUID | None = None,
+        amount_minor: int | None = None,
+    ) -> tuple[PaymentIntent, PaymentAttempt, int]:
+        intent = self.repo.get_intent(tenant_id, intent_id)
+        if intent is None:
+            raise IntentNotFoundError(f"PaymentIntent {intent_id} not found")
+
+        resolved_attempt_id = attempt_id or intent.active_attempt_id
+        if resolved_attempt_id is None:
+            raise AttemptNotFoundError(f"No payment attempt bound to PaymentIntent {intent_id}")
+
+        attempt = self.repo.get_attempt(tenant_id, resolved_attempt_id)
+        if attempt is None:
+            raise AttemptNotFoundError(f"PaymentAttempt {resolved_attempt_id} not found")
+
+        if attempt.payment_intent_id != intent.id:
+            raise InvalidStateTransitionError(
+                f"PaymentAttempt {resolved_attempt_id} does not belong to PaymentIntent {intent_id}"
+            )
+        if intent.state not in (PaymentState.SUCCEEDED, PaymentState.PARTIALLY_REFUNDED):
+            raise InvalidStateTransitionError(
+                f"Cannot refund PaymentIntent {intent_id} in state {intent.state.value} "
+                f"(must be SUCCEEDED or PARTIALLY_REFUNDED)"
+            )
+        if attempt.verified_capture is None or not attempt.verified_capture.paypal_capture_id:
+            raise GuardianError("Cannot refund payment without a verified PayPal capture")
+
+        refund_amount = amount_minor if amount_minor is not None else intent.amount_minor
+        if refund_amount <= 0 or refund_amount > intent.amount_minor:
+            raise GuardianError(
+                f"Refund amount {refund_amount} must be between 1 and {intent.amount_minor}"
+            )
+        return intent, attempt, refund_amount
+
+    def finalize_refund(
+        self,
+        *,
+        tenant_id: UUID,
+        intent: PaymentIntent,
+        attempt: PaymentAttempt,
+        refund_amount: int,
+        reason: str,
+        refund_res: dict[str, Any],
+    ) -> tuple[PaymentIntent, PaymentAttempt, dict[str, Any]]:
+        now = _utc_now()
+        target_state = (
+            PaymentState.REFUNDED
+            if (intent.state == PaymentState.PARTIALLY_REFUNDED or refund_amount == intent.amount_minor)
+            else PaymentState.PARTIALLY_REFUNDED
+        )
+
+        refunded_attempt = attempt.model_copy(
+            update={
+                "state": target_state,
+                "updated_at": now,
+            }
+        )
+        saved_attempt = self.repo.update_attempt(refunded_attempt)
+        updated_intent = self.repo.transition_intent(
+            tenant_id=tenant_id,
+            intent_id=intent.id,
+            target_state=target_state,
+            active_attempt_id=saved_attempt.id,
+        )
+
+        capture_id = attempt.verified_capture.paypal_capture_id if attempt.verified_capture else ""
+        refund_id = str(refund_res.get("id") or capture_id)
+        self.repo.append_financial_event(
+            tenant_id=tenant_id,
+            correlation_id=intent.correlation_id,
+            payment_intent_id=intent.id,
+            event_type=FinancialEventType.PAYMENT_REFUNDED,
+            actor_type="PAYMENT_COORDINATOR",
+            actor_id="guardian-payments",
+            payload={
+                "attempt_id": str(attempt.id),
+                "paypal_capture_id": capture_id,
+                "paypal_refund_id": refund_id,
+                "refund_amount_minor": refund_amount,
+                "currency": intent.currency,
+                "status": str(refund_res.get("status", "COMPLETED")),
+                "reason": reason,
+            },
+        )
+
+        refund_evidence: dict[str, Any] = {
+            "paypal_capture_id": capture_id,
+            "paypal_refund_id": refund_id,
+            "refund_amount_minor": refund_amount,
+            "currency": intent.currency,
+            "reason": reason,
+            "provider_response": refund_res,
+        }
+        self.repo.save_evidence(
+            EvidenceRecord(
+                tenant_id=tenant_id,
+                correlation_id=intent.correlation_id,
+                payment_intent_id=intent.id,
+                source_type=EvidenceSourceType.PAYPAL_CAPTURE,
+                source_ref=f"paypal:refund:{refund_id}",
+                title=f"PayPal Refund ({refund_id})",
+                content=refund_evidence,
+                content_hash=compute_payload_hash(refund_evidence),
+                is_synthetic=False,
+                collected_at=now,
+            )
+        )
+        return updated_intent, saved_attempt, refund_res
+
+    async def refund_payment(
+        self,
+        *,
+        tenant_id: UUID,
+        intent_id: UUID,
+        attempt_id: UUID | None = None,
+        amount_minor: int | None = None,
+        reason: str = "Operator requested refund",
+    ) -> tuple[PaymentIntent, PaymentAttempt, dict[str, Any]]:
+        intent, attempt, refund_amount = self.prepare_refund(
+            tenant_id=tenant_id,
+            intent_id=intent_id,
+            attempt_id=attempt_id,
+            amount_minor=amount_minor,
+        )
+        assert attempt.verified_capture is not None
+        refund_res = await self.paypal_client.refund_capture(
+            capture_id=attempt.verified_capture.paypal_capture_id,
+            amount_minor=refund_amount,
+            currency=intent.currency,
+            idempotency_key=f"ref-{intent.id}-{attempt.id}-{refund_amount}",
+            note=reason,
+        )
+        return self.finalize_refund(
+            tenant_id=tenant_id,
+            intent=intent,
+            attempt=attempt,
+            refund_amount=refund_amount,
+            reason=reason,
+            refund_res=refund_res,
+        )

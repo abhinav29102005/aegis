@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Protocol
+from typing import Any, Protocol
 
 from contracts.enums import DisputeRecommendation, EvidenceSourceType
 from contracts.hashing import canonical_json
@@ -13,9 +13,15 @@ from contracts.models import (
     DisputeEvidenceCitation,
     EvidenceRecord,
 )
+from security.settings import NexusSettings
 from security.tenant import assert_same_tenant
 
 from disputeos.analysis.citations import CandidateClaim, CitationValidator
+from disputeos.analysis.llm_client import (
+    DEFAULT_MODELS,
+    LLMDisputeReviewer,
+    ProviderLLMClient,
+)
 from disputeos.evidence.detector import detect_contradictions, detect_missing_evidence
 
 SYNTHETIC_BANNER = "[SYNTHETIC DEMO CASE — NOT FOR PAYPAL SUBMISSION]"
@@ -305,17 +311,32 @@ def _build_draft_response(
 class DisputeAnalyzer:
     """Deterministic dispute intelligence analyzer with optional grounded LLM review."""
 
-    def __init__(self, llm_reviewer: LLMReviewerProtocol | None = None) -> None:
-        self.llm_reviewer = llm_reviewer
+    def __init__(
+        self,
+        llm_reviewer: LLMReviewerProtocol | None = None,
+        *,
+        llm_client: ProviderLLMClient | None = None,
+        settings: NexusSettings | None = None,
+        repo: Any | None = None,
+    ) -> None:
+        self.repo = repo
         self.citation_validator = CitationValidator()
+        if llm_reviewer is not None:
+            self.llm_reviewer: LLMReviewerProtocol | None = llm_reviewer
+        else:
+            client = llm_client or ProviderLLMClient(settings=settings)
+            self.llm_reviewer = (
+                LLMDisputeReviewer(client, repo=repo)
+                if client.is_external_configured()
+                else None
+            )
 
-    def analyze(
+    def _prepare_deterministic_baseline(
         self,
         *,
         case: DisputeCase,
         evidence: list[EvidenceRecord],
-    ) -> DisputeAnalysis:
-        """Analyze a dispute case and its evidence, producing a grounded DisputeAnalysis."""
+    ) -> dict[str, Any]:
         assert_same_tenant(case.tenant_id, case.tenant_id, resource=f"dispute_case:{case.id}")
         for rec in evidence:
             assert_same_tenant(case.tenant_id, rec.tenant_id, resource=f"evidence:{rec.id}")
@@ -356,41 +377,76 @@ class DisputeAnalyzer:
             missing=missing,
             contradictions=contradictions,
         )
+        return {
+            "missing": missing,
+            "contradictions": contradictions,
+            "agent_authorized": agent_authorized,
+            "agent_followed_policy": agent_followed_policy,
+            "merchant_fulfilled_order": merchant_fulfilled_order,
+            "recommendation": recommendation,
+            "confidence_score": confidence_score,
+            "det_citations": det_citations,
+            "det_rejected": det_rejected,
+            "det_summary": det_summary,
+        }
+
+    def _finalize_with_llm_result(
+        self,
+        *,
+        case: DisputeCase,
+        evidence: list[EvidenceRecord],
+        baseline: dict[str, Any],
+        llm_result: tuple[str, list[CandidateClaim]] | None,
+    ) -> DisputeAnalysis:
+        det_citations: list[DisputeEvidenceCitation] = baseline["det_citations"]
+        det_rejected: list[str] = baseline["det_rejected"]
+        det_summary: str = baseline["det_summary"]
+        recommendation: DisputeRecommendation = baseline["recommendation"]
+        missing: list[str] = baseline["missing"]
+        contradictions: list[str] = baseline["contradictions"]
 
         citations = det_citations
         rejected_claims = list(det_rejected)
         grounded_summary = det_summary
         generated_with_llm = False
+        llm_provider = "deterministic"
+        llm_model = DEFAULT_MODELS["deterministic"]
 
-        if self.llm_reviewer is not None:
-            try:
-                llm_summary, llm_claims = self.llm_reviewer.review(
+        if llm_result is not None:
+            llm_summary, llm_claims = llm_result
+            llm_citations, llm_rejected = self.citation_validator.validate_claims(
+                llm_claims,
+                evidence,
+                case.tenant_id,
+            )
+            if llm_citations:
+                citations = llm_citations
+                rejected_claims = llm_rejected
+                summary_ok, _ = self.citation_validator.validate_summary(
+                    llm_summary,
+                    llm_citations,
                     case=case,
-                    evidence=evidence,
-                    missing=missing,
-                    contradictions=contradictions,
+                    recommendation_value=recommendation.value,
                 )
-                llm_citations, llm_rejected = self.citation_validator.validate_claims(
-                    llm_claims,
-                    evidence,
-                    case.tenant_id,
-                )
-                if llm_citations and llm_summary.strip():
-                    citations = llm_citations
-                    rejected_claims = llm_rejected
+                if summary_ok:
                     summary_text = llm_summary.strip()
                     if case.is_synthetic and SYNTHETIC_BANNER not in summary_text:
                         summary_text = f"{SYNTHETIC_BANNER} {summary_text}"
                     grounded_summary = summary_text[:4000]
                     generated_with_llm = True
+                    llm_provider = getattr(self.llm_reviewer, "provider", None) or "custom"
+                    llm_model = (
+                        getattr(self.llm_reviewer, "model", None)
+                        or type(self.llm_reviewer).__name__
+                    )
                 else:
-                    rejected_claims.extend(llm_rejected)
-            except Exception:  # noqa: BLE001
-                # Fail closed to deterministic summary without corrupting case state.
-                citations = det_citations
-                rejected_claims = list(det_rejected)
-                grounded_summary = det_summary
-                generated_with_llm = False
+                    # Fail closed to deterministic summary when LLM summary is ungrounded.
+                    grounded_summary = det_summary
+                    generated_with_llm = False
+                    llm_provider = "deterministic"
+                    llm_model = DEFAULT_MODELS["deterministic"]
+            else:
+                rejected_claims.extend(llm_rejected)
 
         draft_response_text = _build_draft_response(
             case=case,
@@ -406,10 +462,10 @@ class DisputeAnalyzer:
             dispute_case_id=case.id,
             is_synthetic=case.is_synthetic,
             recommendation=recommendation,
-            confidence_score=confidence_score,
-            agent_authorized=agent_authorized,
-            agent_followed_policy=agent_followed_policy,
-            merchant_fulfilled_order=merchant_fulfilled_order,
+            confidence_score=baseline["confidence_score"],
+            agent_authorized=baseline["agent_authorized"],
+            agent_followed_policy=baseline["agent_followed_policy"],
+            merchant_fulfilled_order=baseline["merchant_fulfilled_order"],
             contradictions=list(contradictions),
             missing_evidence=list(missing),
             citations=citations,
@@ -418,4 +474,67 @@ class DisputeAnalyzer:
             draft_response_text=draft_response_text,
             requires_human_approval=True,
             generated_with_llm=generated_with_llm,
+            llm_provider=llm_provider,
+            llm_model=llm_model,
+        )
+
+    def analyze(
+        self,
+        *,
+        case: DisputeCase,
+        evidence: list[EvidenceRecord],
+    ) -> DisputeAnalysis:
+        """Analyze a dispute case and its evidence, producing a grounded DisputeAnalysis."""
+        baseline = self._prepare_deterministic_baseline(case=case, evidence=evidence)
+        llm_result: tuple[str, list[CandidateClaim]] | None = None
+        if self.llm_reviewer is not None:
+            try:
+                llm_result = self.llm_reviewer.review(
+                    case=case,
+                    evidence=evidence,
+                    missing=baseline["missing"],
+                    contradictions=baseline["contradictions"],
+                )
+            except Exception:  # noqa: BLE001
+                llm_result = None
+        return self._finalize_with_llm_result(
+            case=case,
+            evidence=evidence,
+            baseline=baseline,
+            llm_result=llm_result,
+        )
+
+    async def analyze_async(
+        self,
+        *,
+        case: DisputeCase,
+        evidence: list[EvidenceRecord],
+    ) -> DisputeAnalysis:
+        """Asynchronously analyze a dispute case with fail-closed LLM grounding."""
+        baseline = self._prepare_deterministic_baseline(case=case, evidence=evidence)
+        llm_result: tuple[str, list[CandidateClaim]] | None = None
+        if self.llm_reviewer is not None:
+            try:
+                review_async = getattr(self.llm_reviewer, "review_async", None)
+                if callable(review_async):
+                    llm_result = await review_async(
+                        case=case,
+                        evidence=evidence,
+                        missing=baseline["missing"],
+                        contradictions=baseline["contradictions"],
+                    )
+                else:
+                    llm_result = self.llm_reviewer.review(
+                        case=case,
+                        evidence=evidence,
+                        missing=baseline["missing"],
+                        contradictions=baseline["contradictions"],
+                    )
+            except Exception:  # noqa: BLE001
+                llm_result = None
+        return self._finalize_with_llm_result(
+            case=case,
+            evidence=evidence,
+            baseline=baseline,
+            llm_result=llm_result,
         )

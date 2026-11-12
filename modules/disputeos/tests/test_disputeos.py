@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 from contracts import (
     DisputeCase,
@@ -32,7 +34,7 @@ from disputeos.evidence.graph import build_evidence_graph
 from disputeos.ingestion.normalizer import DocumentIngestionService
 from disputeos.paypal.adapter import PayPalDisputeAdapter
 from disputeos.reports.generator import DisputeReport, generate_case_report
-from paypal import PayPalDisputesDisabledError
+from paypal import PayPalDisputesDisabledError, PayPalSandboxClient
 from security import NexusSettings, TenantIsolationError
 
 
@@ -376,8 +378,27 @@ async def test_7_human_approval_is_required_before_external_submission() -> None
     enabled_settings = NexusSettings(
         paypal_mode="sandbox",
         paypal_disputes_api_enabled=True,
+        paypal_client_id="sb-client-id",
+        paypal_client_secret="sb-client-secret",
     )
-    adapter_enabled = PayPalDisputeAdapter(settings=enabled_settings)
+    captured_requests: list[tuple[str, str]] = []
+
+    def _mock_handler(request: httpx.Request) -> httpx.Response:
+        captured_requests.append((request.method, request.url.path))
+        if request.url.path == "/v1/oauth2/token":
+            return httpx.Response(200, json={"access_token": "tok_test_123", "expires_in": 300})
+        if request.url.path == "/v1/customer/disputes/PP-D-1001/provide-evidence":
+            body = json.loads(request.content.decode("utf-8"))
+            assert body["evidences"][0]["notes"] == analysis.draft_response_text[:2000]
+            return httpx.Response(200, json={"dispute_id": "PP-D-1001", "status": "UNDER_REVIEW"})
+        return httpx.Response(404, json={"error": "unexpected"})
+
+    mock_http = httpx.AsyncClient(
+        base_url="https://api-m.sandbox.paypal.com",
+        transport=httpx.MockTransport(_mock_handler),
+    )
+    mock_paypal_client = PayPalSandboxClient(settings=enabled_settings, http_client=mock_http)
+    adapter_enabled = PayPalDisputeAdapter(settings=enabled_settings, paypal_client=mock_paypal_client)
     with pytest.raises(PermissionError):
         await adapter_enabled.submit_dispute_response(
             case=case,
@@ -412,14 +433,18 @@ async def test_7_human_approval_is_required_before_external_submission() -> None
             draft_response_text=analysis.draft_response_text,
         )
 
-    # With approval + enabled flag + non-synthetic case, adapter prepares payload without auto-refund
+    # With approval + enabled flag + non-synthetic case, adapter calls PayPal provide-evidence without auto-refund
     handoff = await adapter_enabled.submit_dispute_response(
         case=approved_case,
         draft_response_text=analysis.draft_response_text,
+        evidence_records=evidence,
     )
-    assert handoff["status"] == "APPROVED_PAYLOAD_READY"
+    await mock_http.aclose()
+    assert handoff["status"] == "SUBMITTED_TO_PAYPAL"
+    assert handoff["submitted"] is True
     assert handoff["auto_submitted"] is False
     assert handoff["refund_issued"] is False
+    assert ("POST", "/v1/customer/disputes/PP-D-1001/provide-evidence") in captured_requests
     submitted_case = service.mark_submitted(tenant_id=TENANT_ALPHA_ID, case_id=case.id)
     assert submitted_case.status == DisputeStatus.SUBMITTED
 

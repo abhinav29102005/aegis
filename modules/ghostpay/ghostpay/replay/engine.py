@@ -3,23 +3,26 @@
 from __future__ import annotations
 
 from datetime import datetime
-from uuid import uuid4
+from typing import TYPE_CHECKING, Any
+from uuid import UUID, uuid4
 
 from contracts import (
+    AgentIdentity,
     ApprovalRecord,
     ApprovalStatus,
     DecisionOutcome,
     DecisionReasonCode,
     Merchant,
-    PassportStatus,
     PurchaseProposal,
     QuoteSnapshot,
     ReplayRequest,
     ReplayResult,
     SpendingPassport,
+    evaluate_policy_v1,
 )
 
 from ghostpay.anomalies.detector import detect_anomalies
+from ghostpay.domain.exceptions import IllegalSideEffectError, InsufficientEvidenceError
 from ghostpay.errors import OverrideValidationError, ReplayExecutionForbiddenError
 from ghostpay.provenance.verifier import verify_provenance_and_integrity
 from ghostpay.replay.registry import (
@@ -28,6 +31,16 @@ from ghostpay.replay.registry import (
     resolve_policy_evaluator,
 )
 from ghostpay.timelines.builder import build_timeline
+
+if TYPE_CHECKING:
+    from ghostpay.domain.models import PaymentTrace
+    from ghostpay.timemachine.policies import CounterfactualPolicy
+
+
+def _safe_nonneg_int(val: Any, default: int = 0) -> int:
+    if isinstance(val, int) and not isinstance(val, bool) and val >= 0:
+        return val
+    return default
 
 
 def evaluate_deterministic_policy(
@@ -38,119 +51,73 @@ def evaluate_deterministic_policy(
     merchant: Merchant,
     approval_record: ApprovalRecord | None = None,
     evaluation_time: datetime | None = None,
+    agent: AgentIdentity | None = None,
+    daily_spent_minor: int = 0,
+    monthly_spent_minor: int = 0,
+    correlation_id: UUID | None = None,
+    payment_intent_id: UUID | None = None,
 ) -> tuple[DecisionOutcome, list[DecisionReasonCode], list[str]]:
-    """Deterministic policy-v1 rules engine recomputing authorization outcome."""
-    reason_codes: list[DecisionReasonCode] = []
-    violated_constraints: list[str] = []
+    """Delegate policy-v1 evaluation strictly to contracts.policy_v1.evaluate_policy_v1."""
     # Never fall back to wall-clock time during forensic evaluation.
     eval_time = evaluation_time or quote.created_at
 
-    # 1. Spending passport status & expiration check
-    if passport.status == PassportStatus.EXPIRED:
-        reason_codes.append(DecisionReasonCode.DENIED_PASSPORT_EXPIRED)
-        violated_constraints.append("PASSPORT_STATUS_EXPIRED")
-    elif passport.status == PassportStatus.REVOKED:
-        reason_codes.append(DecisionReasonCode.DENIED_PASSPORT_REVOKED)
-        violated_constraints.append("PASSPORT_STATUS_REVOKED")
-    elif passport.status != PassportStatus.ACTIVE:
-        reason_codes.append(DecisionReasonCode.DENIED_AGENT_SUSPENDED)
-        violated_constraints.append("PASSPORT_STATUS_SUSPENDED")
+    decision = evaluate_policy_v1(
+        proposal=proposal,
+        passport=passport,
+        merchant=merchant,
+        quote=quote,
+        agent=agent,
+        daily_spent_minor=daily_spent_minor,
+        monthly_spent_minor=monthly_spent_minor,
+        now=eval_time,
+        correlation_id=correlation_id or proposal.correlation_id,
+        policy_version=DEFAULT_POLICY_VERSION,
+        payment_intent_id=payment_intent_id,
+    )
 
-    if eval_time > passport.expires_at:
-        if DecisionReasonCode.DENIED_PASSPORT_EXPIRED not in reason_codes:
-            reason_codes.append(DecisionReasonCode.DENIED_PASSPORT_EXPIRED)
-        violated_constraints.append("PASSPORT_EXPIRED_BY_DATE")
+    outcome = decision.outcome
+    reason_codes = list(decision.reason_codes)
+    violated_constraints = list(decision.violated_constraints)
 
-    # 2. Transaction limits and budget
-    amount = proposal.amount_minor
-    if amount > passport.per_tx_limit_minor:
-        reason_codes.append(DecisionReasonCode.DENIED_EXCEEDS_PER_TX_LIMIT)
-        violated_constraints.append(
-            f"amount_minor {amount} exceeds per_tx_limit_minor {passport.per_tx_limit_minor}"
-        )
-
-    if amount > passport.available_budget_minor:
-        reason_codes.append(DecisionReasonCode.DENIED_EXCEEDS_PASSPORT_BUDGET)
-        violated_constraints.append(
-            f"amount_minor {amount} exceeds available_budget_minor {passport.available_budget_minor}"
-        )
-
-    if passport.daily_limit_minor > 0 and amount > passport.daily_limit_minor:
-        reason_codes.append(DecisionReasonCode.DENIED_EXCEEDS_DAILY_LIMIT)
-        violated_constraints.append(
-            f"amount_minor {amount} exceeds daily_limit_minor {passport.daily_limit_minor}"
-        )
-
-    # 3. Merchant allowlist
-    is_in_allowlist = merchant.id in passport.allowed_merchant_ids
-    escalate_unknown = False
-
-    if not is_in_allowlist:
-        if not passport.allow_unknown_merchants:
-            reason_codes.append(DecisionReasonCode.DENIED_MERCHANT_NOT_ALLOWLISTED)
-            violated_constraints.append(f"merchant {merchant.id} not in allowed_merchant_ids")
-        else:
-            escalate_unknown = True
-
-    # 4. Merchant category allowlist (both recorded merchant and proposal categories must conform)
-    if passport.allowed_categories:
-        merchant_cat = (merchant.category or "").strip().upper()
-        proposal_cat = (proposal.merchant_category or "").strip().upper()
-        allowed_cats = [c.strip().upper() for c in passport.allowed_categories]
-        if merchant_cat not in allowed_cats or proposal_cat not in allowed_cats:
-            reason_codes.append(DecisionReasonCode.DENIED_CATEGORY_NOT_ALLOWED)
-            violated_constraints.append(
-                f"category ({merchant.category}/{proposal.merchant_category}) not in allowed_categories"
+    # Human approval resolution only applies when policy-v1 escalated (never overrides DENY)
+    if outcome == DecisionOutcome.ESCALATE and approval_record is not None:
+        if approval_record.tenant_id != proposal.tenant_id:
+            return (
+                DecisionOutcome.DENY,
+                [DecisionReasonCode.DENIED_CROSS_TENANT],
+                ["APPROVAL_RECORD_CROSS_TENANT"],
             )
-
-    # 5. Human approval threshold & approval record validation
-    has_deny = any(code.value.startswith("DENIED_") for code in reason_codes)
-    requires_approval = amount >= passport.human_approval_threshold_minor
-
-    if not has_deny:
-        if requires_approval:
-            if approval_record is None:
-                reason_codes.append(DecisionReasonCode.ESCALATED_REQUIRES_HUMAN_APPROVAL)
-                violated_constraints.append(
-                    f"amount_minor {amount} requires human approval "
-                    f"(threshold {passport.human_approval_threshold_minor})"
-                )
-            else:
-                if approval_record.status == ApprovalStatus.EXPIRED or (
-                    approval_record.expires_at and eval_time > approval_record.expires_at
-                ):
-                    reason_codes.append(DecisionReasonCode.DENIED_APPROVAL_EXPIRED)
-                    violated_constraints.append("APPROVAL_RECORD_EXPIRED")
-                elif (
-                    approval_record.bound_merchant_id != merchant.id
-                    or approval_record.bound_amount_minor != amount
-                    or approval_record.bound_quote_hash != quote.quote_hash
-                ):
-                    reason_codes.append(DecisionReasonCode.DENIED_APPROVAL_MISMATCH)
-                    violated_constraints.append("APPROVAL_RECORD_MISMATCH")
-                elif approval_record.status == ApprovalStatus.REJECTED:
-                    reason_codes.append(DecisionReasonCode.DENIED_APPROVAL_MISMATCH)
-                    violated_constraints.append("APPROVAL_RECORD_REJECTED")
-                elif approval_record.status in (ApprovalStatus.APPROVED, ApprovalStatus.CONSUMED):
-                    pass
-                else:
-                    reason_codes.append(DecisionReasonCode.ESCALATED_REQUIRES_HUMAN_APPROVAL)
-                    violated_constraints.append("APPROVAL_RECORD_PENDING")
-        elif escalate_unknown:
-            reason_codes.append(DecisionReasonCode.ESCALATED_UNKNOWN_MERCHANT)
-            violated_constraints.append("UNKNOWN_MERCHANT_ESCALATION")
-
-    # 6. Outcome resolution
-    has_denied = any(code.value.startswith("DENIED_") for code in reason_codes)
-    has_escalated = any(code.value.startswith("ESCALATED_") for code in reason_codes)
-
-    if has_denied:
-        outcome = DecisionOutcome.DENY
-    elif has_escalated:
-        outcome = DecisionOutcome.ESCALATE
-    else:
-        outcome = DecisionOutcome.ALLOW
-        reason_codes = [DecisionReasonCode.OK_WITHIN_POLICY]
+        if approval_record.status == ApprovalStatus.EXPIRED or (
+            approval_record.expires_at and eval_time >= approval_record.expires_at
+        ):
+            return (
+                DecisionOutcome.DENY,
+                [DecisionReasonCode.DENIED_APPROVAL_EXPIRED],
+                ["APPROVAL_RECORD_EXPIRED"],
+            )
+        if (
+            approval_record.bound_merchant_id != merchant.id
+            or approval_record.bound_amount_minor != proposal.amount_minor
+            or approval_record.bound_currency.upper() != proposal.currency.upper()
+            or approval_record.bound_quote_hash != quote.quote_hash
+        ):
+            return (
+                DecisionOutcome.DENY,
+                [DecisionReasonCode.DENIED_APPROVAL_MISMATCH],
+                ["APPROVAL_RECORD_MISMATCH"],
+            )
+        if approval_record.status == ApprovalStatus.REJECTED:
+            return (
+                DecisionOutcome.DENY,
+                [DecisionReasonCode.DENIED_APPROVAL_MISMATCH],
+                ["APPROVAL_RECORD_REJECTED"],
+            )
+        if approval_record.status in (ApprovalStatus.APPROVED, ApprovalStatus.CONSUMED):
+            return (
+                DecisionOutcome.ALLOW,
+                [DecisionReasonCode.OK_WITHIN_POLICY],
+                [],
+            )
 
     return outcome, reason_codes, violated_constraints
 
@@ -161,8 +128,20 @@ register_policy_evaluator(DEFAULT_POLICY_VERSION, evaluate_deterministic_policy)
 class ReplayEngine:
     """Read-only forensic policy & authorization replay engine."""
 
+    @staticmethod
+    def capture_payment(*args: Any, **kwargs: Any) -> None:
+        raise IllegalSideEffectError("Replay engine cannot invoke payment capture")
+
+    @staticmethod
+    def reserve_budget(*args: Any, **kwargs: Any) -> None:
+        raise IllegalSideEffectError("Replay engine cannot reserve budget")
+
+    @staticmethod
+    def release_reservation(*args: Any, **kwargs: Any) -> None:
+        raise IllegalSideEffectError("Replay engine cannot release budget")
+
     @classmethod
-    def replay(cls, request: ReplayRequest) -> ReplayResult:
+    def replay(cls, request: ReplayRequest, *, agent: AgentIdentity | None = None) -> ReplayResult:
         """Deterministically replay a transaction without mutating state or executing payments."""
         # 1. Baseline replay must never silently ignore counterfactual overrides
         if request.counterfactual_overrides:
@@ -177,7 +156,7 @@ class ReplayEngine:
                 ],
             )
 
-        # 2. Enforce tenancy & verify provenance, event hash-chain, evidence integrity
+        # 2. Enforce tenancy & verify provenance, correlation binding, event hash-chain, evidence integrity
         integrity_valid, missing_evidence, integrity_errors = verify_provenance_and_integrity(request)
 
         # 3. Resolve exact requested policy evaluator (fail closed on unsupported versions)
@@ -187,7 +166,13 @@ class ReplayEngine:
         timeline = build_timeline(request.events, request.evidence_records)
 
         # 5. Deterministically recompute policy outcome (never using wall-clock time)
-        eval_time = request.evaluation_time or request.recorded_decision.decided_at
+        original_decision = request.recorded_decision
+        eval_time = request.evaluation_time or original_decision.decided_at
+        policy_inputs = original_decision.policy_inputs or {}
+        daily_spent = _safe_nonneg_int(policy_inputs.get("daily_spent_minor"), 0)
+        monthly_spent = _safe_nonneg_int(policy_inputs.get("monthly_spent_minor"), 0)
+        agent_obj = agent if agent is not None else getattr(request, "agent", None)
+
         recomputed_outcome, recomputed_reasons, new_violated_constraints = policy_evaluator(
             proposal=request.proposal,
             quote=request.quote_snapshot,
@@ -195,9 +180,13 @@ class ReplayEngine:
             merchant=request.recorded_merchant,
             approval_record=request.approval_record,
             evaluation_time=eval_time,
+            agent=agent_obj,
+            daily_spent_minor=daily_spent,
+            monthly_spent_minor=monthly_spent,
+            correlation_id=request.correlation_id,
+            payment_intent_id=request.payment_intent.id,
         )
 
-        original_decision = request.recorded_decision
         original_outcome = original_decision.outcome
         original_reasons = original_decision.reason_codes
 
@@ -296,3 +285,34 @@ class ReplayEngine:
                 "Replay invariant violated: executed_payment must always remain False."
             )
         return result
+
+    @classmethod
+    def replay_trace(
+        cls,
+        trace: PaymentTrace,
+        policy: CounterfactualPolicy | None = None,
+    ) -> ReplayResult:
+        """Replay a PaymentTrace object, failing closed to INCOMPLETE_EVIDENCE if artifacts are missing."""
+        try:
+            req = trace.to_replay_request()
+        except InsufficientEvidenceError as exc:
+            return ReplayResult(
+                tenant_id=trace.tenant_id,
+                correlation_id=trace.payment_intent_id,
+                payment_intent_id=trace.payment_intent_id,
+                policy_version=trace.policy_version,
+                original_outcome=trace.recorded_decision.outcome if trace.recorded_decision else DecisionOutcome.DENY,
+                recomputed_outcome=trace.recorded_decision.outcome if trace.recorded_decision else DecisionOutcome.DENY,
+                drift_detected=False,
+                explanation=str(exc)[:2000],
+                missing_evidence=trace.missing_evidence or ["INSUFFICIENT_EVIDENCE"],
+                integrity_valid=False,
+                consistency_status="INCOMPLETE_EVIDENCE",
+                executed_payment=False,
+            )
+
+        if policy is not None:
+            from ghostpay.counterfactual.simulator import simulate_counterfactual
+
+            return simulate_counterfactual(req, policy.to_overrides_dict())
+        return cls.replay(req)

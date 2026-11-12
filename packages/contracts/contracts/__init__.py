@@ -1,6 +1,7 @@
 """Canonical shared contracts for AgentPay Nexus."""
 
 from contracts.enums import (
+    VALID_DISPUTE_TRANSITIONS,
     VALID_PAYMENT_TRANSITIONS,
     ApprovalStatus,
     DecisionOutcome,
@@ -13,15 +14,27 @@ from contracts.enums import (
     PassportStatus,
     PaymentState,
     ReservationStatus,
+    assert_dispute_transition,
     assert_payment_transition,
+    can_transition_dispute,
     can_transition_payment,
 )
-from contracts.hashing import canonical_json, compute_payload_hash, compute_quote_hash
+from contracts.hashing import (
+    CURRENCY_EXPONENTS,
+    canonical_json,
+    compute_payload_hash,
+    compute_quote_hash,
+    decimal_str_to_minor,
+    get_currency_exponent,
+    minor_to_decimal_str,
+)
 from contracts.models import (
     AgentIdentity,
+    AP2MandatePayload,
     ApprovalRecord,
     AuthorizationDecision,
     BudgetReservation,
+    DeflectionAlert,
     DisputeAnalysis,
     DisputeCase,
     DisputeEvidenceCitation,
@@ -37,12 +50,20 @@ from contracts.models import (
     ReplayResult,
     ReplayTimelineEntry,
     SpendingPassport,
+    StripeEventEnvelope,
+    TAPTokenPayload,
     Tenant,
     VerifiedPayPalCapture,
+    X402SettlementProof,
 )
+from contracts.policy_v1 import evaluate_policy_v1
+from contracts.providers import PaymentProviderAdapter
 
 __all__ = [
+    "CURRENCY_EXPONENTS",
+    "VALID_DISPUTE_TRANSITIONS",
     "VALID_PAYMENT_TRANSITIONS",
+    "AP2MandatePayload",
     "AgentIdentity",
     "ApprovalRecord",
     "ApprovalStatus",
@@ -50,6 +71,7 @@ __all__ = [
     "BudgetReservation",
     "DecisionOutcome",
     "DecisionReasonCode",
+    "DeflectionAlert",
     "DisputeAnalysis",
     "DisputeCase",
     "DisputeEvidenceCitation",
@@ -65,6 +87,7 @@ __all__ = [
     "PayPalBuyerApproval",
     "PaymentAttempt",
     "PaymentIntent",
+    "PaymentProviderAdapter",
     "PaymentState",
     "PurchaseProposal",
     "QuoteSnapshot",
@@ -73,12 +96,21 @@ __all__ = [
     "ReplayTimelineEntry",
     "ReservationStatus",
     "SpendingPassport",
+    "StripeEventEnvelope",
+    "TAPTokenPayload",
     "Tenant",
     "VerifiedPayPalCapture",
+    "X402SettlementProof",
+    "assert_dispute_transition",
     "assert_payment_transition",
+    "can_transition_dispute",
     "can_transition_payment",
     "canonical_json",
     "compute_payload_hash",
     "compute_quote_hash",
+    "decimal_str_to_minor",
+    "evaluate_policy_v1",
+    "get_currency_exponent",
+    "minor_to_decimal_str",
 ]
 

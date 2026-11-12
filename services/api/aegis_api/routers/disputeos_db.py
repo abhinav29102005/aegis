@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
@@ -13,7 +14,13 @@ from contracts import (
     EvidenceRecord,
     EvidenceSourceType,
 )
-from database import LedgerRepository, LocalObjectStorage, PlatformRepository
+from database import (
+    DisputeCaseRow,
+    EvidenceRecordRow,
+    LedgerRepository,
+    PlatformRepository,
+)
+from database.storage import ObjectSizeLimitExceededError, ObjectStorage
 from disputeos.analysis.analyzer import DisputeAnalyzer
 from disputeos.api.router import (
     AnalyzeCaseResponse,
@@ -30,6 +37,7 @@ from disputeos.cases.service import (
     ApprovalGateError,
     CaseNotFoundError,
     DisputeCaseService,
+    InvalidDisputeTransitionError,
     SyntheticSubmissionError,
 )
 from disputeos.evidence.graph import build_evidence_graph
@@ -43,18 +51,49 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     Response,
     UploadFile,
     status,
 )
+from paypal import (
+    PayPalAPIError,
+    PayPalConfigurationError,
+    PayPalSandboxClient,
+    PayPalTimeoutError,
+)
 from pydantic import BaseModel, ConfigDict, Field
-from security import AuthContext, Permission, assert_same_tenant
+from security import AuthContext, NexusSettings, Permission, assert_same_tenant
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from aegis_api.adapters import ensure_synthetic_sandbox_payment_chain
-from aegis_api.deps import get_db_session, get_object_storage, require_permission
+from aegis_api.deps import (
+    get_app_settings,
+    get_db_session,
+    get_object_storage,
+    get_paypal_client,
+    require_permission,
+)
 
 router = APIRouter(prefix="/disputeos", tags=["disputeos"])
+
+
+class CreateDisputeCaseDBRequest(CreateDisputeCaseRequest):
+    response_due_by: datetime | None = None
+    external_status: str | None = Field(default=None, max_length=64)
+
+
+class AttachEvidenceDBRequest(AttachEvidenceRequest):
+    content_hash: str | None = Field(default=None, max_length=128)
+
+
+class ResolveDisputeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    resolution_outcome: str | None = Field(default=None, min_length=1, max_length=128)
+    reason: str | None = Field(default=None, min_length=1, max_length=500)
+    notes: str | None = Field(default=None, max_length=2000)
 
 
 class AssignDisputeRequest(BaseModel):
@@ -69,6 +108,44 @@ class AddDisputeNoteRequest(BaseModel):
     body: str = Field(min_length=1, max_length=2000)
 
 
+def _raise_db_http_error(exc: Exception) -> None:
+    if isinstance(exc, InvalidDisputeTransitionError):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error_code": "INVALID_DISPUTE_TRANSITION", "message": str(exc)},
+        ) from exc
+    if isinstance(exc, PayPalTimeoutError):
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail={"error_code": "PAYPAL_TIMEOUT", "message": "PayPal Disputes API request timed out."},
+        ) from exc
+    if isinstance(exc, PayPalAPIError):
+        mapped_status = (
+            status.HTTP_504_GATEWAY_TIMEOUT
+            if exc.status_code == 504
+            else status.HTTP_502_BAD_GATEWAY
+        )
+        raise HTTPException(
+            status_code=mapped_status,
+            detail={
+                "error_code": "PAYPAL_UPSTREAM_ERROR",
+                "message": "PayPal Disputes API returned an error.",
+                "upstream_status": exc.status_code,
+            },
+        ) from exc
+    if isinstance(exc, PayPalConfigurationError):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": "PAYPAL_NOT_CONFIGURED", "message": "PayPal sandbox credentials are not configured."},
+        ) from exc
+    if isinstance(exc, ObjectSizeLimitExceededError):
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail={"error_code": "ARTIFACT_TOO_LARGE", "message": "Artifact exceeds 10 MB size limit."},
+        ) from exc
+    _raise_http_for_domain_error(exc)
+
+
 def _build_services(session: Session) -> tuple[LedgerRepository, PlatformRepository, DisputeCaseService]:
     ledger = LedgerRepository(session)
     platform = PlatformRepository(session)
@@ -78,23 +155,34 @@ def _build_services(session: Session) -> tuple[LedgerRepository, PlatformReposit
 
 @router.get("/cases", response_model=list[DisputeCase])
 def list_cases(
+    response: Response,
     auth: Annotated[AuthContext, Depends(require_permission(Permission.DISPUTES_READ))],
     session: Annotated[Session, Depends(get_db_session)],
     status_filter: DisputeStatus | None = None,
     is_synthetic: bool | None = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[DisputeCase]:
-    _, _, svc = _build_services(session)
-    cases = svc.list_cases(auth.tenant_id)
+    base_stmt = select(DisputeCaseRow).where(DisputeCaseRow.tenant_id == auth.tenant_id)
+    count_stmt = select(func.count()).select_from(DisputeCaseRow).where(DisputeCaseRow.tenant_id == auth.tenant_id)
     if status_filter is not None:
-        cases = [c for c in cases if c.status == status_filter]
+        base_stmt = base_stmt.where(DisputeCaseRow.status == status_filter.value)
+        count_stmt = count_stmt.where(DisputeCaseRow.status == status_filter.value)
     if is_synthetic is not None:
-        cases = [c for c in cases if c.is_synthetic == is_synthetic]
-    return cases
+        base_stmt = base_stmt.where(DisputeCaseRow.is_synthetic.is_(is_synthetic))
+        count_stmt = count_stmt.where(DisputeCaseRow.is_synthetic.is_(is_synthetic))
+
+    total = int(session.scalar(count_stmt) or 0)
+    response.headers["X-Total-Count"] = str(total)
+    rows = session.scalars(
+        base_stmt.order_by(DisputeCaseRow.opened_at.desc()).offset(offset).limit(limit)
+    ).all()
+    return [LedgerRepository._to_dispute_case(row) for row in rows]
 
 
 @router.post("/cases", response_model=DisputeCase, status_code=status.HTTP_201_CREATED)
 def create_case(
-    payload: CreateDisputeCaseRequest,
+    payload: CreateDisputeCaseDBRequest,
     auth: Annotated[AuthContext, Depends(require_permission(Permission.DISPUTES_WRITE))],
     session: Annotated[Session, Depends(get_db_session)],
 ) -> DisputeCase:
@@ -114,9 +202,11 @@ def create_case(
             paypal_dispute_id=payload.paypal_dispute_id,
             case_id=payload.case_id,
             actor_id=auth.actor_id,
+            response_due_by=payload.response_due_by,
+            external_status=payload.external_status,
         )
     except Exception as exc:
-        _raise_http_for_domain_error(exc)
+        _raise_db_http_error(exc)
         raise
 
 
@@ -127,6 +217,7 @@ def seed_demo_case(
 ) -> DisputeCaseDetailResponse:
     """Seed a clearly labeled synthetic demo purchase + dispute chain scoped to the caller's tenant."""
     ledger, _, svc = _build_services(session)
+    ingestor = DocumentIngestionService()
     try:
         seeded = ensure_synthetic_sandbox_payment_chain(ledger, auth.tenant_id)
         intent = seeded["payment_intent"]
@@ -156,15 +247,18 @@ def seed_demo_case(
             target_case_id = uuid4()
 
         scoped_evidence = [
-            ev.model_copy(
-                update={
-                    "id": ev.id if auth.tenant_id == fixture_case.tenant_id else uuid4(),
-                    "tenant_id": auth.tenant_id,
-                    "correlation_id": intent.correlation_id,
-                    "payment_intent_id": intent.id,
-                    "dispute_case_id": target_case_id,
-                    "is_synthetic": True,
-                }
+            ingestor.ingest_document(
+                tenant_id=auth.tenant_id,
+                correlation_id=intent.correlation_id,
+                payment_intent_id=intent.id,
+                dispute_case_id=target_case_id,
+                source_type=ev.source_type,
+                source_ref=ev.source_ref,
+                title=ev.title,
+                content=ev.content,
+                is_synthetic=True,
+                collected_at=ev.collected_at,
+                evidence_id=ev.id if auth.tenant_id == fixture_case.tenant_id else uuid4(),
             )
             for ev in fixture_evidence
         ]
@@ -189,7 +283,7 @@ def seed_demo_case(
             latest_analysis=None,
         )
     except Exception as exc:
-        _raise_http_for_domain_error(exc)
+        _raise_db_http_error(exc)
         raise
 
 
@@ -229,14 +323,14 @@ def get_case_detail(
             ],
         }
     except Exception as exc:
-        _raise_http_for_domain_error(exc)
+        _raise_db_http_error(exc)
         raise
 
 
 @router.post("/cases/{case_id}/evidence", response_model=AttachEvidenceResponse)
 def attach_evidence(
     case_id: UUID,
-    payload: AttachEvidenceRequest,
+    payload: AttachEvidenceDBRequest,
     auth: Annotated[AuthContext, Depends(require_permission(Permission.DISPUTES_WRITE))],
     session: Annotated[Session, Depends(get_db_session)],
 ) -> AttachEvidenceResponse:
@@ -255,12 +349,19 @@ def attach_evidence(
             source_ref=payload.source_ref,
             title=payload.title,
             content=payload.content,
+            content_hash=payload.content_hash,
             is_synthetic=payload.is_synthetic,
         )
-        updated_case = svc.attach_evidence(auth.tenant_id, case_id, [record])
+        updated_case = svc.attach_evidence(
+            auth.tenant_id,
+            case_id,
+            [record],
+            actor_id=auth.actor_id,
+            actor_type=auth.actor_type,
+        )
         return AttachEvidenceResponse(case=updated_case, evidence=record)
     except Exception as exc:
-        _raise_http_for_domain_error(exc)
+        _raise_db_http_error(exc)
         raise
 
 
@@ -269,7 +370,7 @@ async def upload_evidence_artifact(
     case_id: UUID,
     auth: Annotated[AuthContext, Depends(require_permission(Permission.DISPUTES_WRITE))],
     session: Annotated[Session, Depends(get_db_session)],
-    storage: Annotated[LocalObjectStorage, Depends(get_object_storage)],
+    storage: Annotated[ObjectStorage, Depends(get_object_storage)],
     file: Annotated[UploadFile, File(...)],
     title: Annotated[str, Form()] = "Uploaded Evidence Document",
     source_type: Annotated[EvidenceSourceType, Form()] = EvidenceSourceType.DELIVERY_RECEIPT,
@@ -278,20 +379,23 @@ async def upload_evidence_artifact(
     ingestor = DocumentIngestionService()
     try:
         case = svc.get_case(auth.tenant_id, case_id)
-        raw = await file.read()
-        if not raw:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty")
-        if len(raw) > 10 * 1024 * 1024:
-            raise HTTPException(status_code=413, detail="Artifact exceeds 10 MB size limit")
-
+        if case.status == DisputeStatus.RESOLVED:
+            raise InvalidDisputeTransitionError(
+                f"Cannot upload artifacts to resolved dispute case {case_id}"
+            )
         artifact_id = uuid4()
-        meta = storage.put_bytes(
+        meta = storage.put_stream(
             tenant_id=auth.tenant_id,
-            artifact_id=artifact_id,
+            key_prefix=f"disputes/{case_id}/{artifact_id}",
+            stream=file.file,
+            max_bytes=10 * 1024 * 1024,
             filename=file.filename or "evidence.bin",
-            data=raw,
             content_type=file.content_type or "application/octet-stream",
         )
+        if meta.byte_size == 0:
+            storage.delete(tenant_id=auth.tenant_id, object_key=meta.object_key)
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty")
+
         record = ingestor.ingest_document(
             tenant_id=auth.tenant_id,
             correlation_id=case.correlation_id,
@@ -309,7 +413,13 @@ async def upload_evidence_artifact(
             },
             is_synthetic=case.is_synthetic,
         )
-        svc.attach_evidence(auth.tenant_id, case_id, [record])
+        svc.attach_evidence(
+            auth.tenant_id,
+            case_id,
+            [record],
+            actor_id=auth.actor_id,
+            actor_type=auth.actor_type,
+        )
         art_row = platform.save_evidence_artifact(
             artifact_id=artifact_id,
             tenant_id=auth.tenant_id,
@@ -331,7 +441,7 @@ async def upload_evidence_artifact(
     except HTTPException:
         raise
     except Exception as exc:
-        _raise_http_for_domain_error(exc)
+        _raise_db_http_error(exc)
         raise
 
 
@@ -341,14 +451,31 @@ def download_evidence_artifact(
     artifact_id: UUID,
     auth: Annotated[AuthContext, Depends(require_permission(Permission.DISPUTES_READ))],
     session: Annotated[Session, Depends(get_db_session)],
-    storage: Annotated[LocalObjectStorage, Depends(get_object_storage)],
+    storage: Annotated[ObjectStorage, Depends(get_object_storage)],
 ) -> Response:
     _, platform, svc = _build_services(session)
     try:
-        svc.get_case(auth.tenant_id, case_id)
+        case = svc.get_case(auth.tenant_id, case_id)
         art = platform.get_evidence_artifact(auth.tenant_id, artifact_id)
         if art is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Artifact not found")
+        assert_same_tenant(auth.tenant_id, art.tenant_id, "evidence_artifact")
+
+        ev_row = session.get(EvidenceRecordRow, art.evidence_record_id)
+        if ev_row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Artifact evidence record not found",
+            )
+        assert_same_tenant(auth.tenant_id, ev_row.tenant_id, "evidence_record")
+        if ev_row.dispute_case_id != case_id and not (
+            ev_row.dispute_case_id is None and art.evidence_record_id in set(case.evidence_ids)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Artifact does not belong to this dispute case",
+            )
+
         raw = storage.get_bytes(tenant_id=auth.tenant_id, object_key=art.object_key, expected_sha256=art.sha256)
         return Response(
             content=raw,
@@ -358,7 +485,7 @@ def download_evidence_artifact(
     except HTTPException:
         raise
     except Exception as exc:
-        _raise_http_for_domain_error(exc)
+        _raise_db_http_error(exc)
         raise
 
 
@@ -384,7 +511,7 @@ def assign_dispute(
         )
         return {"case_id": str(case_id), "assigned_to": meta.assigned_to}
     except Exception as exc:
-        _raise_http_for_domain_error(exc)
+        _raise_db_http_error(exc)
         raise
 
 
@@ -402,7 +529,7 @@ def add_dispute_note(
         meta = platform.add_dispute_note(tenant_id=auth.tenant_id, case_id=case_id, author=author, body=payload.body)
         return {"case_id": str(case_id), "notes": meta.notes}
     except Exception as exc:
-        _raise_http_for_domain_error(exc)
+        _raise_db_http_error(exc)
         raise
 
 
@@ -428,7 +555,7 @@ def analyze_case(
             report=report,
         )
     except Exception as exc:
-        _raise_http_for_domain_error(exc)
+        _raise_db_http_error(exc)
         raise
 
 
@@ -447,7 +574,7 @@ def export_case_report(
             analysis = DisputeAnalyzer().analyze(case=case, evidence=evidence)
         return generate_case_report(case, analysis, evidence)
     except Exception as exc:
-        _raise_http_for_domain_error(exc)
+        _raise_db_http_error(exc)
         raise
 
 
@@ -468,7 +595,7 @@ def approve_case(
             draft_response_text=payload.draft_response_text,
         )
     except Exception as exc:
-        _raise_http_for_domain_error(exc)
+        _raise_db_http_error(exc)
         raise
 
 
@@ -477,12 +604,18 @@ async def submit_case(
     case_id: UUID,
     auth: Annotated[AuthContext, Depends(require_permission(Permission.DISPUTES_SUBMIT))],
     session: Annotated[Session, Depends(get_db_session)],
+    settings: Annotated[NexusSettings, Depends(get_app_settings)],
+    paypal_client: Annotated[PayPalSandboxClient, Depends(get_paypal_client)],
     payload: Annotated[SubmitDisputeRequest | None, Body()] = None,
 ) -> SubmitDisputeResponse:
     _, _, svc = _build_services(session)
-    adapter = PayPalDisputeAdapter()
+    adapter = PayPalDisputeAdapter(settings=settings, paypal_client=paypal_client)
     try:
         case = svc.get_case(auth.tenant_id, case_id)
+        if case.status in (DisputeStatus.SUBMITTED, DisputeStatus.RESOLVED):
+            raise InvalidDisputeTransitionError(
+                f"Dispute case {case_id} cannot transition from {case.status.value} to SUBMITTED"
+            )
         if (
             not case.human_approved_for_submission
             or case.status != DisputeStatus.APPROVED_FOR_SUBMISSION
@@ -497,18 +630,57 @@ async def submit_case(
                 f"Synthetic dispute case {case_id} cannot be submitted externally"
             )
 
+        evidence = svc.get_case_evidence(auth.tenant_id, case_id)
         if payload is not None and payload.draft_response_text is not None:
             draft_text = payload.draft_response_text
         else:
             latest = svc.get_latest_analysis(auth.tenant_id, case_id)
             draft_text = latest.draft_response_text if latest is not None else ""
 
+        # Release any read transaction before awaiting outbound PayPal HTTP I/O.
+        session.rollback()
+
         submission = await adapter.submit_dispute_response(
             case=case,
             draft_response_text=draft_text,
+            evidence_records=evidence,
         )
-        updated_case = svc.mark_submitted(tenant_id=auth.tenant_id, case_id=case_id)
+        updated_case = svc.mark_submitted(
+            tenant_id=auth.tenant_id,
+            case_id=case_id,
+            actor_id=auth.actor_id,
+            actor_type=auth.actor_type,
+            external_status="UNDER_REVIEW",
+            submission_details={"paypal_dispute_id": case.paypal_dispute_id},
+        )
         return SubmitDisputeResponse(case=updated_case, submission=submission)
     except Exception as exc:
-        _raise_http_for_domain_error(exc)
+        _raise_db_http_error(exc)
+        raise
+
+
+@router.post("/cases/{case_id}/resolve", response_model=DisputeCase)
+def resolve_case(
+    case_id: UUID,
+    auth: Annotated[AuthContext, Depends(require_permission(Permission.DISPUTES_WRITE))],
+    session: Annotated[Session, Depends(get_db_session)],
+    payload: Annotated[ResolveDisputeRequest | None, Body()] = None,
+) -> DisputeCase:
+    _, _, svc = _build_services(session)
+    outcome = (
+        payload.resolution_outcome
+        if payload and payload.resolution_outcome
+        else (payload.reason if payload and payload.reason else "RESOLVED")
+    )
+    try:
+        return svc.mark_resolved(
+            tenant_id=auth.tenant_id,
+            case_id=case_id,
+            resolution_outcome=outcome,
+            actor_id=auth.actor_id,
+            actor_type=auth.actor_type,
+            notes=payload.notes if payload else None,
+        )
+    except Exception as exc:
+        _raise_db_http_error(exc)
         raise

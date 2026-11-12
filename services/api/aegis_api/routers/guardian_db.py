@@ -16,7 +16,7 @@ from contracts import (
     SpendingPassport,
 )
 from database import LedgerRepository, PlatformRepository
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from guardian import GuardianService
 from guardian.api.models import (
     ApprovalActionResponse,
@@ -28,23 +28,27 @@ from guardian.api.models import (
     InitiateCheckoutRequest,
     ProposalSubmissionResponse,
     ReconcileRequest,
+    RefundRequest,
     SubmitProposalRequest,
 )
+from guardian.budgets.coordinator import BudgetCoordinator
 from guardian.domain.exceptions import (
     ApprovalExpiredError,
     ApprovalMismatchError,
     ApprovalNotFoundError,
     AttemptNotFoundError,
+    DuplicateIntentError,
     GuardianError,
     InsufficientBudgetError,
     IntentNotFoundError,
     InvalidStateTransitionError,
     PolicyDeniedError,
 )
-from paypal import PayPalSandboxClient
+from guardian.payments.coordinator import PaymentCoordinator
+from paypal import PayPalAPIError, PayPalSandboxClient, PayPalTimeoutError
 from pydantic import BaseModel, ConfigDict, Field
 from security import AuthContext, Permission, assert_same_tenant
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from aegis_api.deps import get_db_session, get_paypal_client, require_permission
 
@@ -132,12 +136,127 @@ def _guardian_service(session: Session, paypal_client: PayPalSandboxClient) -> G
     return GuardianService(repo=LedgerRepository(session), paypal_client=paypal_client)
 
 
+def _payment_coordinator(session: Session, paypal_client: PayPalSandboxClient) -> PaymentCoordinator:
+    ledger = LedgerRepository(session)
+    return PaymentCoordinator(
+        repo=ledger,
+        paypal_client=paypal_client,
+        budget_coordinator=BudgetCoordinator(ledger),
+    )
+
+
+def _detach_session(request: Request, session: Session) -> sessionmaker[Session]:
+    """Commit and release the request DB session back to the pool before awaiting network I/O."""
+    session_factory: sessionmaker[Session] | None = getattr(request.app.state, "session_factory", None)
+    if session_factory is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Session factory is not configured",
+        )
+    session.commit()
+    session.close()
+    return session_factory
+
+
+def _raise_http_for_guardian_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, PolicyDeniedError):
+        return HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": "POLICY_DENIED", "message": str(exc), "reason_codes": exc.reason_codes},
+        )
+    if isinstance(exc, ApprovalExpiredError):
+        return HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail={"error": "APPROVAL_EXPIRED", "message": str(exc)},
+        )
+    if isinstance(exc, ApprovalMismatchError):
+        return HTTPException(
+            status_code=422,
+            detail={"error": "APPROVAL_MISMATCH", "message": str(exc)},
+        )
+    if isinstance(exc, (ApprovalNotFoundError, IntentNotFoundError, AttemptNotFoundError)):
+        return HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "NOT_FOUND", "message": str(exc)},
+        )
+    if isinstance(exc, DuplicateIntentError):
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": "DUPLICATE_INTENT", "message": str(exc)},
+        )
+    if isinstance(exc, InvalidStateTransitionError):
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": "INVALID_STATE", "message": str(exc)},
+        )
+    if isinstance(exc, InsufficientBudgetError):
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": "INSUFFICIENT_BUDGET", "message": str(exc)},
+        )
+    if isinstance(exc, PayPalTimeoutError):
+        return HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail={"error": "PAYPAL_TIMEOUT", "message": str(exc)},
+        )
+    if isinstance(exc, PayPalAPIError):
+        return HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"error": "PAYPAL_API_ERROR", "message": str(exc), "status_code": exc.status_code},
+        )
+    return HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail={"error": "GUARDIAN_ERROR", "message": str(exc)},
+    )
+
+
+def _snapshot_version(snap: Any) -> int:
+    if snap is None:
+        return 0
+    if isinstance(snap, dict):
+        return int(snap.get("version") or 0)
+    return int(getattr(snap, "version", 0) or 0)
+
+
+def _ensure_passport_snapshot(
+    ledger: LedgerRepository,
+    passport: SpendingPassport,
+    *,
+    prev_version: int,
+    actor_id: str | None,
+) -> None:
+    """Ensure a deterministic passport snapshot exists when repo supports snapshots."""
+    save_fn = getattr(ledger, "save_passport_snapshot", None)
+    if not callable(save_fn):
+        return
+    latest_fn = getattr(ledger, "get_latest_passport_snapshot", None)
+    latest = latest_fn(passport.tenant_id, passport.id) if callable(latest_fn) else None
+    if _snapshot_version(latest) > prev_version:
+        return
+    next_version_fn = getattr(ledger, "_next_passport_snapshot_version", None)
+    version = (
+        int(next_version_fn(passport.tenant_id, passport.id))
+        if callable(next_version_fn)
+        else prev_version + 1
+    )
+    save_fn(
+        tenant_id=passport.tenant_id,
+        passport_id=passport.id,
+        version=version,
+        policy_version=passport.policy_version,
+        snapshot_json=passport.model_dump(mode="json"),
+        created_by=actor_id,
+    )
+
+
 @router.get("/agents", response_model=list[AgentIdentity])
 def list_agents(
     auth: Annotated[AuthContext, Depends(require_permission(Permission.AGENTS_READ))],
     session: Annotated[Session, Depends(get_db_session)],
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[AgentIdentity]:
-    return LedgerRepository(session).list_agents(auth.tenant_id)
+    return LedgerRepository(session).list_agents(auth.tenant_id, limit=limit, offset=offset)
 
 
 @router.post("/agents", response_model=AgentIdentity, status_code=status.HTTP_201_CREATED)
@@ -200,8 +319,10 @@ def update_agent_status(
 def list_merchants(
     auth: Annotated[AuthContext, Depends(require_permission(Permission.PASSPORTS_READ))],
     session: Annotated[Session, Depends(get_db_session)],
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[Merchant]:
-    return LedgerRepository(session).list_merchants(auth.tenant_id)
+    return LedgerRepository(session).list_merchants(auth.tenant_id, limit=limit, offset=offset)
 
 
 @router.post("/merchants", response_model=Merchant, status_code=status.HTTP_201_CREATED)
@@ -244,8 +365,10 @@ def toggle_merchant_allowlist(
 def list_passports(
     auth: Annotated[AuthContext, Depends(require_permission(Permission.PASSPORTS_READ))],
     session: Annotated[Session, Depends(get_db_session)],
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[SpendingPassport]:
-    return LedgerRepository(session).list_passports(auth.tenant_id)
+    return LedgerRepository(session).list_passports(auth.tenant_id, limit=limit, offset=offset)
 
 
 @router.post("/passports", response_model=SpendingPassport, status_code=status.HTTP_201_CREATED)
@@ -259,24 +382,27 @@ def issue_passport(
     agent = ledger.get_agent(auth.tenant_id, payload.agent_id)
     if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found in organization.")
-    passport = ledger.create_passport(
-        SpendingPassport(
-            id=uuid4(),
-            tenant_id=auth.tenant_id,
-            agent_id=payload.agent_id,
-            policy_version=payload.policy_version,
-            currency=payload.currency,
-            total_budget_minor=payload.total_budget_minor,
-            per_tx_limit_minor=payload.per_tx_limit_minor,
-            daily_limit_minor=payload.daily_limit_minor,
-            human_approval_threshold_minor=payload.human_approval_threshold_minor,
-            allowed_merchant_ids=payload.allowed_merchant_ids,
-            allowed_categories=payload.allowed_categories,
-            allow_unknown_merchants=payload.allow_unknown_merchants,
-            status=PassportStatus.ACTIVE,
-            expires_at=datetime.now(UTC) + timedelta(days=payload.expires_in_days),
-        )
+    passport_obj = SpendingPassport(
+        id=uuid4(),
+        tenant_id=auth.tenant_id,
+        agent_id=payload.agent_id,
+        policy_version=payload.policy_version,
+        currency=payload.currency,
+        total_budget_minor=payload.total_budget_minor,
+        per_tx_limit_minor=payload.per_tx_limit_minor,
+        daily_limit_minor=payload.daily_limit_minor,
+        human_approval_threshold_minor=payload.human_approval_threshold_minor,
+        allowed_merchant_ids=payload.allowed_merchant_ids,
+        allowed_categories=payload.allowed_categories,
+        allow_unknown_merchants=payload.allow_unknown_merchants,
+        status=PassportStatus.ACTIVE,
+        expires_at=datetime.now(UTC) + timedelta(days=payload.expires_in_days),
     )
+    try:
+        passport = ledger.create_passport(passport_obj, created_by=auth.actor_id)
+    except TypeError:
+        passport = ledger.create_passport(passport_obj)
+    _ensure_passport_snapshot(ledger, passport, prev_version=0, actor_id=auth.actor_id)
     platform.record_admin_audit(
         tenant_id=auth.tenant_id,
         actor_type=auth.actor_type,
@@ -297,19 +423,46 @@ def update_passport_policy(
     session: Annotated[Session, Depends(get_db_session)],
 ) -> SpendingPassport:
     ledger = LedgerRepository(session)
+    platform = PlatformRepository(session)
+    latest_fn = getattr(ledger, "get_latest_passport_snapshot", None)
+    prev_snap = latest_fn(auth.tenant_id, passport_id) if callable(latest_fn) else None
+    prev_version = _snapshot_version(prev_snap)
     try:
-        return ledger.update_passport_policy(
-            auth.tenant_id,
-            passport_id,
-            per_tx_limit_minor=payload.per_tx_limit_minor,
-            daily_limit_minor=payload.daily_limit_minor,
-            human_approval_threshold_minor=payload.human_approval_threshold_minor,
-            allowed_merchant_ids=payload.allowed_merchant_ids,
-            allowed_categories=payload.allowed_categories,
-            allow_unknown_merchants=payload.allow_unknown_merchants,
-        )
+        try:
+            passport = ledger.update_passport_policy(
+                auth.tenant_id,
+                passport_id,
+                per_tx_limit_minor=payload.per_tx_limit_minor,
+                daily_limit_minor=payload.daily_limit_minor,
+                human_approval_threshold_minor=payload.human_approval_threshold_minor,
+                allowed_merchant_ids=payload.allowed_merchant_ids,
+                allowed_categories=payload.allowed_categories,
+                allow_unknown_merchants=payload.allow_unknown_merchants,
+                created_by=auth.actor_id,
+            )
+        except TypeError:
+            passport = ledger.update_passport_policy(
+                auth.tenant_id,
+                passport_id,
+                per_tx_limit_minor=payload.per_tx_limit_minor,
+                daily_limit_minor=payload.daily_limit_minor,
+                human_approval_threshold_minor=payload.human_approval_threshold_minor,
+                allowed_merchant_ids=payload.allowed_merchant_ids,
+                allowed_categories=payload.allowed_categories,
+                allow_unknown_merchants=payload.allow_unknown_merchants,
+            )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    _ensure_passport_snapshot(ledger, passport, prev_version=prev_version, actor_id=auth.actor_id)
+    platform.record_admin_audit(
+        tenant_id=auth.tenant_id,
+        actor_type=auth.actor_type,
+        actor_id=auth.actor_id,
+        action="PASSPORT_UPDATED",
+        resource_type="spending_passport",
+        resource_id=str(passport_id),
+    )
+    return passport
 
 
 @router.post("/passports/{passport_id}/revoke", response_model=SpendingPassport)
@@ -320,10 +473,22 @@ def revoke_passport(
 ) -> SpendingPassport:
     ledger = LedgerRepository(session)
     platform = PlatformRepository(session)
+    latest_fn = getattr(ledger, "get_latest_passport_snapshot", None)
+    prev_snap = latest_fn(auth.tenant_id, passport_id) if callable(latest_fn) else None
+    prev_version = _snapshot_version(prev_snap)
     try:
-        passport = ledger.update_passport_policy(auth.tenant_id, passport_id, status=PassportStatus.REVOKED)
+        try:
+            passport = ledger.update_passport_policy(
+                auth.tenant_id,
+                passport_id,
+                status=PassportStatus.REVOKED,
+                created_by=auth.actor_id,
+            )
+        except TypeError:
+            passport = ledger.update_passport_policy(auth.tenant_id, passport_id, status=PassportStatus.REVOKED)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    _ensure_passport_snapshot(ledger, passport, prev_version=prev_version, actor_id=auth.actor_id)
     platform.record_admin_audit(
         tenant_id=auth.tenant_id,
         actor_type=auth.actor_type,
@@ -392,21 +557,8 @@ def submit_proposal(
     try:
         intent, decision = svc.submit_proposal(proposal=proposal, quote=quote)
         return ProposalSubmissionResponse(payment_intent=intent, decision=decision)
-    except PolicyDeniedError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": "POLICY_DENIED", "message": str(exc), "reason_codes": exc.reason_codes},
-        ) from exc
-    except InsufficientBudgetError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={"error": "INSUFFICIENT_BUDGET", "message": str(exc)},
-        ) from exc
     except GuardianError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": "GUARDIAN_ERROR", "message": str(exc)},
-        ) from exc
+        raise _raise_http_for_guardian_error(exc) from exc
 
 
 @router.post("/proposals/{intent_id}/approve", response_model=ApprovalActionResponse)
@@ -435,60 +587,97 @@ def approve_proposal(
             intent_id=intent_id,
             approval_id=resolved_approval_id,
             approver_id=approver,
+            approved=request.approved,
             comment=request.comment,
         )
         return ApprovalActionResponse(payment_intent=intent, approval=approval)
-    except ApprovalExpiredError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_410_GONE,
-            detail={"error": "APPROVAL_EXPIRED", "message": str(exc)},
-        ) from exc
-    except ApprovalMismatchError as exc:
-        raise HTTPException(
-            status_code=422,
-            detail={"error": "APPROVAL_MISMATCH", "message": str(exc)},
-        ) from exc
-    except (ApprovalNotFoundError, IntentNotFoundError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": "NOT_FOUND", "message": str(exc)},
-        ) from exc
     except GuardianError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": "GUARDIAN_ERROR", "message": str(exc)},
-        ) from exc
+        raise _raise_http_for_guardian_error(exc) from exc
 
 
 @router.post("/payments/{intent_id}/checkout", response_model=CheckoutResponse)
 async def initiate_checkout(
+    http_request: Request,
     intent_id: UUID,
     request: InitiateCheckoutRequest,
     auth: Annotated[AuthContext, Depends(require_permission(Permission.PAYMENTS_CHECKOUT))],
     session: Annotated[Session, Depends(get_db_session)],
     paypal_client: Annotated[PayPalSandboxClient, Depends(get_paypal_client)],
 ) -> CheckoutResponse:
-    svc = _guardian_service(session, paypal_client)
+    ledger = LedgerRepository(session)
+    intent = ledger.get_intent(auth.tenant_id, intent_id)
+    if intent is None:
+        raise _raise_http_for_guardian_error(IntentNotFoundError(f"PaymentIntent {intent_id} not found"))
+
+    idempotency_key = request.idempotency_key or f"attempt-{intent_id}-{request.attempt_number}"
+    coord = _payment_coordinator(session, paypal_client)
     try:
-        intent, attempt = await svc.initiate_checkout(
-            tenant_id=auth.tenant_id,
-            intent_id=intent_id,
+        intent, existing_attempt = coord.prepare_checkout(
+            intent=intent,
             attempt_number=request.attempt_number,
-            idempotency_key=request.idempotency_key,
+            idempotency_key=idempotency_key,
+        )
+    except GuardianError as exc:
+        raise _raise_http_for_guardian_error(exc) from exc
+
+    if existing_attempt is not None:
+        return CheckoutResponse(
+            payment_intent=intent,
+            attempt=existing_attempt,
+            approval_url=existing_attempt.paypal_approval_url,
+        )
+
+    session_factory = _detach_session(http_request, session)
+
+    try:
+        order_result = await paypal_client.create_order(
+            amount_minor=intent.amount_minor,
+            currency=intent.currency,
+            reference_id=str(intent.id),
+            description=f"AgentPay Nexus order {intent.id}",
+            request_id=f"req-order-{intent.id}-{request.attempt_number}",
             return_url=request.return_url,
             cancel_url=request.cancel_url,
         )
-        return CheckoutResponse(
-            payment_intent=intent,
-            attempt=attempt,
-            approval_url=attempt.paypal_approval_url,
-        )
-    except IntentNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"error": "INTENT_NOT_FOUND", "message": str(exc)}) from exc
-    except InvalidStateTransitionError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"error": "INVALID_STATE", "message": str(exc)}) from exc
-    except GuardianError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"error": "GUARDIAN_ERROR", "message": str(exc)}) from exc
+    except (PayPalTimeoutError, PayPalAPIError) as exc:
+        with session_factory() as db2:
+            _payment_coordinator(db2, paypal_client).record_checkout_failure(
+                intent=intent,
+                reason=str(exc),
+            )
+            db2.commit()
+        raise _raise_http_for_guardian_error(exc) from exc
+    except (ValueError, RuntimeError) as exc:
+        with session_factory() as db2:
+            _payment_coordinator(db2, paypal_client).record_checkout_failure(
+                intent=intent,
+                reason=str(exc),
+            )
+            db2.commit()
+        raise _raise_http_for_guardian_error(
+            GuardianError(f"Failed to create PayPal sandbox order: {exc}")
+        ) from exc
+
+    with session_factory() as db2:
+        try:
+            coord2 = _payment_coordinator(db2, paypal_client)
+            attempt = coord2.finalize_checkout(
+                intent=intent,
+                attempt_number=request.attempt_number,
+                idempotency_key=idempotency_key,
+                order_result=order_result,
+            )
+            updated_intent = LedgerRepository(db2).get_intent(auth.tenant_id, intent.id) or intent
+            db2.commit()
+        except GuardianError as exc:
+            db2.rollback()
+            raise _raise_http_for_guardian_error(exc) from exc
+
+    return CheckoutResponse(
+        payment_intent=updated_intent,
+        attempt=attempt,
+        approval_url=attempt.paypal_approval_url,
+    )
 
 
 @router.post("/payments/{intent_id}/buyer-approved")
@@ -508,30 +697,92 @@ def handle_buyer_approved(
             payer_id=request.payer_id,
         )
         return {"payment_intent": intent.model_dump(mode="json"), "attempt": attempt.model_dump(mode="json")}
-    except (IntentNotFoundError, AttemptNotFoundError) as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"error": "NOT_FOUND", "message": str(exc)}) from exc
+    except GuardianError as exc:
+        raise _raise_http_for_guardian_error(exc) from exc
 
 
 @router.post("/payments/{intent_id}/capture")
 async def execute_capture(
+    http_request: Request,
     intent_id: UUID,
     request: CaptureRequest,
     auth: Annotated[AuthContext, Depends(require_permission(Permission.PAYMENTS_CAPTURE))],
     session: Annotated[Session, Depends(get_db_session)],
     paypal_client: Annotated[PayPalSandboxClient, Depends(get_paypal_client)],
 ) -> dict[str, Any]:
-    svc = _guardian_service(session, paypal_client)
+    coord = _payment_coordinator(session, paypal_client)
     try:
-        intent, attempt = await svc.execute_capture(
+        intent, attempt = coord.prepare_capture(
             tenant_id=auth.tenant_id,
             intent_id=intent_id,
             attempt_id=request.attempt_id,
         )
-        return {"payment_intent": intent.model_dump(mode="json"), "attempt": attempt.model_dump(mode="json")}
-    except (IntentNotFoundError, AttemptNotFoundError) as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"error": "NOT_FOUND", "message": str(exc)}) from exc
-    except InvalidStateTransitionError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"error": "INVALID_STATE", "message": str(exc)}) from exc
+    except GuardianError as exc:
+        raise _raise_http_for_guardian_error(exc) from exc
+
+    if not attempt.paypal_order_id:
+        raise _raise_http_for_guardian_error(
+            GuardianError(f"PaymentAttempt {attempt.id} has no PayPal order ID")
+        )
+
+    session_factory = _detach_session(http_request, session)
+
+    try:
+        capture_result = await paypal_client.capture_order(
+            paypal_order_id=attempt.paypal_order_id,
+            expected_amount_minor=intent.amount_minor,
+            expected_currency=intent.currency,
+            request_id=f"cap-{intent.id}-{attempt.attempt_number}",
+        )
+    except PayPalTimeoutError:
+        with session_factory() as db2:
+            updated_intent, saved_attempt = _payment_coordinator(
+                db2, paypal_client
+            ).record_capture_timeout(
+                tenant_id=auth.tenant_id,
+                intent=intent,
+                attempt=attempt,
+            )
+            db2.commit()
+        return {
+            "payment_intent": updated_intent.model_dump(mode="json"),
+            "attempt": saved_attempt.model_dump(mode="json"),
+        }
+    except (PayPalAPIError, ValueError, RuntimeError) as exc:
+        with session_factory() as db2:
+            updated_intent, saved_attempt = _payment_coordinator(
+                db2, paypal_client
+            ).record_capture_failure(
+                tenant_id=auth.tenant_id,
+                intent=intent,
+                attempt=attempt,
+                error_message=str(exc),
+            )
+            db2.commit()
+        return {
+            "payment_intent": updated_intent.model_dump(mode="json"),
+            "attempt": saved_attempt.model_dump(mode="json"),
+        }
+
+    with session_factory() as db2:
+        try:
+            updated_intent, saved_attempt = _payment_coordinator(
+                db2, paypal_client
+            ).finalize_capture(
+                tenant_id=auth.tenant_id,
+                intent=intent,
+                attempt=attempt,
+                capture_result=capture_result,
+            )
+            db2.commit()
+        except GuardianError as exc:
+            db2.rollback()
+            raise _raise_http_for_guardian_error(exc) from exc
+
+    return {
+        "payment_intent": updated_intent.model_dump(mode="json"),
+        "attempt": saved_attempt.model_dump(mode="json"),
+    }
 
 
 @router.post("/payments/{intent_id}/buyer-declined")
@@ -551,28 +802,126 @@ def handle_buyer_declined(
             reason=request.reason,
         )
         return {"payment_intent": intent.model_dump(mode="json"), "attempt": attempt.model_dump(mode="json")}
-    except (IntentNotFoundError, AttemptNotFoundError) as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"error": "NOT_FOUND", "message": str(exc)}) from exc
+    except GuardianError as exc:
+        raise _raise_http_for_guardian_error(exc) from exc
 
 
 @router.post("/payments/{intent_id}/reconcile")
 async def reconcile_pending(
+    http_request: Request,
     intent_id: UUID,
     request: ReconcileRequest,
     auth: Annotated[AuthContext, Depends(require_permission(Permission.PAYMENTS_CAPTURE))],
     session: Annotated[Session, Depends(get_db_session)],
     paypal_client: Annotated[PayPalSandboxClient, Depends(get_paypal_client)],
 ) -> dict[str, Any]:
-    svc = _guardian_service(session, paypal_client)
+    coord = _payment_coordinator(session, paypal_client)
     try:
-        intent, attempt = await svc.reconcile_pending(
+        intent, attempt = coord.prepare_reconcile(
             tenant_id=auth.tenant_id,
             intent_id=intent_id,
             attempt_id=request.attempt_id,
         )
-        return {"payment_intent": intent.model_dump(mode="json"), "attempt": attempt.model_dump(mode="json")}
-    except (IntentNotFoundError, AttemptNotFoundError) as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"error": "NOT_FOUND", "message": str(exc)}) from exc
+    except GuardianError as exc:
+        raise _raise_http_for_guardian_error(exc) from exc
+
+    if not attempt.paypal_order_id:
+        raise _raise_http_for_guardian_error(
+            GuardianError(f"PaymentAttempt {attempt.id} has no PayPal order ID")
+        )
+
+    session_factory = _detach_session(http_request, session)
+
+    try:
+        reconcile_res = await paypal_client.reconcile_order(
+            paypal_order_id=attempt.paypal_order_id,
+            expected_amount_minor=intent.amount_minor,
+            expected_currency=intent.currency,
+        )
+    except (PayPalTimeoutError, PayPalAPIError) as exc:
+        raise _raise_http_for_guardian_error(exc) from exc
+    except (ValueError, RuntimeError) as exc:
+        raise _raise_http_for_guardian_error(GuardianError(f"Reconcile failed: {exc}")) from exc
+
+    with session_factory() as db2:
+        try:
+            updated_intent, saved_attempt = _payment_coordinator(
+                db2, paypal_client
+            ).finalize_reconcile(
+                tenant_id=auth.tenant_id,
+                intent=intent,
+                attempt=attempt,
+                reconcile_res=reconcile_res,
+            )
+            db2.commit()
+        except GuardianError as exc:
+            db2.rollback()
+            raise _raise_http_for_guardian_error(exc) from exc
+
+    return {
+        "payment_intent": updated_intent.model_dump(mode="json"),
+        "attempt": saved_attempt.model_dump(mode="json"),
+    }
+
+
+@router.post("/payments/{intent_id}/refund")
+async def refund_payment(
+    http_request: Request,
+    intent_id: UUID,
+    request: RefundRequest,
+    auth: Annotated[AuthContext, Depends(require_permission(Permission.PAYMENTS_CAPTURE))],
+    session: Annotated[Session, Depends(get_db_session)],
+    paypal_client: Annotated[PayPalSandboxClient, Depends(get_paypal_client)],
+) -> dict[str, Any]:
+    coord = _payment_coordinator(session, paypal_client)
+    try:
+        intent, attempt, refund_amount = coord.prepare_refund(
+            tenant_id=auth.tenant_id,
+            intent_id=intent_id,
+            attempt_id=request.attempt_id,
+            amount_minor=request.amount_minor,
+        )
+    except GuardianError as exc:
+        raise _raise_http_for_guardian_error(exc) from exc
+
+    assert attempt.verified_capture is not None
+    session_factory = _detach_session(http_request, session)
+
+    try:
+        refund_res = await paypal_client.refund_capture(
+            capture_id=attempt.verified_capture.paypal_capture_id,
+            amount_minor=refund_amount,
+            currency=intent.currency,
+            idempotency_key=f"ref-{intent.id}-{attempt.id}-{refund_amount}",
+            note=request.reason,
+        )
+    except (PayPalTimeoutError, PayPalAPIError) as exc:
+        raise _raise_http_for_guardian_error(exc) from exc
+    except (ValueError, RuntimeError) as exc:
+        raise _raise_http_for_guardian_error(GuardianError(f"PayPal refund failed: {exc}")) from exc
+
+    with session_factory() as db2:
+        try:
+            updated_intent, saved_attempt, refund_payload = _payment_coordinator(
+                db2, paypal_client
+            ).finalize_refund(
+                tenant_id=auth.tenant_id,
+                intent=intent,
+                attempt=attempt,
+                refund_amount=refund_amount,
+                reason=request.reason,
+                refund_res=refund_res,
+            )
+            db2.commit()
+        except GuardianError as exc:
+            db2.rollback()
+            raise _raise_http_for_guardian_error(exc) from exc
+
+    return {
+        "payment_intent": updated_intent.model_dump(mode="json"),
+        "attempt": saved_attempt.model_dump(mode="json"),
+        "refund": refund_payload,
+    }
 
 
 @router.get("/payments/{intent_id}", response_model=PaymentIntent)

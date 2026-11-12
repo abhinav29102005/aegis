@@ -1,5 +1,103 @@
 {
   "$defs": {
+    "AP2MandatePayload": {
+      "additionalProperties": false,
+      "description": "Normalized Agent Payments Protocol (AP2) mandate payload.",
+      "properties": {
+        "schema_version": {
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "mandate_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Mandate Id",
+          "type": "string"
+        },
+        "tenant_id": {
+          "format": "uuid",
+          "title": "Tenant Id",
+          "type": "string"
+        },
+        "agent_id": {
+          "format": "uuid",
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "passport_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Passport Id"
+        },
+        "merchant_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Merchant Id"
+        },
+        "max_amount_minor": {
+          "exclusiveMinimum": 0,
+          "title": "Max Amount Minor",
+          "type": "integer"
+        },
+        "currency": {
+          "default": "USD",
+          "maxLength": 3,
+          "minLength": 3,
+          "title": "Currency",
+          "type": "string"
+        },
+        "scope": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Scope",
+          "type": "array"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "title": "Expires At",
+          "type": "string"
+        },
+        "signature": {
+          "maxLength": 512,
+          "minLength": 8,
+          "title": "Signature",
+          "type": "string"
+        },
+        "issued_at": {
+          "format": "date-time",
+          "title": "Issued At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mandate_id",
+        "tenant_id",
+        "agent_id",
+        "max_amount_minor",
+        "expires_at",
+        "signature"
+      ],
+      "title": "AP2MandatePayload",
+      "type": "object"
+    },
     "AgentIdentity": {
       "additionalProperties": false,
       "properties": {
@@ -402,10 +500,13 @@
         "DENIED_EXCEEDS_PER_TX_LIMIT",
         "DENIED_EXCEEDS_PASSPORT_BUDGET",
         "DENIED_EXCEEDS_DAILY_LIMIT",
+        "DENIED_MONTHLY_LIMIT",
         "DENIED_MERCHANT_NOT_ALLOWLISTED",
         "DENIED_CATEGORY_NOT_ALLOWED",
+        "DENIED_CURRENCY_NOT_ALLOWED",
         "DENIED_PASSPORT_EXPIRED",
         "DENIED_PASSPORT_REVOKED",
+        "DENIED_PASSPORT_PAUSED",
         "DENIED_AGENT_SUSPENDED",
         "DENIED_APPROVAL_EXPIRED",
         "DENIED_APPROVAL_MISMATCH",
@@ -418,6 +519,101 @@
       ],
       "title": "DecisionReasonCode",
       "type": "string"
+    },
+    "DeflectionAlert": {
+      "additionalProperties": false,
+      "description": "Pre-dispute / chargeback deflection alert emitted by risk or forensics checks.",
+      "properties": {
+        "schema_version": {
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "tenant_id": {
+          "format": "uuid",
+          "title": "Tenant Id",
+          "type": "string"
+        },
+        "correlation_id": {
+          "format": "uuid",
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "payment_intent_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Payment Intent Id"
+        },
+        "dispute_case_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dispute Case Id"
+        },
+        "alert_type": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Alert Type",
+          "type": "string"
+        },
+        "severity": {
+          "default": "MEDIUM",
+          "pattern": "^(LOW|MEDIUM|HIGH|CRITICAL)$",
+          "title": "Severity",
+          "type": "string"
+        },
+        "reason": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "recommended_action": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Recommended Action",
+          "type": "string"
+        },
+        "acknowledged": {
+          "default": false,
+          "title": "Acknowledged",
+          "type": "boolean"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenant_id",
+        "correlation_id",
+        "alert_type",
+        "reason",
+        "recommended_action"
+      ],
+      "title": "DeflectionAlert",
+      "type": "object"
     },
     "DisputeAnalysis": {
       "additionalProperties": false,
@@ -509,6 +705,13 @@
           "title": "Rejected Claims",
           "type": "array"
         },
+        "recommended_actions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Recommended Actions",
+          "type": "array"
+        },
         "grounded_summary": {
           "maxLength": 4000,
           "minLength": 1,
@@ -530,6 +733,32 @@
           "default": false,
           "title": "Generated With Llm",
           "type": "boolean"
+        },
+        "llm_provider": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Llm Provider"
+        },
+        "llm_model": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Llm Model"
         },
         "analyzed_at": {
           "format": "date-time",
@@ -680,6 +909,58 @@
           ],
           "default": null,
           "title": "Response Payload Hash"
+        },
+        "response_due_by": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Response Due By"
+        },
+        "resolved_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resolved At"
+        },
+        "resolution_outcome": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resolution Outcome"
+        },
+        "external_status": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "External Status"
         },
         "opened_at": {
           "format": "date-time",
@@ -1002,9 +1283,14 @@
         "PAYPAL_TIMEOUT_PENDING",
         "PAYPAL_WEBHOOK_RECEIVED",
         "PAYMENT_FAILED",
+        "PAYMENT_REFUNDED",
+        "PAYMENT_VOIDED",
         "DISPUTE_OPENED",
+        "DISPUTE_EVIDENCE_ATTACHED",
         "DISPUTE_ANALYZED",
-        "DISPUTE_RESPONSE_APPROVED"
+        "DISPUTE_RESPONSE_APPROVED",
+        "DISPUTE_SUBMITTED",
+        "DISPUTE_RESOLVED"
       ],
       "title": "FinancialEventType",
       "type": "string"
@@ -1443,9 +1729,12 @@
         "AWAITING_PAYPAL_BUYER",
         "CAPTURE_PENDING",
         "SUCCEEDED",
+        "PARTIALLY_REFUNDED",
+        "REFUNDED",
         "FAILED",
         "PENDING_PROVIDER",
-        "CANCELLED"
+        "CANCELLED",
+        "EXPIRED"
       ],
       "title": "PaymentState",
       "type": "string"
@@ -1924,6 +2213,32 @@
           "title": "Evidence Ids",
           "type": "array"
         },
+        "previous_event_hash": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Previous Event Hash"
+        },
+        "event_hash": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Event Hash"
+        },
         "integrity_verified": {
           "default": true,
           "title": "Integrity Verified",
@@ -2015,11 +2330,31 @@
           "title": "Daily Limit Minor",
           "type": "integer"
         },
+        "monthly_limit_minor": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Monthly Limit Minor"
+        },
         "human_approval_threshold_minor": {
           "default": 5000,
           "minimum": 0,
           "title": "Human Approval Threshold Minor",
           "type": "integer"
+        },
+        "allowed_currencies": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Currencies",
+          "type": "array"
         },
         "allowed_merchant_ids": {
           "items": {
@@ -2065,6 +2400,183 @@
         "expires_at"
       ],
       "title": "SpendingPassport",
+      "type": "object"
+    },
+    "StripeEventEnvelope": {
+      "additionalProperties": false,
+      "description": "Normalized Stripe webhook / Radar / Dispute event envelope.",
+      "properties": {
+        "schema_version": {
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "event_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Event Id",
+          "type": "string"
+        },
+        "tenant_id": {
+          "format": "uuid",
+          "title": "Tenant Id",
+          "type": "string"
+        },
+        "event_type": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Event Type",
+          "type": "string"
+        },
+        "api_version": {
+          "anyOf": [
+            {
+              "maxLength": 32,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Api Version"
+        },
+        "payment_intent_ref": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Payment Intent Ref"
+        },
+        "amount_minor": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Amount Minor"
+        },
+        "currency": {
+          "anyOf": [
+            {
+              "maxLength": 3,
+              "minLength": 3,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Currency"
+        },
+        "payload": {
+          "additionalProperties": true,
+          "title": "Payload",
+          "type": "object"
+        },
+        "received_at": {
+          "format": "date-time",
+          "title": "Received At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "tenant_id",
+        "event_type"
+      ],
+      "title": "StripeEventEnvelope",
+      "type": "object"
+    },
+    "TAPTokenPayload": {
+      "additionalProperties": false,
+      "description": "Normalized Trusted Agent Protocol (TAP) authorization token payload.",
+      "properties": {
+        "schema_version": {
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "token_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Token Id",
+          "type": "string"
+        },
+        "tenant_id": {
+          "format": "uuid",
+          "title": "Tenant Id",
+          "type": "string"
+        },
+        "agent_id": {
+          "format": "uuid",
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "merchant_domain": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Merchant Domain",
+          "type": "string"
+        },
+        "amount_minor": {
+          "exclusiveMinimum": 0,
+          "title": "Amount Minor",
+          "type": "integer"
+        },
+        "currency": {
+          "default": "USD",
+          "maxLength": 3,
+          "minLength": 3,
+          "title": "Currency",
+          "type": "string"
+        },
+        "nonce": {
+          "maxLength": 128,
+          "minLength": 8,
+          "title": "Nonce",
+          "type": "string"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "title": "Expires At",
+          "type": "string"
+        },
+        "signature": {
+          "maxLength": 512,
+          "minLength": 8,
+          "title": "Signature",
+          "type": "string"
+        },
+        "issued_at": {
+          "format": "date-time",
+          "title": "Issued At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "token_id",
+        "tenant_id",
+        "agent_id",
+        "merchant_domain",
+        "amount_minor",
+        "nonce",
+        "expires_at",
+        "signature"
+      ],
+      "title": "TAPTokenPayload",
       "type": "object"
     },
     "Tenant": {
@@ -2164,6 +2676,93 @@
         "verification_hash"
       ],
       "title": "VerifiedPayPalCapture",
+      "type": "object"
+    },
+    "X402SettlementProof": {
+      "additionalProperties": false,
+      "description": "Normalized HTTP 402 / x402 on-chain settlement proof.",
+      "properties": {
+        "schema_version": {
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "proof_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Proof Id",
+          "type": "string"
+        },
+        "tenant_id": {
+          "format": "uuid",
+          "title": "Tenant Id",
+          "type": "string"
+        },
+        "payment_intent_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Payment Intent Id"
+        },
+        "network": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Network",
+          "type": "string"
+        },
+        "asset": {
+          "maxLength": 32,
+          "minLength": 1,
+          "title": "Asset",
+          "type": "string"
+        },
+        "amount_minor": {
+          "exclusiveMinimum": 0,
+          "title": "Amount Minor",
+          "type": "integer"
+        },
+        "tx_hash": {
+          "maxLength": 256,
+          "minLength": 8,
+          "title": "Tx Hash",
+          "type": "string"
+        },
+        "payer_address": {
+          "maxLength": 256,
+          "minLength": 4,
+          "title": "Payer Address",
+          "type": "string"
+        },
+        "payee_address": {
+          "maxLength": 256,
+          "minLength": 4,
+          "title": "Payee Address",
+          "type": "string"
+        },
+        "settled_at": {
+          "format": "date-time",
+          "title": "Settled At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "proof_id",
+        "tenant_id",
+        "network",
+        "asset",
+        "amount_minor",
+        "tx_hash",
+        "payer_address",
+        "payee_address"
+      ],
+      "title": "X402SettlementProof",
       "type": "object"
     }
   },

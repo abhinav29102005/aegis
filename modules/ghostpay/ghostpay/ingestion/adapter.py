@@ -11,6 +11,7 @@ from contracts import (
     FinancialEvent,
     Merchant,
     PaymentIntent,
+    PurchaseProposal,
     QuoteSnapshot,
     SpendingPassport,
 )
@@ -70,18 +71,25 @@ class TraceIngestionAdapter:
         recorded_merchant: Merchant | None = None,
         approval_record: ApprovalRecord | None = None,
         payment_intent: PaymentIntent | None = None,
+        proposal: PurchaseProposal | None = None,
         policy_version: str = "policy-v1",
         strict_integrity: bool = False,
     ) -> PaymentTrace:
         """Assemble, validate, and index a PaymentTrace."""
         ev_list = evidence_records or []
 
-        # 1. Tenant boundary enforcement
+        # 1. Tenant boundary enforcement across all trace entities
         TraceValidator.validate_tenant_isolation(
             tenant_id,
             events=events,
             evidence_records=ev_list,
             intent=payment_intent,
+            proposal=proposal,
+            quote_snapshot=quote_snapshot,
+            recorded_decision=recorded_decision,
+            recorded_passport=recorded_passport,
+            recorded_merchant=recorded_merchant,
+            approval_record=approval_record,
         )
 
         # 2. Ingest and deduplicate events
@@ -133,6 +141,7 @@ class TraceIngestionAdapter:
             recorded_merchant=recorded_merchant,
             approval_record=approval_record,
             payment_intent=payment_intent,
+            proposal=proposal,
             policy_version=policy_version,
             integrity_status=integrity_status,
             missing_evidence=missing_evidence + all_errors,
