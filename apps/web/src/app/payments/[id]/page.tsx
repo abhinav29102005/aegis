@@ -316,7 +316,7 @@ export default function PaymentDetailPage() {
                         Buyer Declined
                       </button>
                     </>
-                )}
+                  )}
 
                 {/* 5. Render Capture button ONLY when attempt.state === "CAPTURE_PENDING" */}
                 {activeAttempt?.state === "CAPTURE_PENDING" && hasPermission("payments:capture") && (
@@ -341,7 +341,7 @@ export default function PaymentDetailPage() {
                     >
                       Refund Payment
                     </button>
-                )}
+                  )}
 
                 {/* 7. Reconcile Pending */}
                 {(intent.state === "PENDING_PROVIDER" || activeAttempt?.state === "PENDING_PROVIDER") &&
@@ -354,7 +354,7 @@ export default function PaymentDetailPage() {
                     >
                       Reconcile Pending
                     </button>
-                )}
+                  )}
               </div>
             </div>
           </section>

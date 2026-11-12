@@ -247,11 +247,10 @@ export default function GhostPayReplayDetailPage() {
                         {entry.actor_type}: {entry.actor_id}
                       </span>
                       {entry.integrity_verified !== undefined && (
-                        <span className={`rounded border px-1.5 py-0.5 font-mono text-[10px] font-medium ${
-                          entry.integrity_verified
+                        <span className={`rounded border px-1.5 py-0.5 font-mono text-[10px] font-medium ${entry.integrity_verified
                             ? "border-aegis-accent/40 bg-aegis-accent/15 text-aegis-accent"
                             : "border-aegis-rose/40 bg-aegis-rose/15 text-aegis-rose"
-                        }`}>
+                          }`}>
                           {entry.integrity_verified ? "✓ Verified" : "✗ Integrity Fail"}
                         </span>
                       )}
