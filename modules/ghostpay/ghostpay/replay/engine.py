@@ -9,7 +9,6 @@ from uuid import UUID, uuid4
 from contracts import (
     AgentIdentity,
     ApprovalRecord,
-    ApprovalStatus,
     DecisionOutcome,
     DecisionReasonCode,
     Merchant,
@@ -20,7 +19,6 @@ from contracts import (
     SpendingPassport,
     evaluate_policy_v1,
 )
-from contracts.policy_v1 import evaluate_policy_v1_rules
 
 from ghostpay.anomalies.detector import detect_anomalies
 from ghostpay.domain.exceptions import IllegalSideEffectError, InsufficientEvidenceError
@@ -283,17 +281,8 @@ class ReplayEngine:
         return cls.replay(req)
 
 
-class PolicyTimeMachine(ReplayEngine):
-    """Forensic Policy Time Machine supporting counterfactual replay and simulation."""
-
-    @classmethod
-    def replay(cls, request: ReplayRequest, *, agent: AgentIdentity | None = None) -> ReplayResult:
-        """Replay transaction; if counterfactual_overrides are present, simulate counterfactual."""
-        if request.counterfactual_overrides:
-            from ghostpay.counterfactual.simulator import simulate_counterfactual
-
-            return simulate_counterfactual(request, request.counterfactual_overrides)
-        return super().replay(request, agent=agent)
+# PolicyTimeMachine is the hardened alias to ReplayEngine
+PolicyTimeMachine = ReplayEngine
 
 
 __all__ = [

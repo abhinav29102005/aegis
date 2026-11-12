@@ -8,7 +8,7 @@ by AgentPay Guardian (pre-transaction authorization) and GhostPay
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from decimal import InvalidOperation, ROUND_HALF_UP, Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -200,7 +200,7 @@ def evaluate_policy_v1_rules(
         )
         if quote.quote_hash != expected_quote_hash:
             _add_denial(
-                DecisionReasonCode.DENIED_QUOTE_HASH_MISMATCH,
+                DecisionReasonCode.DENIED_APPROVAL_MISMATCH,
                 "Quote hash tampering detected; does not match line-item canonical hash",
             )
 
@@ -302,12 +302,11 @@ def evaluate_policy_v1_rules(
             valid_approval = True
 
     # 10. Human approval threshold check
-    if proposal.amount_minor > passport.approval_threshold_minor:
-        if not valid_approval and not denials:
-            _add_escalation(
-                DecisionReasonCode.ESCALATED_REQUIRES_HUMAN_APPROVAL,
-                f"Proposal amount {proposal.amount_minor} exceeds approval threshold {passport.approval_threshold_minor}",
-            )
+    if proposal.amount_minor > passport.approval_threshold_minor and not valid_approval and not denials:
+        _add_escalation(
+            DecisionReasonCode.ESCALATED_REQUIRES_HUMAN_APPROVAL,
+            f"Proposal amount {proposal.amount_minor} exceeds approval threshold {passport.approval_threshold_minor}",
+        )
 
     # 11. Final outcome determination
     if denials:

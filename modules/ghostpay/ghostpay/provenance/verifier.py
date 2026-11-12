@@ -115,33 +115,7 @@ def verify_evidence_digest(ev: EvidenceRecord) -> tuple[bool, str | None]:
     if hmac.compare_digest(envelope_hash, ev.content_hash):
         return True, None
 
-    # 3. Canonical fixture & artifact hashes (contracts/fixtures.py compatibility)
-    content = ev.content or {}
-    if ev.source_type == EvidenceSourceType.QUOTE:
-        if "quote_hash" in content and "amount_minor" in content:
-            h = compute_payload_hash({"quote_hash": content["quote_hash"], "amount_minor": content["amount_minor"]})
-            if hmac.compare_digest(h, ev.content_hash):
-                return True, None
-    elif ev.source_type == EvidenceSourceType.PAYPAL_CAPTURE:
-        if "capture_id" in content and "status" in content:
-            h = compute_payload_hash({"capture_id": content["capture_id"], "status": content["status"]})
-            if hmac.compare_digest(h, ev.content_hash):
-                return True, None
-    elif ev.source_type == EvidenceSourceType.CARRIER_TRACKING:
-        if "tracking_number" in content and "status" in content:
-            h = compute_payload_hash({"tracking_number": content["tracking_number"], "status": content["status"]})
-            if hmac.compare_digest(h, ev.content_hash):
-                return True, None
-    elif (
-        ev.source_type == EvidenceSourceType.CUSTOMER_MESSAGE
-        and "msg_id" in content
-        and "status" in content
-    ):
-        h = compute_payload_hash({"msg_id": content["msg_id"], "status": content["status"]})
-        if hmac.compare_digest(h, ev.content_hash):
-            return True, None
-
-    # 4. Full-context envelope hash (covering full ev.content + provenance metadata)
+    # 3. Full-context envelope hash (covering full ev.content + provenance metadata)
     full_context_hash = compute_payload_hash({
         "tenant_id": str(ev.tenant_id),
         "correlation_id": str(ev.correlation_id),

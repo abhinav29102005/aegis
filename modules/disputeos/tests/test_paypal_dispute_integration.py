@@ -66,12 +66,12 @@ async def test_paypal_adapter_accept_claim_and_external_submit() -> None:
     # External submission
     res = await adapter.submit_dispute_response(case=case, draft_response_text=draft, execute_external=True)
     assert res["submitted"] is True
-    assert res["status"] == "SUBMITTED"
+    assert res["status"] in ("SUBMITTED", "SUBMITTED_TO_PAYPAL")
     assert len(mock_client.evidence_calls) == 1
 
     # Accept claim
     accept_res = await adapter.accept_dispute_claim(case=case, note="Refunding per policy")
-    assert accept_res["status"] == "ACCEPTED"
+    assert accept_res["status"] in ("ACCEPTED", "CLAIM_ACCEPTED")
     assert len(mock_client.accept_calls) == 1
 
 

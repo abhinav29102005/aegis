@@ -93,19 +93,6 @@ def _is_causally_linked(src: EvidenceRecord, dst: EvidenceRecord) -> bool:
     return True
 
 
-def _is_causally_linked(src: EvidenceRecord, dst: EvidenceRecord) -> bool:
-    """Determine whether two evidence records have causal linkage."""
-    if src.payment_intent_id and dst.payment_intent_id:
-        return src.payment_intent_id == dst.payment_intent_id
-    if src.correlation_id and dst.correlation_id:
-        return src.correlation_id == dst.correlation_id
-    if src.source_ref and (src.source_ref in dst.source_ref or src.source_ref in str(dst.content)):
-        return True
-    if dst.source_ref and (dst.source_ref in src.source_ref or dst.source_ref in str(src.content)):
-        return True
-    return src.collected_at <= dst.collected_at
-
-
 def build_evidence_graph(case: DisputeCase, evidence: list[EvidenceRecord]) -> EvidenceGraph:
     """Build a tenant-verified, causally linked evidence provenance graph for a dispute case."""
     nodes: list[EvidenceNode] = []

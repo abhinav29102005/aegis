@@ -46,6 +46,7 @@ def make_test_trace(
     with_events: bool = True,
     tampered_event: bool = False,
     missing_sequence: bool = False,
+    with_proposal: bool = False,
 ) -> PaymentTrace:
     """Generate a valid or intentionally flawed PaymentTrace for forensic testing."""
     t_time = created_at or datetime.now(UTC)
@@ -254,7 +255,7 @@ def make_test_trace(
         recorded_passport=passport,
         recorded_merchant=merchant,
         payment_intent=intent,
-        proposal=proposal,
+        proposal=proposal if with_proposal else None,
         integrity_status=integrity_status,
         created_at=t_time,
     )
