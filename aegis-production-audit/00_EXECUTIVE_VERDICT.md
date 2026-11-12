@@ -1,24 +1,24 @@
 # AEGIS — Executive Production Readiness, Competitive & Maturity Verdict
 
-**Audit Revision:** Post-M1 + M2 + M3 Full Integration (`2026-11-12`)  
+**Audit Revision:** Post-RC1 Hardening & Dual-Computer Integration (`2026-11-12`)  
 **Repository:** `/home/bigboyaks/Projects/agentpay-nexus`  
-**Integrated Branch:** `integration/nexus` *(merging `work/m1-platform-security-infra` @ `d9ab7b8`, `work/m3-web-sdks-qa` @ `4b5d52f`, `work/m2-financial-forensics-ai` @ `3bbaeb6`, plus post-merge integration fixes & `pyproject.toml` `testpaths` sync over baseline `1be376e`)*  
-**Audit Method:** Direct runtime execution of `uv run ruff check .`, full PG16 `uv run pytest --cov` (`313 passed, 1 skipped`), live Docker Compose `make compose-smoke`, TS SDK `vitest`/`tsc` build, Next.js `lint`/`test`/`next build`, OpenAPI/SDK parity gate, `pip-audit`, and `npm audit --omit=dev`.
+**Integrated Branch:** `integration/nexus` *(merging `release/rc1-c1-security-e2e-deploy` @ `98cf8eb` and `release/rc1-c2-payments-ops-load` @ `4c02caa` at `3211220`, plus `docs/release/RC1_FINAL_SIGN_OFF.md` @ `f8768bd`)*  
+**Audit Method:** Direct runtime execution of `uv run ruff check .`, full PG16 `uv run pytest -q` (`1 failed, 343 passed, 3 skipped`), real Chromium Playwright E2E (`5/5` passed), full-stack Docker Compose `make compose-smoke` (including `web`), failure-injection Compose drill, synthetic async load baseline (`tests/load/load_benchmark.py`), TS SDK `vitest`/`tsc`, Next.js `lint`/`test`/`next build`, `pip-audit`, and `npm audit --omit=dev`.
 
 ---
 
 ## Executive Snapshot
 
-| Dimension | Baseline (`1be376e`) | M1+M3 Sync (`498043e`) | Current Integrated (`M1+M2+M3`) | Quantitative / Operational Signal |
+| Dimension | Baseline (`1be376e`) | M1+M2+M3 (`ebe4069`) | Current RC1 (`f8768bd`) | Quantitative / Operational Signal |
 | :--- | :--- | :--- | :--- | :--- |
-| **Overall Maturity Score** | `43.5 / 100` | `72.5 / 100` | **`87.0 / 100` (`87.0%`)** | 12-category weighted rubric (`14_WEIGHTED_MATURITY_SCORECARD.md`); remaining `-13.0` pts withheld for unverified live external networks, Playwright live Chromium, & CVE/external audits |
-| **Implementation Completeness** | ~58% scaffold / ~35% verified | ~80% platform+UI+SDKs | **~95% codebase complete** | `88` OpenAPI paths (`99` ops), `37` ORM tables (`3` migrations), `19` Next.js pages + `6` BFF routes, `98.0%` Python/TS SDK parity (`97/99`), multi-rail/MCP/LLM adapters |
-| **Local Development Readiness** | `72%` | `88%` | **READY (`98%`)** | `0` Ruff errors repo-wide; `313 passed, 1 skipped` PG16 `pytest --cov` (`90%` across `20,241` stmts); `38` TS SDK tests & `10` Web Node tests PASS; live `make compose-smoke` PASS |
-| **Internal Staging Readiness** | BLOCKED (`45%`) | PARTIAL (`72%`) | **READY WITH MOCKS (`88%`)** | `approved=False` fixed, DisputeOS `provide-evidence` + webhooks wired, ISO-4217 currencies fixed, GhostPay DB-backed & parity-tested; **live PayPal Sandbox + Chromium E2E `NOT VERIFIED`** |
-| **Public Beta Readiness** | NOT READY (`28%`) | NOT READY (`55%`) | **CONDITIONAL (`72%`)** | Codebase passes local PG16 + Compose gates; **blocked before real sandbox beta** on live PayPal Sandbox roundtrip, live Chromium Playwright run, & CVE patching |
-| **Limited Commercial Launch** | NOT READY (`18%`) | NOT READY (`38%`) | **NOT READY (`58%`)** | Billing, GDPR erasure, legal docs, `/status`, `/onboarding`, & real LLM clients exist in code; **blocked on live Stripe Billing, live LLM evals, `pip-audit`/`npm audit` fixes, & legal sign-off** |
-| **Enterprise / Regulated Payments** | NOT READY (`10%`/`4%`) | NOT READY (`28%`/`4%`) | **NOT READY (`45%`/`4%`)** | Needs live Linux VPS deploy, SOC 2 Type II, external pen test, & licensed PSP/BaaS partners for regulated money transmission |
-| **Safe for Real Customer Money?** | **NO** | **NO** | **NOT UNTIL LIVE GATES PASS** | Deterministic financial bugs (`GAP-001`, `GAP-005`, `GAP-011`, `GAP-012`) are fixed & unit/PG16 tested, **but live PayPal Sandbox (`test_live_sandbox_optional.py`) is `NOT VERIFIED`** |
+| **Overall Maturity Score** | `43.5 / 100` | `87.0 / 100` | **`90.0 / 100` (`90.0%`)** | +3.0 pts from 0 prod CVEs, 5/5 live Chromium E2E (+5 real bug fixes), Compose `web` smoke, failure injection, & load baseline; `-10.0` pts withheld for `tenants FOR UPDATE` burst deadlock, `BLOCKED` PayPal Sandbox, & unverified VPS/Stripe/LLM/SOC 2 |
+| **Implementation Completeness** | ~58% scaffold | ~95% complete | **~97% codebase complete** | `88` OpenAPI paths (`99` ops), `37` ORM tables (`3` migrations), `24` Next.js static/dynamic routes, `98.0%` Python/TS SDK parity (`97/99`), `docs/release/RC1_*.md` suite |
+| **Local Development Readiness** | `72%` | `98%` | **READY (`99%`)** | `0` Ruff errors; `0` `pip-audit` & `npm audit --omit=dev` CVEs; `5/5` real Chromium Playwright E2E PASS; `38` TS SDK + `3` Web Node tests PASS; full-stack `make compose-smoke` PASS |
+| **Internal Staging Readiness** | BLOCKED (`45%`) | `88%` (Mocks) | **READY WITH MOCKS (`92%`)** | Live Chromium E2E, failure-injection `/ready` `503->200`, worker restart recovery, & `deploy/linux-staging/` `ports: !override` verified; **live PayPal Sandbox & remote VPS `NOT VERIFIED`** |
+| **Public Beta Readiness** | NOT READY (`28%`) | CONDITIONAL (`72%`) | **NO-GO (`76%`, 2 Hard Blockers)** | Blocked on: (1) `tenants FOR UPDATE` `DeadlockDetected` under same-tenant proposal bursts (`98%` load error / `test_parallel_payment_proposal_idempotency` fail), (2) live PayPal Sandbox (`PAYPAL_*` unset) |
+| **Limited Commercial Launch** | NOT READY (`18%`) | NOT READY (`58%`) | **NOT READY (`62%`)** | Compliance/erasure tests pass (`13/13`); blocked on above beta blockers + live Stripe Billing, live LLM evals, remote Linux VPS TLS, & external legal sign-off |
+| **Enterprise / Regulated Payments** | NOT READY (`10%`/`4%`) | NOT READY (`45%`/`4%`) | **NOT READY (`48%`/`4%`)** | Needs remote Linux VPS deploy, SOC 2 Type II, external pen test, & licensed PSP/BaaS partners for regulated money transmission |
+| **Safe for Real Customer Money?** | **NO** | **NO** | **NO (`NO-GO FOR EXTERNAL BETA`)** | See [`docs/release/RC1_FINAL_SIGN_OFF.md`](../docs/release/RC1_FINAL_SIGN_OFF.md): `DeadlockDetected` under concurrent proposals & `BLOCKED` PayPal Sandbox must be resolved first |
 
 ---
 

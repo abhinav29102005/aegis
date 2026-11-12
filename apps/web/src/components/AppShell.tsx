@@ -360,7 +360,7 @@ export function AppShell({
                   id="modal-org-slug"
                   type="text"
                   required
-                  pattern="^[a-z0-9-]+$"
+                  pattern={"^[a-z0-9\\-]+$"}
                   value={newOrgSlug}
                   onChange={(e) => setNewOrgSlug(e.target.value)}
                   placeholder="acme-fintech"

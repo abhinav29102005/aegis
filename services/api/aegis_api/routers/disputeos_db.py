@@ -359,6 +359,7 @@ def attach_evidence(
             actor_id=auth.actor_id,
             actor_type=auth.actor_type,
         )
+        session.commit()
         return AttachEvidenceResponse(case=updated_case, evidence=record)
     except Exception as exc:
         _raise_db_http_error(exc)
@@ -431,6 +432,7 @@ async def upload_evidence_artifact(
             byte_size=meta.byte_size,
             sha256=meta.sha256,
         )
+        session.commit()
         return {
             "artifact_id": str(art_row.id),
             "evidence_record_id": str(record.id),
@@ -550,6 +552,7 @@ def analyze_case(
         updated_case = svc.record_analysis(auth.tenant_id, case_id, analysis, actor_id=auth.actor_id)
         evidence_graph = build_evidence_graph(updated_case, evidence)
         report = generate_case_report(updated_case, analysis, evidence)
+        session.commit()
         return AnalyzeCaseResponse(
             case=updated_case,
             analysis=analysis,
@@ -590,12 +593,14 @@ def approve_case(
     _, _, svc = _build_services(session)
     approver = auth.email or auth.actor_id or payload.approver_id
     try:
-        return svc.approve_for_submission(
+        approved = svc.approve_for_submission(
             tenant_id=auth.tenant_id,
             case_id=case_id,
             approver_id=approver,
             draft_response_text=payload.draft_response_text,
         )
+        session.commit()
+        return approved
     except Exception as exc:
         _raise_db_http_error(exc)
         raise
@@ -675,7 +680,7 @@ def resolve_case(
         else (payload.reason if payload and payload.reason else "RESOLVED")
     )
     try:
-        return svc.mark_resolved(
+        resolved = svc.mark_resolved(
             tenant_id=auth.tenant_id,
             case_id=case_id,
             resolution_outcome=outcome,
@@ -683,6 +688,8 @@ def resolve_case(
             actor_type=auth.actor_type,
             notes=payload.notes if payload else None,
         )
+        session.commit()
+        return resolved
     except Exception as exc:
         _raise_db_http_error(exc)
         raise

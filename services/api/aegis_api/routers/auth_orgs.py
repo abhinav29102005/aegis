@@ -839,6 +839,7 @@ def create_organization(
         resource_id=str(org.id),
         details={"name": org.name, "slug": org.slug},
     )
+    session.commit()
     return OrganizationSummary(id=org.id, name=org.name, slug=org.slug, role=Role.OWNER.value, created_at=org.created_at)
 
 
