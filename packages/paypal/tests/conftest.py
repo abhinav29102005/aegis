@@ -26,3 +26,4 @@ if sys.platform == "win32":
         pe.BaseProactorEventLoop._loop_self_reading = lambda self, f=None: None
     except Exception:  # noqa: BLE001, S110
         pass
+

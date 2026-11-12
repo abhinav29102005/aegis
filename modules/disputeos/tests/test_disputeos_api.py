@@ -66,7 +66,7 @@ class DisputeOSTestClient:
             return DEFAULT_TENANT_UUID
         try:
             return UUID(str(raw).strip())
-        except (ValueError, TypeError):
+        except Exception:
             raise HTTPException(status_code=400, detail=f"Invalid X-Tenant-Id header: {raw}")
 
     def get(self, path: str, headers: dict[str, str] | None = None) -> _TestResponse:
@@ -102,7 +102,7 @@ class DisputeOSTestClient:
             return _TestResponse(404, {"detail": "Not found"})
         except HTTPException as exc:
             return _TestResponse(exc.status_code, {"detail": exc.detail})
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return _TestResponse(500, {"detail": str(exc)})
 
     def post(
@@ -174,7 +174,7 @@ class DisputeOSTestClient:
             return _TestResponse(404, {"detail": "Not found"})
         except HTTPException as exc:
             return _TestResponse(exc.status_code, {"detail": exc.detail})
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return _TestResponse(500, {"detail": str(exc)})
 
 

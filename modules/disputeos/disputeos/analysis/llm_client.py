@@ -6,6 +6,7 @@ import re
 import time
 from enum import StrEnum
 from typing import Any
+from uuid import UUID
 
 import httpx
 from contracts import DisputeCase, EvidenceRecord
@@ -162,7 +163,7 @@ class DisputeOSLLMClient:
             # Log LLM invocation if repository supports it
             if repo and hasattr(repo, "log_llm_invocation"):
                 try:
-                    log_fn = repo.log_llm_invocation
+                    log_fn = getattr(repo, "log_llm_invocation")
                     log_res = log_fn(
                         tenant_id=case.tenant_id,
                         provider=res.provider,
@@ -174,11 +175,11 @@ class DisputeOSLLMClient:
                     )
                     if hasattr(log_res, "__await__"):
                         await log_res
-                except Exception:  # noqa: BLE001, S110
+                except Exception:
                     pass
 
             return res
-        except Exception:  # noqa: BLE001
+        except Exception:
             # Fall back safely on any API, timeout, or parsing error
             return self._deterministic_fallback_review(case, evidence, missing, contradictions)
 
@@ -319,3 +320,4 @@ class DisputeOSLLMClient:
                 cost_estimate_minor=1,
                 generated_with_llm=True,
             )
+

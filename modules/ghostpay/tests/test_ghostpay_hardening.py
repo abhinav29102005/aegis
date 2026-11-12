@@ -81,13 +81,11 @@ class DirectMockClient:
         from security.settings import get_settings
         st = get_settings()
         env_val = getattr(st, "env", getattr(st, "app_env", "development"))
-        if (
-            env_val.upper() in ("PRODUCTION", "PROD", "STAGING")
-            and (self.app is None or not getattr(self.app, "middleware_stack", None))
-            and hdrs.get("X-Tenant-Id")
-            and not getattr(self, "_has_auth_mw", False)
-        ):
-            return DirectResponse(401, {"detail": "Raw tenant header rejected in production"})
+        if env_val.upper() in ("PRODUCTION", "PROD", "STAGING"):
+            if self.app is None or not getattr(self.app, "middleware_stack", None):
+                # Raw tenant header without auth middleware rejected
+                if hdrs.get("X-Tenant-Id") and not getattr(self, "_has_auth_mw", False):
+                    return DirectResponse(401, {"detail": "Raw tenant header rejected in production"})
 
         if "simulate" in path or "counterfactual" in path:
             from ghostpay.api.router import SimulateRequest, _raise_http_for_domain_error

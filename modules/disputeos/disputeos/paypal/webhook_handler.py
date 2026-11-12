@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
-from contracts import (
-    DisputeCase,
-    DisputeSourceType,
-    DisputeStatus,
-)
+from contracts import DisputeCase, DisputeSourceType, DisputeStatus, FinancialEvent, FinancialEventType
 from paypal import paypal_value_to_minor
 
 
@@ -64,9 +60,9 @@ async def handle_paypal_dispute_webhook(
         response_due_by = None
         if response_due_str:
             try:
-                response_due_by = datetime.fromisoformat(response_due_str)
-            except (ValueError, TypeError):
-                response_due_by = None
+                response_due_by = datetime.fromisoformat(response_due_str.replace("Z", "+00:00"))
+            except Exception:
+                pass
 
         new_case = DisputeCase(
             id=uuid4(),
@@ -100,9 +96,9 @@ async def handle_paypal_dispute_webhook(
         response_due_by = None
         if response_due_str:
             try:
-                response_due_by = datetime.fromisoformat(response_due_str)
-            except (ValueError, TypeError):
-                response_due_by = None
+                response_due_by = datetime.fromisoformat(response_due_str.replace("Z", "+00:00"))
+            except Exception:
+                pass
 
         updates: dict[str, Any] = {}
         if hasattr(case, "external_status") and external_status:
@@ -129,7 +125,7 @@ async def handle_paypal_dispute_webhook(
         outcome_code = outcome_info.get("outcome_code", "RESOLVED")
         updates = {
             "status": DisputeStatus.RESOLVED,
-            "resolved_at": datetime.now(UTC),
+            "resolved_at": datetime.now(timezone.utc),
         }
         if hasattr(case, "resolution_outcome"):
             updates["resolution_outcome"] = outcome_code
