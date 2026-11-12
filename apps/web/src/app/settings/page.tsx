@@ -114,13 +114,32 @@ export default function SettingsPage() {
       });
       setMembers(m || []);
 
-      // Attempt to fetch billing information if endpoint exists
+      // Fetch billing subscription & usage from backend
       try {
-        const billingData = await apiRequest<BillingUsageInfo>("/v1/billing/usage", {
+        const subData = await apiRequest<{
+          plan?: string;
+          status?: string;
+          monthly_tx_quota?: number | null;
+          current_period_tx_count?: number;
+        }>("/v1/billing/subscription", {
           token: session.access_token,
           orgId: session.active_tenant_id,
         });
-        if (billingData) setBilling(billingData);
+        if (subData?.plan) {
+          const planUpper = subData.plan.toUpperCase();
+          const tier =
+            planUpper === "ENTERPRISE"
+              ? "enterprise"
+              : planUpper === "PRO"
+                ? "growth"
+                : "free";
+          setBilling((prev) => ({
+            ...prev,
+            plan_name: `${planUpper} Tier`,
+            plan_tier: tier,
+            status: subData.status ?? prev.status,
+          }));
+        }
       } catch {
         // Fallback default state
       }
@@ -802,7 +821,7 @@ export default function SettingsPage() {
                   id="settings-modal-org-slug"
                   type="text"
                   required
-                  pattern="^[a-z0-9-]+$"
+                  pattern={"^[a-z0-9\\-]+$"}
                   value={newOrgSlug}
                   onChange={(e) => setNewOrgSlug(e.target.value)}
                   className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-surface px-3 py-2 text-xs text-white"

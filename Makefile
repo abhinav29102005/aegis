@@ -53,7 +53,7 @@ down:
 	docker compose down
 
 compose-smoke:
-	docker compose up -d --build postgres redis migrate api worker
+	docker compose up -d --build postgres redis migrate api worker web
 	@for i in $$(seq 1 30); do \
 		if curl -sf "http://127.0.0.1:$${API_PORT:-8000}/ready"; then \
 			echo ""; \
@@ -67,4 +67,23 @@ compose-smoke:
 		sleep 2; \
 	done
 	docker compose exec -T worker python -m aegis_worker.main --healthcheck
+	@for i in $$(seq 1 30); do \
+		if curl -sf "http://127.0.0.1:$${WEB_PORT:-3005}/login" >/dev/null; then \
+			break; \
+		fi; \
+		if [ "$$i" -eq 30 ]; then \
+			docker compose logs web api migrate postgres; \
+			docker compose down -v --remove-orphans; \
+			exit 1; \
+		fi; \
+		sleep 2; \
+	done
+	@AUTH_CODE=$$(curl -s -o /tmp/aegis-auth-me.json -w "%{http_code}" "http://127.0.0.1:$${WEB_PORT:-3005}/api/auth/me"); \
+	if [ "$$AUTH_CODE" != "401" ] || ! grep -q "UNAUTHENTICATED" /tmp/aegis-auth-me.json; then \
+		echo "Unexpected /api/auth/me response: HTTP $$AUTH_CODE $$(cat /tmp/aegis-auth-me.json)"; \
+		docker compose logs web api; \
+		docker compose down -v --remove-orphans; \
+		exit 1; \
+	fi
+	@rm -f /tmp/aegis-auth-me.json
 	docker compose down -v --remove-orphans

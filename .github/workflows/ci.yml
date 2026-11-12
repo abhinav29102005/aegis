@@ -46,7 +46,6 @@ jobs:
       - name: Lint Python workspace with Ruff
         run: uv run ruff check packages modules services
       - name: Audit Python dependencies with pip-audit
-        continue-on-error: true
         run: |
           uv export --frozen --no-emit-workspace --no-hashes -o /tmp/aegis-reqs.txt
           uv run pip-audit -r /tmp/aegis-reqs.txt --desc
@@ -70,7 +69,7 @@ jobs:
       - name: Audit, typecheck & test @aegis-platform/sdk
         working-directory: packages/sdk-typescript
         run: |
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund
           npm audit --omit=dev --audit-level=high
           npm run typecheck
           npm test
@@ -88,7 +87,7 @@ jobs:
           NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
           NEXT_PUBLIC_APP_NAME: AEGIS
         run: |
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund
           npm audit --omit=dev --audit-level=critical
           npm run typecheck
           npm run lint
@@ -111,10 +110,11 @@ jobs:
         uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build API and Worker container images for vulnerability scanning
+      - name: Build API, Worker, and Web container images for vulnerability scanning
         run: |
           docker build -t aegis-api:ci -f services/api/Dockerfile .
           docker build -t aegis-worker:ci -f services/worker/Dockerfile .
+          docker build -t aegis-web:ci -f apps/web/Dockerfile .
       - name: Scan API image with Trivy
         uses: aquasecurity/trivy-action@6c175e9c4083a92bbca2f9724c8a5e33bc2d97a5 # v0.30.0
         with:
@@ -131,14 +131,22 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
           severity: CRITICAL,HIGH
+      - name: Scan Web image with Trivy
+        uses: aquasecurity/trivy-action@6c175e9c4083a92bbca2f9724c8a5e33bc2d97a5 # v0.30.0
+        with:
+          image-ref: aegis-web:ci
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
 
   compose-smoke:
     needs: [backend]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - name: Boot Postgres, Redis, migrate, API, and Worker via Docker Compose
-        run: docker compose up -d --build postgres redis migrate api worker
+      - name: Boot Postgres, Redis, migrate, API, Worker, and Web via Docker Compose
+        run: docker compose up -d --build postgres redis migrate api worker web
       - name: Verify API readiness endpoint
         run: |
           for i in $(seq 1 30); do
@@ -154,6 +162,24 @@ jobs:
         run: |
           docker compose exec -T worker python -m aegis_worker.main --healthcheck
           docker compose ps
+      - name: Verify Web /login and unauthenticated /api/auth/me
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:3005/login >/dev/null; then
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              docker compose logs web api migrate postgres
+              exit 1
+            fi
+            sleep 2
+          done
+          AUTH_CODE=$(curl -s -o /tmp/aegis-auth-me.json -w "%{http_code}" http://127.0.0.1:3005/api/auth/me)
+          if [ "$AUTH_CODE" != "401" ] || ! grep -q "UNAUTHENTICATED" /tmp/aegis-auth-me.json; then
+            echo "Unexpected /api/auth/me response: HTTP $AUTH_CODE $(cat /tmp/aegis-auth-me.json)"
+            docker compose logs web api
+            exit 1
+          fi
       - name: Tear down Compose smoke stack
         if: always()
         run: docker compose down -v --remove-orphans

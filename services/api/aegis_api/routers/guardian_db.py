@@ -590,6 +590,7 @@ def approve_proposal(
             approved=request.approved,
             comment=request.comment,
         )
+        session.commit()
         return ApprovalActionResponse(payment_intent=intent, approval=approval)
     except GuardianError as exc:
         raise _raise_http_for_guardian_error(exc) from exc

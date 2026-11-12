@@ -3,6 +3,8 @@ services:
     image: postgres:16-alpine
     container_name: aegis-postgres
     restart: unless-stopped
+    security_opt:
+      - "no-new-privileges:true"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-aegis}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aegis_dev_password}
@@ -22,6 +24,8 @@ services:
     image: redis:7-alpine
     container_name: aegis-redis
     restart: unless-stopped
+    security_opt:
+      - "no-new-privileges:true"
     command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
     ports:
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
@@ -38,6 +42,10 @@ services:
       context: .
       dockerfile: services/api/Dockerfile
     container_name: aegis-migrate
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - "ALL"
     depends_on:
       postgres:
         condition: service_healthy
@@ -51,6 +59,10 @@ services:
       context: .
       dockerfile: services/api/Dockerfile
     container_name: aegis-api
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - "ALL"
     depends_on:
       postgres:
         condition: service_healthy
@@ -115,6 +127,10 @@ services:
       context: .
       dockerfile: services/worker/Dockerfile
     container_name: aegis-worker
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - "ALL"
     depends_on:
       postgres:
         condition: service_healthy
@@ -173,6 +189,10 @@ services:
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
         NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-AEGIS}
     container_name: aegis-web
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - "ALL"
     depends_on:
       api:
         condition: service_healthy

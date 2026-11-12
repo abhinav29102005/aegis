@@ -747,11 +747,14 @@ export default function DisputeCaseDetailPage() {
                         className="mt-1 w-full rounded border border-aegis-border bg-aegis-panel px-2.5 py-1.5 text-white"
                       >
                         <option value="DELIVERY_RECEIPT">DELIVERY_RECEIPT</option>
-                        <option value="MERCHANT_COMMUNICATION">MERCHANT_COMMUNICATION</option>
-                        <option value="CUSTOMER_SUPPORT_CHAT">CUSTOMER_SUPPORT_CHAT</option>
-                        <option value="TERMS_OF_SERVICE">TERMS_OF_SERVICE</option>
-                        <option value="ACCESS_LOG">ACCESS_LOG</option>
-                        <option value="REFUND_POLICY">REFUND_POLICY</option>
+                        <option value="CARRIER_TRACKING">CARRIER_TRACKING</option>
+                        <option value="CUSTOMER_MESSAGE">CUSTOMER_MESSAGE</option>
+                        <option value="PAYPAL_ORDER">PAYPAL_ORDER</option>
+                        <option value="PAYPAL_CAPTURE">PAYPAL_CAPTURE</option>
+                        <option value="PAYPAL_WEBHOOK">PAYPAL_WEBHOOK</option>
+                        <option value="POLICY_DECISION">POLICY_DECISION</option>
+                        <option value="HUMAN_APPROVAL">HUMAN_APPROVAL</option>
+                        <option value="SYNTHETIC_FIXTURE">SYNTHETIC_FIXTURE</option>
                       </select>
                     </div>
                   </div>
