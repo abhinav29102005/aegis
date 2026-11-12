@@ -47,7 +47,7 @@ def _init_sqlite_wal(db_path: Path) -> None:
 @pytest.fixture()
 def concurrency_env(tmp_path: Path):
     db_path = tmp_path / "concurrency.db"
-    env_db_url = os.getenv("DATABASE_URL", "").strip()
+    env_db_url = (os.getenv("DATABASE_URL") or os.getenv("AEGIS_TEST_POSTGRES_URL") or "").strip()
     if env_db_url.startswith("postgresql"):
         db_url = env_db_url
     else:

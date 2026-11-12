@@ -47,7 +47,7 @@ from database import (
     init_db,
 )
 from database.repository import InsufficientBudgetError
-from guardian.domain.exceptions import DuplicateIntentError
+from guardian.domain.exceptions import DuplicateIntentError, PolicyDeniedError
 from guardian.domain.service import GuardianService
 from paypal import PayPalSandboxClient
 from security import verify_financial_event_chain
@@ -57,8 +57,8 @@ from sqlalchemy.exc import OperationalError
 
 @pytest.fixture()
 def stress_session_factory(tmp_path: Path):
-    """Provide a high-pool PG16 session factory when DATABASE_URL is set, else SQLite."""
-    db_url = os.getenv("DATABASE_URL", "").strip()
+    """Provide a high-pool PG16 session factory when DATABASE_URL or AEGIS_TEST_POSTGRES_URL is set, else SQLite."""
+    db_url = (os.getenv("DATABASE_URL") or os.getenv("AEGIS_TEST_POSTGRES_URL") or "").strip()
     if db_url.startswith("postgresql"):
         engine = create_db_engine(db_url)
     else:
@@ -207,7 +207,7 @@ def _submit_in_thread(factory, ids: dict[str, UUID], idemp_key: str, amount_mino
             return ("ok", intent.id, intent.correlation_id, decision.outcome.value)
         except Exception as exc:  # noqa: BLE001
             session.rollback()
-            return ("err", type(exc).__name__, str(exc), None)
+            return ("err", type(exc).__name__, str(exc), getattr(exc, "reason_codes", None))
 
 
 @pytest.mark.parametrize("concurrency", [2, 10, 50, 100])
@@ -355,13 +355,22 @@ def test_concurrent_budget_exhaustion(stress_session_factory) -> None:
     with concurrent.futures.ThreadPoolExecutor(max_workers=15) as pool:
         results = list(pool.map(lambda k: _submit_in_thread(factory, ids, k, 10_000), keys))
 
+    budget_policy_codes = {"DENIED_EXCEEDS_PASSPORT_BUDGET", "DENIED_EXCEEDS_DAILY_LIMIT"}
     ok = [r for r in results if r[0] == "ok"]
-    insufficient = [r for r in results if r[0] == "err" and r[1] == InsufficientBudgetError.__name__]
-    other = [r for r in results if r not in ok and r not in insufficient]
+    budget_denied = [
+        r
+        for r in results
+        if r[0] == "err"
+        and (
+            r[1] == InsufficientBudgetError.__name__
+            or (r[1] == PolicyDeniedError.__name__ and set(r[3] or ()) & budget_policy_codes)
+        )
+    ]
+    other = [r for r in results if r not in ok and r not in budget_denied]
 
     assert other == [], f"Unexpected errors: {other}"
     assert len(ok) == 3
-    assert len(insufficient) == 12
+    assert len(budget_denied) == 12
 
     with factory() as session:
         passport = session.get(SpendingPassportRow, ids["passport_id"])

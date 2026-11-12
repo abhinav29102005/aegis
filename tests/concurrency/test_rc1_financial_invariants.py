@@ -57,8 +57,8 @@ from sqlalchemy import select
 
 @pytest.fixture()
 def pg_or_sqlite_session_factory(tmp_path: Path):
-    """Provide a SQLAlchemy session factory backed by DATABASE_URL (PG16) or SQLite."""
-    env_url = os.getenv("DATABASE_URL", "").strip()
+    """Provide a SQLAlchemy session factory backed by DATABASE_URL / AEGIS_TEST_POSTGRES_URL (PG16) or SQLite."""
+    env_url = (os.getenv("DATABASE_URL") or os.getenv("AEGIS_TEST_POSTGRES_URL") or "").strip()
     if env_url.startswith("postgresql"):
         db_url = env_url
     else:

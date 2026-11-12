@@ -442,3 +442,37 @@ def test_postgres_financial_event_immutability_trigger_and_concurrent_seq() -> N
         assert ok and errs == []
 
 
+def test_sqlite_nested_savepoint_rolled_back_by_outer_rollback(tmp_path: Path) -> None:
+    """Verify SAVEPOINT commit inside an outer SQLite transaction still rolls back cleanly."""
+    from database import AgentRow
+
+    db_file = tmp_path / "savepoint_rollback.db"
+    engine = create_db_engine(f"sqlite+pysqlite:///{db_file}")
+    init_db(engine)
+    session_factory = create_session_factory(engine)
+    fx = _seed_base(session_factory)
+    agent_id = uuid4()
+
+    try:
+        with session_factory() as session:
+            repo = LedgerRepository(session)
+            with session.begin_nested():
+                repo.create_agent(
+                    fx["agent"].model_copy(
+                        update={
+                            "id": agent_id,
+                            "name": "ephemeral-agent",
+                            "public_fingerprint": f"sp-{agent_id.hex[:12]}",
+                        }
+                    )
+                )
+            # Inner SAVEPOINT was released above, but outer transaction MUST roll it back.
+            session.rollback()
+
+        with session_factory() as session:
+            assert session.get(AgentRow, agent_id) is None
+    finally:
+        engine.dispose()
+
+
+

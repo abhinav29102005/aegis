@@ -1,0 +1,70 @@
+{
+  "schema_version": "1.0",
+  "branch": "fix/rc1-guardian-deadlock",
+  "files": {
+    "packages/database/database/session.py": {
+      "sha256": "f553672f5b1bbd15f05416933660c79a655e7d700cb38477858a3c55d170bc37",
+      "bytes": 2423
+    },
+    "packages/database/tests/test_database.py": {
+      "sha256": "5cda5184c99ac9406798914ec6f4a05ad006dd0992f5911699b425eb2de30a88",
+      "bytes": 18016
+    },
+    "tests/concurrency/test_concurrency_harness.py": {
+      "sha256": "8980a8f280a0356cce40c86790938ec56c84e8961e6f5195d512da9402d7b509",
+      "bytes": 16377
+    },
+    "tests/concurrency/test_rc1_deadlock_stress.py": {
+      "sha256": "eb2acfbb674a09a10e5ed1a3dfc295a66ab9617d5083fb0540040a2957f981d0",
+      "bytes": 18183
+    },
+    "tests/concurrency/test_rc1_financial_invariants.py": {
+      "sha256": "436816a2e318c86e7ee0afe01638e849e674e69cf6ec5dff7ee096d50a6a6a0a",
+      "bytes": 22351
+    },
+    "docs/release/RC1_REMEDIATION_EVIDENCE_AUDIT.md": {
+      "sha256": "cc8e6ba54584b71cdcd2c0332e00f41ee7bb1042c493084773f513cae0001017",
+      "bytes": 3433
+    },
+    "docs/release/POSTGRES16_ENVIRONMENT_REPORT.md": {
+      "sha256": "8d319d0ad7bbea18c01e03d48afe08e771fb3fe499c296d188d27a637c902890",
+      "bytes": 2819
+    },
+    "docs/release/ADVISORY_LOCK_CORRECTNESS.md": {
+      "sha256": "e51ef9adac7554df745a978f9c466f46a720766e6ac23c1df1ea5da2ce70ac0a",
+      "bytes": 2829
+    },
+    "docs/release/GUARDIAN_TRANSACTION_ATOMICITY.md": {
+      "sha256": "af2508ed290e21f0f5528dd119351cb8ce03c656f6417986ec1ff8cfe839d4c4",
+      "bytes": 3044
+    },
+    "docs/release/POSTGRES16_CONCURRENCY_STRESS.md": {
+      "sha256": "fb19f26c8940228f35d24d978673b4a8cd630f0cce75a5620f4d941a62934d1a",
+      "bytes": 2618
+    },
+    "docs/release/SQLITE_SAVEPOINT_ATOMICITY.md": {
+      "sha256": "4b4019e85177804254aa604e8ac4effa1ddc78bec003435ffce7c138b845168c",
+      "bytes": 2794
+    },
+    "docs/release/SQLITE_FINANCIAL_CONCURRENCY_POLICY.md": {
+      "sha256": "9160d5559bfb22836c89299286949bb9c8d2bf75c8f0607472db4c33986a75ca",
+      "bytes": 2553
+    },
+    "docs/release/BUDGET_EXHAUSTION_SEMANTICS.md": {
+      "sha256": "b0147876e43447af73117fb53e4291da0a80e8f7eac61243e08ca4ae0daf6055",
+      "bytes": 3253
+    },
+    "docs/release/RC1_FULL_REGRESSION_REPORT.md": {
+      "sha256": "fc1a92a299d86f778958fd06bea18965b9d6ad9c230cf3ae3a0dfa1e8d4c52bd",
+      "bytes": 2666
+    },
+    "docs/release/RC1_FINAL_DEADLOCK_SIGNOFF.md": {
+      "sha256": "fa6eac2d53412b2c0632cb790284c2046333e50bf7bf9ad4c737bdfb0119d78e",
+      "bytes": 3136
+    },
+    "docs/release/experiment_manifest.json": {
+      "sha256": "ba6ae1bfaf42ef48c69a3e7da0b3a2391a8af946d07d6f26aac6ecd8f68f7d07",
+      "bytes": 2345
+    }
+  }
+}

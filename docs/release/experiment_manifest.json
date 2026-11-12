@@ -1,0 +1,72 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-11-12T14:32:00Z",
+  "branch": "fix/rc1-guardian-deadlock",
+  "audited_baseline_head": "5c95e76",
+  "remediation_commit_audited": "377e52e",
+  "release_gate_verdict": "BLOCKED",
+  "blocking_reason": "PostgreSQL 16 unavailable on audit host; live PG16 deadlock stress, trigger, and migration verification are NOT VERIFIED.",
+  "environment": {
+    "os": "windows",
+    "postgresql_16_available": false,
+    "sqlite_version": "3.45.3",
+    "sqlalchemy_version": "2.1.8",
+    "pydantic_version": "2.14.3",
+    "psycopg_version": "3.3.8",
+    "fastapi_version": "0.162.4"
+  },
+  "modified_files": [
+    "packages/database/database/session.py",
+    "packages/database/tests/test_database.py",
+    "tests/concurrency/test_concurrency_harness.py",
+    "tests/concurrency/test_rc1_deadlock_stress.py",
+    "tests/concurrency/test_rc1_financial_invariants.py"
+  ],
+  "verification_runs_post_final_edit": {
+    "ruff": {
+      "command": "uv run ruff check .",
+      "exit_code": 0
+    },
+    "packages": {
+      "command": "uv run pytest -q packages/contracts/tests packages/security/tests packages/database/tests packages/paypal/tests packages/sdk-python/tests",
+      "passed": 88,
+      "failed": 0,
+      "skipped": 2
+    },
+    "modules": {
+      "command": "uv run pytest -q modules/agentpay-guardian/tests modules/ghostpay/tests modules/disputeos/tests",
+      "passed": 177,
+      "failed": 0,
+      "skipped": 0
+    },
+    "services_api": {
+      "command": "uv run pytest -v services/api/tests",
+      "passed": 24,
+      "failed": 0,
+      "skipped": 1
+    },
+    "services_worker": {
+      "command": "uv run pytest -v services/worker/tests/test_worker.py",
+      "passed": 6,
+      "failed": 1,
+      "skipped": 0,
+      "failed_tests": [
+        "services/worker/tests/test_worker.py::test_worker_healthcheck_cli_and_loop_resilience"
+      ]
+    },
+    "concurrency_sqlite_fallback": {
+      "command": "uv run pytest -v tests/concurrency/",
+      "backend": "sqlite+pysqlite",
+      "passed": 18,
+      "failed": 0,
+      "skipped": 0,
+      "postgresql_16_verified": false
+    },
+    "integration_adversarial_e2e_load": {
+      "command": "uv run pytest -q tests/adversarial tests/e2e tests/integration tests/load",
+      "passed": 41,
+      "failed": 0,
+      "skipped": 0
+    }
+  }
+}

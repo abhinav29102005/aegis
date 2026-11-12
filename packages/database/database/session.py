@@ -25,11 +25,21 @@ def create_db_engine(database_url: str, *, echo: bool = False) -> Engine:
     if is_sqlite:
         @event.listens_for(engine, "connect")
         def _set_sqlite_pragma(dbapi_conn, _connection_record):
+            # Disable pysqlite implicit BEGIN so SQLAlchemy controls transaction
+            # boundaries explicitly and SAVEPOINT/ROLLBACK remain atomic.
+            dbapi_conn.isolation_level = None
             cursor = dbapi_conn.cursor()
             cursor.execute("PRAGMA foreign_keys=ON")
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.execute("PRAGMA busy_timeout=5000")
             cursor.close()
+
+        @event.listens_for(engine, "begin")
+        def _do_sqlite_begin(conn):
+            # Acquire SQLite's write lock up front to avoid read-to-write lock
+            # upgrade SQLITE_BUSY deadlocks while keeping SAVEPOINT/ROLLBACK atomic.
+            conn.exec_driver_sql("BEGIN IMMEDIATE")
+
     return engine
 
 
