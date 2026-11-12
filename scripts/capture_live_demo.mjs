@@ -1,4 +1,4 @@
-import { chromium } from "playwright";
+import { chromium } from "@playwright/test";
 import fs from "fs";
 import path from "path";
 
@@ -11,6 +11,7 @@ async function runDemo() {
 
   const browser = await chromium.launch({
     headless: true,
+    executablePath: "/usr/bin/google-chrome",
     args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
   });
 
@@ -89,3 +90,4 @@ runDemo().catch((err) => {
   console.error("Demo run error:", err);
   process.exit(1);
 });
+
