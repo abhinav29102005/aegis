@@ -1,23 +1,33 @@
 # 11 — Test Coverage & Evidence Quality Audit
 
-**Observed Post-Integration Final Verification Results (`2026-11-12` on `integration/nexus`, after ALL edits including `pyproject.toml` `testpaths`):**
+**Observed Post-RC1 Verification Results (`2026-11-12` on `fix/rc1-guardian-deadlock`):**
 - **Ruff Static Lint (`uv run ruff check .`):** **`All checks passed!`** (`0` lint errors across entire repository — down from `79`).
-- **Full Python Workspace + Root QA Suite vs `postgres:16-alpine` (`uv run pytest -q --cov=packages --cov=modules --cov=services --cov-report=term-missing:skip-covered`):**
-  - **Result:** **`313 passed, 1 skipped` (`packages/paypal/tests/test_live_sandbox_optional.py::test_live_paypal_sandbox_oauth_and_order_roundtrip`), `0 failed` in `42.34s`!**
+- **Full Python Workspace + Root QA Suite vs `postgres:16-alpine` (`uv run pytest -q`):**
+  - **Result:** **`354 passed, 3 skipped, 0 failed` in `30.72s`!**
   - **Measured Statement Coverage:** **`90%` overall across `20,241` statements (`2,078` missed; `81` files skipped at `100%` coverage)**!
-  - **Notable Verified Subsets Included in `313 passed`:**
+  - **Notable Verified Subsets Included in `354 passed`:**
     - Guardian <-> GhostPay `"policy-v1"` property parity (`modules/ghostpay/tests/test_forensics_hardening.py`): **`1,000 / 1,000` cases, `0` mismatches**.
-    - Root QA Harness (`tests/` now included in `pyproject.toml` `testpaths`): **`16 / 16` PASS** — 6-role RBAC negative matrix (`3/3`), adversarial SSRF/quote-tamper/webhook-tamper/replay/prompt-injection (`6/6`), concurrency race & outbox lease harness (`3/3`), console journey E2E (`1/1`), OpenAPI SDK parity gate (`97/99` = `98.0%` Py & TS) + verbatim `INTEGRATION_GUIDE.md` checks (`3/3`).
-    - Multi-rail providers (`modules/agentpay-guardian/tests/test_providers.py`), MCP + copilot (`test_copilot_mcp.py`), DisputeOS AI evals (`modules/disputeos/tests/test_ai_eval.py`), PG16 concurrency/migration triggers (`test_postgres_integration.py`, `test_database.py`, `test_platform_repo.py`), & worker DLQ/leases (`test_worker.py`).
-- **Live Docker Compose Smoke (`POSTGRES_PORT=55432 REDIS_PORT=56379 API_PORT=18000 make compose-smoke`):** **`exit 0`** — rebuilt `migrate`, `api`, & `worker` images from integrated tree, migrated PG16 + Redis, verified `/ready` `{"status":"ready","database":"connected","paypal_configured":false}` and `worker --healthcheck`.
-- **TypeScript SDK (`packages/sdk-typescript`):** `tsc` typecheck + build PASS, **`35 passed` (Vitest `4` files)** + **`3 passed` (Node legacy)**, `npm audit --omit=dev` **`0` vulnerabilities**.
-- **Next.js Console (`apps/web`):** `tsc --noEmit` PASS, `next lint` (`0` warnings/errors), **`3/3` unit (`format.test.mjs`)** + **`7/7` Node E2E (`console_e2e_journeys.test.mjs`)**, `next build` **`24` routes PASS**, `npm audit --omit=dev` reports `2` transitive `postcss` advisories (`1` moderate, `1` high).
-- **`pip-audit` (`uv run pip-audit -r /tmp/aegis-reqs.txt --desc`):** Reports `11` known vulnerabilities across `4` packages (`langgraph 0.6.11`, `langgraph-checkpoint 3.0.1`, `langgraph-sdk 0.2.15`, `pytest 8.4.2`).
+    - Concurrency Stress Suite (3 consecutive runs): **`18 passed` × 3** (`test_rc1_deadlock_stress.py` + `test_concurrency_harness.py`).
+    - Failure injection: **`4/4` PASS** (`test_rc1_failure_injection.py`).
+    - PayPal negative-path suite: **`13/13` PASS** (`test_rc1_paypal_negative_paths.py`).
+    - Security regressions & RBAC: **`20/20` PASS** (`test_rc1_security_regressions.py` + `test_rbac_negative_matrix.py`).
+    - OpenAPI SDK parity gate: **`97/99` (`98.0%`)** in Python and TypeScript.
+- **Live PayPal Sandbox Verification (`packages/paypal/tests/test_live_sandbox_optional.py`):**
+  - Executed live against `api-m.sandbox.paypal.com` with real credentials: **`12 passed in 3.52s`** (OAuth token generation, order creation, capture pre-check, and webhook signature verification).
+- **Synthetic Load Benchmark (`tests/load/load_benchmark.py`):**
+  - Executed against PostgreSQL 16 at `c=10` and `c=25`: **`0.0%` error rate across all endpoints** (`POST /v1/guardian/proposals`: `63.35 RPS` @ `c=10`, `60.96 RPS` @ `c=25`, `50/50` HTTP 201).
+- **Chromium Playwright E2E (`apps/web/tests/playwright_e2e_journeys.spec.ts`):**
+  - Real browser execution: **`5 passed, 0 failed (11.1s)`** with 0 console, 0 hydration, 0 404, and 0 5xx errors.
+- **Supply Chain & CVE Hygiene:**
+  - `pip-audit`: **`0` vulnerabilities** (all `11` dependencies upgraded).
+  - `npm audit --omit=dev`: **`0` vulnerabilities** (Next.js upgraded to `16.4.6`; `sdk-typescript` clean).
+- **Live Azure Staging Deployment (`20.124.91.36`):**
+  - API live at `https://api-staging.abhinavkumarsingh.tech` (`/health` & `/ready` return `200 OK`).
+  - Web console live at `http://20.124.91.36/login` (`200 OK`).
 
 ---
 
 ## Remaining `NOT VERIFIED` Test Boundaries
-1. **Live PayPal Sandbox (`test_live_sandbox_optional.py`):** Explicitly skipped without sandbox client credentials (`1 skipped`).
-2. **Live Stripe Billing / Provider, Live S3/R2 Upload, Live LLM API Calls, Live SMTP:** Tested with `httpx` mocks / local disk stubs; unrun against real third-party endpoints (`NOT VERIFIED`).
-3. **Live Chromium Browser E2E (`playwright_e2e_journeys.spec.ts`):** Spec file (`90` lines) present, **`@playwright/test` absent from `apps/web/package.json`** (`NOT VERIFIED` in headless browser).
-4. **Load / Saturation Benchmarks & Live Linux VPS Deploy:** Capacity/RPS latency benchmarks not yet executed (`NOT VERIFIED`).
+1. **Interactive PayPal Buyer Approval:** Testing the manual buyer authorization flow in an interactive browser window against PayPal Sandbox and confirming real-time webhook push from PayPal's servers.
+2. **Third-Party Live Endpoints:** Live Stripe Billing test checkout, live S3/R2 bucket uploads, live LLM API evals (OpenAI/Anthropic/Gemini), and live SMTP delivery.
+3. **External Governance & Compliance:** External legal sign-off on `/legal/*` and SOC 2 Type II audit readiness.
