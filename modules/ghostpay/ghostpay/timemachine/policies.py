@@ -47,7 +47,7 @@ class CounterfactualPolicy(BaseModel):
         if self.allow_unknown_merchants is not None:
             overrides["allow_unknown_merchants"] = self.allow_unknown_merchants
         if self.currency is not None:
-            overrides["currency"] = self.currency.upper()
+            overrides["currency_override"] = self.currency.upper()
         if self.passport_status is not None:
             overrides["passport_status"] = self.passport_status
         if self.expires_at is not None:

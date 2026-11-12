@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from contracts import DecisionOutcome
+from contracts import DecisionOutcome, compute_payload_hash
 from contracts.fixtures import (
     AGENT_PROCUREMENT_ID,
     TENANT_ALPHA_ID,
@@ -46,6 +46,11 @@ def test_api_health_check(endpoints: dict) -> None:
 def test_api_replay_success(endpoints: dict) -> None:
     fixture = build_authorized_39_purchase_fixture()
     req = fixture["replay_request"]
+    canonical_evidence = [
+        ev.model_copy(update={"content_hash": compute_payload_hash(ev.content)})
+        for ev in req.evidence_records
+    ]
+    req = req.model_copy(update={"evidence_records": canonical_evidence})
 
     res = endpoints["replay_transaction"](req, TENANT_ALPHA_ID)
     assert res.consistency_status == "CONSISTENT"

@@ -24,6 +24,7 @@ from ghostpay.domain import (
     GhostPayError,
     GhostPayService,
     IllegalSideEffectError,
+    InsufficientEvidenceError,
     InsufficientHistoryError,
     IntegrityError,
     InvestigationNotFoundError,
@@ -37,14 +38,6 @@ from ghostpay.errors import (
     ReplayExecutionForbiddenError,
     UnsupportedPolicyVersionError,
 )
-from ghostpay.forensics import (
-    ProvenanceEdge,
-    ProvenanceGraph,
-    ProvenanceNode,
-    build_provenance_graph,
-    correlate_evidence_ids,
-    format_event_summary,
-)
 from ghostpay.ingestion import TraceIngestionAdapter, TraceValidator
 from ghostpay.integrations import (
     DisputeOSEvidenceBundle,
@@ -52,9 +45,14 @@ from ghostpay.integrations import (
     export_to_disputeos,
 )
 from ghostpay.provenance import (
+    ProvenanceEdge,
+    ProvenanceGraph,
+    ProvenanceNode,
+    build_provenance_graph,
     check_missing_evidence,
     enforce_request_tenancy,
     verify_evidence_digest,
+    verify_execution_artifacts_consistency,
     verify_provenance_and_integrity,
     verify_quote_snapshot_integrity,
 )
@@ -67,7 +65,11 @@ from ghostpay.replay import (
     resolve_policy_evaluator,
 )
 from ghostpay.repository import GhostPayReplayRepository
-from ghostpay.timelines import build_timeline
+from ghostpay.timelines import (
+    build_timeline,
+    correlate_evidence_ids,
+    format_event_summary,
+)
 from ghostpay.timemachine import (
     CounterfactualPolicy,
     PolicyComparisonEntry,
@@ -94,6 +96,7 @@ __all__ = [
     "GhostPayService",
     "GuardianTraceAdapter",
     "IllegalSideEffectError",
+    "InsufficientEvidenceError",
     "InsufficientHistoryError",
     "IntegrityError",
     "InvestigationNotFoundError",
@@ -136,6 +139,7 @@ __all__ = [
     "simulate_counterfactual",
     "validate_counterfactual_overrides",
     "verify_evidence_digest",
+    "verify_execution_artifacts_consistency",
     "verify_provenance_and_integrity",
     "verify_quote_snapshot_integrity",
 ]

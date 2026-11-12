@@ -11,9 +11,12 @@ class PaymentState(StrEnum):
     AWAITING_PAYPAL_BUYER = "AWAITING_PAYPAL_BUYER"
     CAPTURE_PENDING = "CAPTURE_PENDING"
     SUCCEEDED = "SUCCEEDED"
+    PARTIALLY_REFUNDED = "PARTIALLY_REFUNDED"
+    REFUNDED = "REFUNDED"
     FAILED = "FAILED"
     PENDING_PROVIDER = "PENDING_PROVIDER"
     CANCELLED = "CANCELLED"
+    EXPIRED = "EXPIRED"
 
 
 VALID_PAYMENT_TRANSITIONS: dict[PaymentState, frozenset[PaymentState]] = {
@@ -32,17 +35,20 @@ VALID_PAYMENT_TRANSITIONS: dict[PaymentState, frozenset[PaymentState]] = {
         PaymentState.CHECKOUT_READY,
         PaymentState.CANCELLED,
         PaymentState.FAILED,
+        PaymentState.EXPIRED,
     }),
     PaymentState.CHECKOUT_READY: frozenset({
         PaymentState.AWAITING_PAYPAL_BUYER,
         PaymentState.CANCELLED,
         PaymentState.FAILED,
+        PaymentState.EXPIRED,
     }),
     PaymentState.AWAITING_PAYPAL_BUYER: frozenset({
         PaymentState.CAPTURE_PENDING,
         PaymentState.PENDING_PROVIDER,
         PaymentState.CANCELLED,
         PaymentState.FAILED,
+        PaymentState.EXPIRED,
     }),
     PaymentState.CAPTURE_PENDING: frozenset({
         PaymentState.SUCCEEDED,
@@ -54,9 +60,17 @@ VALID_PAYMENT_TRANSITIONS: dict[PaymentState, frozenset[PaymentState]] = {
         PaymentState.FAILED,
         PaymentState.CANCELLED,
     }),
-    PaymentState.SUCCEEDED: frozenset(),
+    PaymentState.SUCCEEDED: frozenset({
+        PaymentState.REFUNDED,
+        PaymentState.PARTIALLY_REFUNDED,
+    }),
+    PaymentState.PARTIALLY_REFUNDED: frozenset({
+        PaymentState.REFUNDED,
+    }),
+    PaymentState.REFUNDED: frozenset(),
     PaymentState.FAILED: frozenset(),
     PaymentState.CANCELLED: frozenset(),
+    PaymentState.EXPIRED: frozenset(),
 }
 
 
@@ -84,10 +98,13 @@ class DecisionReasonCode(StrEnum):
     DENIED_EXCEEDS_PER_TX_LIMIT = "DENIED_EXCEEDS_PER_TX_LIMIT"
     DENIED_EXCEEDS_PASSPORT_BUDGET = "DENIED_EXCEEDS_PASSPORT_BUDGET"
     DENIED_EXCEEDS_DAILY_LIMIT = "DENIED_EXCEEDS_DAILY_LIMIT"
+    DENIED_MONTHLY_LIMIT = "DENIED_MONTHLY_LIMIT"
     DENIED_MERCHANT_NOT_ALLOWLISTED = "DENIED_MERCHANT_NOT_ALLOWLISTED"
     DENIED_CATEGORY_NOT_ALLOWED = "DENIED_CATEGORY_NOT_ALLOWED"
+    DENIED_CURRENCY_NOT_ALLOWED = "DENIED_CURRENCY_NOT_ALLOWED"
     DENIED_PASSPORT_EXPIRED = "DENIED_PASSPORT_EXPIRED"
     DENIED_PASSPORT_REVOKED = "DENIED_PASSPORT_REVOKED"
+    DENIED_PASSPORT_PAUSED = "DENIED_PASSPORT_PAUSED"
     DENIED_AGENT_SUSPENDED = "DENIED_AGENT_SUSPENDED"
     DENIED_APPROVAL_EXPIRED = "DENIED_APPROVAL_EXPIRED"
     DENIED_APPROVAL_MISMATCH = "DENIED_APPROVAL_MISMATCH"
@@ -138,9 +155,14 @@ class FinancialEventType(StrEnum):
     PAYPAL_TIMEOUT_PENDING = "PAYPAL_TIMEOUT_PENDING"
     PAYPAL_WEBHOOK_RECEIVED = "PAYPAL_WEBHOOK_RECEIVED"
     PAYMENT_FAILED = "PAYMENT_FAILED"
+    PAYMENT_REFUNDED = "PAYMENT_REFUNDED"
+    PAYMENT_VOIDED = "PAYMENT_VOIDED"
     DISPUTE_OPENED = "DISPUTE_OPENED"
+    DISPUTE_EVIDENCE_ATTACHED = "DISPUTE_EVIDENCE_ATTACHED"
     DISPUTE_ANALYZED = "DISPUTE_ANALYZED"
     DISPUTE_RESPONSE_APPROVED = "DISPUTE_RESPONSE_APPROVED"
+    DISPUTE_SUBMITTED = "DISPUTE_SUBMITTED"
+    DISPUTE_RESOLVED = "DISPUTE_RESOLVED"
 
 
 class EvidenceSourceType(StrEnum):
@@ -169,6 +191,44 @@ class DisputeStatus(StrEnum):
     APPROVED_FOR_SUBMISSION = "APPROVED_FOR_SUBMISSION"
     SUBMITTED = "SUBMITTED"
     RESOLVED = "RESOLVED"
+
+
+VALID_DISPUTE_TRANSITIONS: dict[DisputeStatus, frozenset[DisputeStatus]] = {
+    DisputeStatus.OPEN: frozenset({
+        DisputeStatus.UNDER_INVESTIGATION,
+        DisputeStatus.DRAFT_READY,
+        DisputeStatus.RESOLVED,
+    }),
+    DisputeStatus.UNDER_INVESTIGATION: frozenset({
+        DisputeStatus.DRAFT_READY,
+        DisputeStatus.RESOLVED,
+    }),
+    DisputeStatus.DRAFT_READY: frozenset({
+        DisputeStatus.APPROVED_FOR_SUBMISSION,
+        DisputeStatus.RESOLVED,
+    }),
+    DisputeStatus.APPROVED_FOR_SUBMISSION: frozenset({
+        DisputeStatus.SUBMITTED,
+        DisputeStatus.RESOLVED,
+    }),
+    DisputeStatus.SUBMITTED: frozenset({
+        DisputeStatus.RESOLVED,
+    }),
+    DisputeStatus.RESOLVED: frozenset(),
+}
+
+
+def can_transition_dispute(current: DisputeStatus, target: DisputeStatus) -> bool:
+    """Return True if transitioning from current to target DisputeStatus is strictly forward."""
+    return target in VALID_DISPUTE_TRANSITIONS.get(current, frozenset())
+
+
+def assert_dispute_transition(current: DisputeStatus, target: DisputeStatus) -> None:
+    """Raise ValueError if a dispute status transition violates the monotonic state machine."""
+    if not can_transition_dispute(current, target):
+        raise ValueError(
+            f"Illegal dispute status transition: {current.value} -> {target.value}"
+        )
 
 
 class DisputeRecommendation(StrEnum):

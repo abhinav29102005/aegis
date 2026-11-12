@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -11,6 +11,10 @@ from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
     from ghostpay.domain.models import PaymentTrace
+
+
+def _normalize_utc(dt: datetime) -> datetime:
+    return dt.astimezone(UTC) if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
 class AgentFeatureVector(BaseModel):
@@ -38,12 +42,16 @@ def extract_agent_features(
     exclude_trace_id: UUID | None = None,
 ) -> AgentFeatureVector:
     """Extract chronological features strictly prior to cutoff_time to prevent data leakage."""
-    # 1. Filter history chronologically
+    norm_cutoff = _normalize_utc(cutoff_time) if cutoff_time is not None else None
+    seen_trace_ids: set[UUID] = set()
     filtered_traces: list[PaymentTrace] = []
     for tr in history:
+        if tr.trace_id in seen_trace_ids:
+            continue
+        seen_trace_ids.add(tr.trace_id)
         if exclude_trace_id and tr.trace_id == exclude_trace_id:
             continue
-        if cutoff_time and tr.created_at >= cutoff_time:
+        if norm_cutoff is not None and _normalize_utc(tr.created_at) >= norm_cutoff:
             continue
         filtered_traces.append(tr)
 

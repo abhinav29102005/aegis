@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+import httpx
 from contracts import (
     DisputeCase,
     DisputeSourceType,
@@ -23,6 +24,7 @@ from disputeos.ingestion.normalizer import DocumentIngestionService
 from disputeos.paypal.adapter import PayPalDisputeAdapter
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from paypal import PayPalSandboxClient
 from security import NexusSettings
 
 
@@ -44,15 +46,36 @@ def _build_test_client(
     analyzer: DisputeAnalyzer | None = None,
 ) -> TestClient:
     app = FastAPI()
+    settings = NexusSettings(
+        paypal_mode="sandbox",
+        paypal_disputes_api_enabled=disputes_api_enabled,
+        paypal_client_id="sb-client-id" if disputes_api_enabled else "",
+        paypal_client_secret="sb-client-secret" if disputes_api_enabled else "",
+    )
+    paypal_client: PayPalSandboxClient | None = None
+    if disputes_api_enabled:
+        def _mock_handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/v1/oauth2/token":
+                return httpx.Response(200, json={"access_token": "tok_api_test", "expires_in": 300})
+            if request.url.path.endswith("/provide-evidence"):
+                return httpx.Response(200, json={"dispute_id": "PP-D-REAL-001", "status": "UNDER_REVIEW"})
+            return httpx.Response(404, json={"error": "unexpected"})
+
+        paypal_client = PayPalSandboxClient(
+            settings=settings,
+            http_client=httpx.AsyncClient(
+                base_url="https://api-m.sandbox.paypal.com",
+                transport=httpx.MockTransport(_mock_handler),
+            ),
+        )
+
     router = create_disputeos_router(
         case_service=DisputeCaseService(),
         analyzer=analyzer or DisputeAnalyzer(),
         ingestion_service=DocumentIngestionService(),
         paypal_adapter=PayPalDisputeAdapter(
-            settings=NexusSettings(
-                paypal_mode="sandbox",
-                paypal_disputes_api_enabled=disputes_api_enabled,
-            )
+            settings=settings,
+            paypal_client=paypal_client,
         ),
     )
     app.include_router(router)
@@ -261,7 +284,8 @@ def test_api_approval_gate_feature_flag_and_guarded_submit() -> None:
     assert submit_resp.status_code == 200
     body = submit_resp.json()
     assert body["case"]["status"] == "SUBMITTED"
-    assert body["submission"]["status"] == "APPROVED_PAYLOAD_READY"
+    assert body["submission"]["status"] == "SUBMITTED_TO_PAYPAL"
+    assert body["submission"]["submitted"] is True
     assert body["submission"]["auto_submitted"] is False
     assert body["submission"]["refund_issued"] is False
 

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from datetime import datetime
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from contracts import (
@@ -12,10 +13,16 @@ from contracts import (
     DisputeStatus,
     EvidenceRecord,
     FinancialEventType,
+    assert_dispute_transition,
     compute_payload_hash,
 )
 from contracts.models import utc_now
 from security import assert_same_tenant
+
+from disputeos.ingestion.normalizer import (
+    assert_evidence_digest,
+    normalize_evidence_record,
+)
 
 if TYPE_CHECKING:
     from database import LedgerRepository
@@ -31,6 +38,17 @@ class ApprovalGateError(PermissionError):
 
 class SyntheticSubmissionError(PermissionError):
     """Raised when external submission is attempted for a synthetic demo case."""
+
+
+class InvalidDisputeTransitionError(ValueError):
+    """Raised when a dispute status transition violates the monotonic state machine."""
+
+
+def _assert_transition(current: DisputeStatus, target: DisputeStatus) -> None:
+    try:
+        assert_dispute_transition(current, target)
+    except ValueError as exc:
+        raise InvalidDisputeTransitionError(str(exc)) from exc
 
 
 class DisputeCaseService:
@@ -63,6 +81,8 @@ class DisputeCaseService:
         paypal_dispute_id: str | None = None,
         case_id: UUID | None = None,
         actor_id: str = "disputeos",
+        response_due_by: datetime | None = None,
+        external_status: str | None = None,
     ) -> DisputeCase:
         """Create a tenant-scoped dispute case and link any validated evidence records."""
         resolved_case_id = case_id or uuid4()
@@ -108,6 +128,8 @@ class DisputeCaseService:
             currency=currency,
             status=DisputeStatus.OPEN,
             evidence_ids=evidence_ids,
+            response_due_by=response_due_by,
+            external_status=external_status[:64] if external_status else None,
             opened_at=now,
             updated_at=now,
         )
@@ -126,6 +148,10 @@ class DisputeCaseService:
                     "dispute_case_id": str(saved_case.id),
                     "reason": reason,
                     "is_synthetic": effective_synthetic,
+                    "paypal_dispute_id": paypal_dispute_id,
+                    "response_due_by": saved_case.response_due_by.isoformat()
+                    if saved_case.response_due_by
+                    else None,
                 },
             )
             return saved_case
@@ -148,45 +174,91 @@ class DisputeCaseService:
         assert_same_tenant(tenant_id, case.tenant_id, "dispute_case")
         return case
 
-    def list_cases(self, tenant_id: UUID) -> list[DisputeCase]:
-        """List all dispute cases belonging to the specified tenant."""
+    def list_cases(
+        self,
+        tenant_id: UUID,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[DisputeCase]:
+        """List dispute cases belonging to the specified tenant with pagination."""
         if self._repo is not None:
-            return self._repo.list_dispute_cases(tenant_id)
-        return [case for case in self._cases.values() if case.tenant_id == tenant_id]
+            return self._repo.list_dispute_cases(tenant_id, limit=limit, offset=offset)
+        cases = [case for case in self._cases.values() if case.tenant_id == tenant_id]
+        cases.sort(key=lambda c: c.opened_at, reverse=True)
+        return cases[offset : offset + limit]
 
     def attach_evidence(
         self,
         tenant_id: UUID,
         case_id: UUID,
         records: list[EvidenceRecord],
+        *,
+        actor_id: str = "disputeos",
+        actor_type: str = "DISPUTEOS",
     ) -> DisputeCase:
-        """Attach tenant-validated evidence records to an existing dispute case."""
+        """Attach tenant- and digest-validated evidence records to an existing dispute case."""
         case = self.get_case(tenant_id, case_id)
+        if case.status == DisputeStatus.RESOLVED:
+            raise InvalidDisputeTransitionError(
+                f"Cannot attach evidence to resolved dispute case {case_id}"
+            )
+
+        normalized_records: list[EvidenceRecord] = []
         for record in records:
             assert_same_tenant(tenant_id, record.tenant_id, "evidence_record")
+            if record.dispute_case_id is not None and record.dispute_case_id != case_id:
+                raise ValueError(
+                    f"EvidenceRecord {record.id} belongs to dispute case {record.dispute_case_id}, not {case_id}"
+                )
+            assert_evidence_digest(record)
+            if record.dispute_case_id != case_id:
+                record = normalize_evidence_record(
+                    record,
+                    tenant_id=tenant_id,
+                    dispute_case_id=case_id,
+                    verify_digest=False,
+                )
+            normalized_records.append(record)
 
         if self._repo is not None:
             existing_records = self._repo.list_evidence(tenant_id, dispute_case_id=case_id)
             seen_ids = {r.id for r in existing_records}
             updated_evidence_ids = list(case.evidence_ids)
             seen_case_ids = set(updated_evidence_ids)
-            for rec in records:
-                normalized = rec if rec.dispute_case_id == case_id else rec.model_copy(update={"dispute_case_id": case_id})
-                if normalized.id not in seen_ids:
-                    self._repo.save_evidence(normalized)
-                    seen_ids.add(normalized.id)
-                if normalized.id not in seen_case_ids:
-                    updated_evidence_ids.append(normalized.id)
-                    seen_case_ids.add(normalized.id)
+            attached_ids: list[str] = []
+            for rec in normalized_records:
+                if rec.id not in seen_ids:
+                    self._repo.save_evidence(rec)
+                    seen_ids.add(rec.id)
+                if rec.id not in seen_case_ids:
+                    updated_evidence_ids.append(rec.id)
+                    seen_case_ids.add(rec.id)
+                    attached_ids.append(str(rec.id))
             updated = case.model_copy(update={"evidence_ids": updated_evidence_ids, "updated_at": utc_now()})
-            return self._repo.save_dispute_case(updated)
+            saved_case = self._repo.save_dispute_case(updated)
+            if normalized_records:
+                self._repo.append_financial_event(
+                    tenant_id=tenant_id,
+                    correlation_id=case.correlation_id,
+                    payment_intent_id=case.payment_intent_id,
+                    event_type=FinancialEventType.DISPUTE_EVIDENCE_ATTACHED,
+                    actor_type=actor_type,
+                    actor_id=actor_id,
+                    payload={
+                        "dispute_case_id": str(case_id),
+                        "attached_evidence_ids": attached_ids or [str(r.id) for r in normalized_records],
+                        "total_evidence_count": len(updated_evidence_ids),
+                    },
+                )
+            return saved_case
 
         existing_records = list(self._evidence.get(case_id, []))
         seen_ids = {record.id for record in existing_records}
         updated_evidence_ids = list(case.evidence_ids)
         seen_case_ids = set(updated_evidence_ids)
 
-        for record in records:
+        for record in normalized_records:
             if record.id not in seen_ids:
                 seen_ids.add(record.id)
                 existing_records.append(record)
@@ -230,6 +302,8 @@ class DisputeCaseService:
             raise ValueError(
                 f"DisputeAnalysis dispute_case_id {analysis.dispute_case_id} does not match case {case_id}"
             )
+        if case.status != DisputeStatus.DRAFT_READY:
+            _assert_transition(case.status, DisputeStatus.DRAFT_READY)
 
         updated_case = case.model_copy(
             update={
@@ -282,6 +356,7 @@ class DisputeCaseService:
     ) -> DisputeCase:
         """Record explicit human approval and bind the response hash before external submission."""
         case = self.get_case(tenant_id, case_id)
+        _assert_transition(case.status, DisputeStatus.APPROVED_FOR_SUBMISSION)
         cleaned_approver = approver_id.strip()
         if not cleaned_approver:
             raise ValueError("approver_id must not be empty")
@@ -327,9 +402,15 @@ class DisputeCaseService:
         *,
         tenant_id: UUID,
         case_id: UUID,
+        actor_id: str = "disputeos",
+        actor_type: str = "DISPUTEOS",
+        external_status: str | None = None,
+        submission_details: dict[str, Any] | None = None,
     ) -> DisputeCase:
-        """Mark a dispute case as submitted only if human-approved and non-synthetic."""
+        """Mark a dispute case as submitted only if human-approved, non-synthetic, and externally bound."""
         case = self.get_case(tenant_id, case_id)
+        if case.status in (DisputeStatus.SUBMITTED, DisputeStatus.RESOLVED):
+            _assert_transition(case.status, DisputeStatus.SUBMITTED)
         if (
             not case.human_approved_for_submission
             or case.status != DisputeStatus.APPROVED_FOR_SUBMISSION
@@ -343,15 +424,42 @@ class DisputeCaseService:
             raise SyntheticSubmissionError(
                 f"Synthetic dispute case {case_id} cannot be submitted externally"
             )
+        if not case.paypal_dispute_id or not case.paypal_dispute_id.strip():
+            raise ValueError(
+                f"Dispute case {case_id} requires paypal_dispute_id before transitioning to SUBMITTED"
+            )
 
-        updated_case = case.model_copy(
-            update={
-                "status": DisputeStatus.SUBMITTED,
-                "updated_at": utc_now(),
-            }
-        )
+        _assert_transition(case.status, DisputeStatus.SUBMITTED)
+        now = utc_now()
+        updates: dict[str, Any] = {
+            "status": DisputeStatus.SUBMITTED,
+            "updated_at": now,
+        }
+        if external_status is not None:
+            updates["external_status"] = external_status.strip()[:64] or None
+        updated_case = case.model_copy(update=updates)
+
         if self._repo is not None:
-            return self._repo.save_dispute_case(updated_case)
+            saved_case = self._repo.save_dispute_case(updated_case)
+            payload: dict[str, Any] = {
+                "dispute_case_id": str(case_id),
+                "paypal_dispute_id": case.paypal_dispute_id,
+                "approved_by": case.approved_by,
+                "response_payload_hash": case.response_payload_hash,
+                "external_status": saved_case.external_status,
+            }
+            if submission_details:
+                payload["submission_details"] = submission_details
+            self._repo.append_financial_event(
+                tenant_id=tenant_id,
+                correlation_id=case.correlation_id,
+                payment_intent_id=case.payment_intent_id,
+                event_type=FinancialEventType.DISPUTE_SUBMITTED,
+                actor_type=actor_type,
+                actor_id=actor_id,
+                payload=payload,
+            )
+            return saved_case
         self._cases[case_id] = updated_case
         return updated_case
 
@@ -360,16 +468,48 @@ class DisputeCaseService:
         *,
         tenant_id: UUID,
         case_id: UUID,
+        resolution_outcome: str = "RESOLVED",
+        actor_id: str = "disputeos",
+        actor_type: str = "DISPUTEOS",
+        external_status: str | None = None,
+        notes: str | None = None,
     ) -> DisputeCase:
-        """Transition a dispute case to RESOLVED."""
+        """Transition a dispute case to RESOLVED with timestamp and hash-chained financial event."""
         case = self.get_case(tenant_id, case_id)
-        updated_case = case.model_copy(
-            update={
-                "status": DisputeStatus.RESOLVED,
-                "updated_at": utc_now(),
-            }
-        )
+        _assert_transition(case.status, DisputeStatus.RESOLVED)
+
+        cleaned_outcome = (resolution_outcome or "RESOLVED").strip() or "RESOLVED"
+        now = utc_now()
+        updates: dict[str, Any] = {
+            "status": DisputeStatus.RESOLVED,
+            "resolved_at": now,
+            "resolution_outcome": cleaned_outcome[:64],
+            "updated_at": now,
+        }
+        if external_status is not None:
+            updates["external_status"] = external_status.strip()[:64] or None
+        updated_case = case.model_copy(update=updates)
+
         if self._repo is not None:
-            return self._repo.save_dispute_case(updated_case)
+            saved_case = self._repo.save_dispute_case(updated_case)
+            payload: dict[str, Any] = {
+                "dispute_case_id": str(case_id),
+                "paypal_dispute_id": case.paypal_dispute_id,
+                "resolution_outcome": cleaned_outcome,
+                "resolved_at": now.isoformat(),
+                "external_status": saved_case.external_status,
+            }
+            if notes:
+                payload["notes"] = notes.strip()[:1000]
+            self._repo.append_financial_event(
+                tenant_id=tenant_id,
+                correlation_id=case.correlation_id,
+                payment_intent_id=case.payment_intent_id,
+                event_type=FinancialEventType.DISPUTE_RESOLVED,
+                actor_type=actor_type,
+                actor_id=actor_id,
+                payload=payload,
+            )
+            return saved_case
         self._cases[case_id] = updated_case
         return updated_case

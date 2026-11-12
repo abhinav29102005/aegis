@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -19,15 +19,41 @@ from contracts import (
 from contracts.models import utc_now
 from security import assert_same_tenant
 
+_LEGACY_DEMO_A_IDS: frozenset[UUID] = frozenset({
+    UUID("aaaa9999-0001-4000-8000-000000000001"),
+    UUID("aaaa9999-0002-4000-8000-000000000001"),
+})
 
-def _compute_evidence_hash(
+
+class EvidenceIntegrityError(ValueError):
+    """Raised when an EvidenceRecord digest fails canonical full-context verification."""
+
+
+def _normalize_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
+def compute_evidence_hash(
     *,
+    tenant_id: UUID,
+    dispute_case_id: UUID | None,
+    correlation_id: UUID,
+    is_synthetic: bool,
+    collected_at: datetime,
     source_type: EvidenceSourceType,
     source_ref: str,
     title: str,
     content: dict[str, Any],
 ) -> str:
+    """Compute canonical SHA-256 content hash over full evidence context and payload."""
     return compute_payload_hash({
+        "tenant_id": str(tenant_id),
+        "dispute_case_id": str(dispute_case_id) if dispute_case_id is not None else None,
+        "correlation_id": str(correlation_id),
+        "is_synthetic": bool(is_synthetic),
+        "collected_at": _normalize_utc(collected_at).isoformat(),
         "source_type": source_type.value,
         "source_ref": source_ref,
         "title": title,
@@ -35,11 +61,58 @@ def _compute_evidence_hash(
     })
 
 
+_compute_evidence_hash = compute_evidence_hash
+
+
+def verify_evidence_digest(record: EvidenceRecord) -> bool:
+    """Return True if record.content_hash matches its canonical full-context SHA-256 digest."""
+    expected = compute_evidence_hash(
+        tenant_id=record.tenant_id,
+        dispute_case_id=record.dispute_case_id,
+        correlation_id=record.correlation_id,
+        is_synthetic=record.is_synthetic,
+        collected_at=record.collected_at,
+        source_type=record.source_type,
+        source_ref=record.source_ref,
+        title=record.title,
+        content=record.content,
+    )
+    return record.content_hash == expected
+
+
+def assert_evidence_digest(record: EvidenceRecord) -> None:
+    """Raise EvidenceIntegrityError if an EvidenceRecord digest does not match its canonical hash."""
+    if not verify_evidence_digest(record):
+        raise EvidenceIntegrityError(
+            f"EvidenceRecord {record.id} content_hash failed canonical digest verification"
+        )
+
+
+def verify_evidence_digests(records: list[EvidenceRecord]) -> list[EvidenceRecord]:
+    """Verify canonical digests across a list of EvidenceRecord objects."""
+    for record in records:
+        assert_evidence_digest(record)
+    return records
+
+
 def _clean_text(value: str, field_name: str, max_length: int = 255) -> str:
     cleaned = value.strip()
     if not cleaned:
         raise ValueError(f"{field_name} must not be empty")
     return cleaned[:max_length]
+
+
+def _parse_collected_at(raw_value: Any) -> datetime:
+    if raw_value is None:
+        return _normalize_utc(utc_now())
+    if isinstance(raw_value, datetime):
+        return _normalize_utc(raw_value)
+    if isinstance(raw_value, str):
+        cleaned = raw_value.strip()
+        if cleaned.endswith("Z"):
+            cleaned = f"{cleaned[:-1]}+00:00"
+        return _normalize_utc(datetime.fromisoformat(cleaned))
+    raise ValueError(f"Invalid collected_at value: {raw_value!r}")
 
 
 def normalize_evidence_record(
@@ -57,11 +130,17 @@ def normalize_evidence_record(
     content_hash: str | None = None,
     collected_at: datetime | None = None,
     evidence_id: UUID | None = None,
+    verify_digest: bool = True,
+    allow_legacy_fixture: bool = False,
 ) -> EvidenceRecord:
     """Normalize raw evidence inputs or an existing EvidenceRecord into a canonical record."""
     if isinstance(record, EvidenceRecord):
         if tenant_id is not None:
             assert_same_tenant(tenant_id, record.tenant_id, "evidence_record")
+        is_legacy_demo = allow_legacy_fixture and record.id in _LEGACY_DEMO_A_IDS
+        if verify_digest and not is_legacy_demo:
+            assert_evidence_digest(record)
+
         effective_synthetic = (
             record.is_synthetic
             or bool(is_synthetic)
@@ -74,7 +153,26 @@ def normalize_evidence_record(
             updates["dispute_case_id"] = dispute_case_id
         if effective_synthetic != record.is_synthetic:
             updates["is_synthetic"] = effective_synthetic
-        return record.model_copy(update=updates) if updates else record
+
+        updated = record.model_copy(update=updates) if updates else record
+        recomputed = compute_evidence_hash(
+            tenant_id=updated.tenant_id,
+            dispute_case_id=updated.dispute_case_id,
+            correlation_id=updated.correlation_id,
+            is_synthetic=updated.is_synthetic,
+            collected_at=updated.collected_at,
+            source_type=updated.source_type,
+            source_ref=updated.source_ref,
+            title=updated.title,
+            content=updated.content,
+        )
+        if content_hash is not None and content_hash.strip() != recomputed:
+            raise EvidenceIntegrityError(
+                "Caller-supplied content_hash does not match canonical full-context evidence digest"
+            )
+        if updates or is_legacy_demo:
+            updated = updated.model_copy(update={"content_hash": recomputed})
+        return updated
 
     raw: dict[str, Any] = dict(record) if isinstance(record, dict) else {}
 
@@ -137,16 +235,29 @@ def normalize_evidence_record(
         or resolved_source_type == EvidenceSourceType.SYNTHETIC_FIXTURE
     )
 
-    resolved_hash = content_hash or raw.get("content_hash")
-    if not resolved_hash:
-        resolved_hash = _compute_evidence_hash(
-            source_type=resolved_source_type,
-            source_ref=resolved_source_ref,
-            title=resolved_title,
-            content=resolved_content,
-        )
+    resolved_collected_at = _parse_collected_at(
+        collected_at if collected_at is not None else raw.get("collected_at")
+    )
 
-    resolved_collected_at = collected_at or raw.get("collected_at") or utc_now()
+    expected_hash = compute_evidence_hash(
+        tenant_id=resolved_tenant_id,
+        dispute_case_id=resolved_dispute_case_id,
+        correlation_id=resolved_correlation_id,
+        is_synthetic=resolved_synthetic,
+        collected_at=resolved_collected_at,
+        source_type=resolved_source_type,
+        source_ref=resolved_source_ref,
+        title=resolved_title,
+        content=resolved_content,
+    )
+
+    supplied_hash = content_hash if content_hash is not None else raw.get("content_hash")
+    if supplied_hash is not None:
+        cleaned_supplied = str(supplied_hash).strip()
+        if not cleaned_supplied or cleaned_supplied != expected_hash:
+            raise EvidenceIntegrityError(
+                "Caller-supplied content_hash does not match canonical full-context evidence digest"
+            )
 
     return EvidenceRecord(
         id=resolved_id or uuid4(),
@@ -158,7 +269,7 @@ def normalize_evidence_record(
         source_ref=resolved_source_ref,
         title=resolved_title,
         content=resolved_content,
-        content_hash=resolved_hash,
+        content_hash=expected_hash,
         is_synthetic=resolved_synthetic,
         collected_at=resolved_collected_at,
     )
@@ -179,17 +290,15 @@ class DocumentIngestionService:
         title: str,
         content: dict[str, Any],
         is_synthetic: bool = False,
+        collected_at: datetime | None = None,
+        content_hash: str | None = None,
+        evidence_id: UUID | None = None,
     ) -> EvidenceRecord:
         """Normalize a single document payload into an EvidenceRecord with a canonical hash."""
         cleaned_ref = _clean_text(source_ref, "source_ref")
         cleaned_title = _clean_text(title, "title")
         normalized_content = dict(content)
-        content_hash = _compute_evidence_hash(
-            source_type=source_type,
-            source_ref=cleaned_ref,
-            title=cleaned_title,
-            content=normalized_content,
-        )
+        resolved_collected_at = _parse_collected_at(collected_at)
         return normalize_evidence_record(
             tenant_id=tenant_id,
             correlation_id=correlation_id,
@@ -201,6 +310,8 @@ class DocumentIngestionService:
             content=normalized_content,
             content_hash=content_hash,
             is_synthetic=is_synthetic,
+            collected_at=resolved_collected_at,
+            evidence_id=evidence_id,
         )
 
     def ingest_transaction_bundle(
@@ -250,6 +361,7 @@ class DocumentIngestionService:
                     payment_intent_id=payment_intent.id,
                     dispute_case_id=dispute_case_id,
                     is_synthetic=is_synthetic,
+                    allow_legacy_fixture=True,
                 )
                 _append_if_new(normalized)
 
@@ -280,6 +392,7 @@ class DocumentIngestionService:
                         "proposed_by_model": proposal.proposed_by_model,
                     },
                     is_synthetic=is_synthetic,
+                    collected_at=proposal.created_at,
                 )
             )
 
@@ -304,6 +417,7 @@ class DocumentIngestionService:
                         "expires_at": quote.expires_at.isoformat(),
                     },
                     is_synthetic=is_synthetic,
+                    collected_at=proposal.created_at if proposal is not None else payment_intent.created_at,
                 )
             )
 
@@ -334,6 +448,7 @@ class DocumentIngestionService:
                         "decided_at": decision.decided_at.isoformat(),
                     },
                     is_synthetic=is_synthetic,
+                    collected_at=decision.decided_at,
                 )
             )
 
@@ -363,6 +478,7 @@ class DocumentIngestionService:
                         "failure_reason": attempt.failure_reason,
                     },
                     is_synthetic=is_synthetic,
+                    collected_at=attempt.created_at,
                 )
             )
 
@@ -388,6 +504,7 @@ class DocumentIngestionService:
                             "verified_at": capture.verified_at.isoformat(),
                         },
                         is_synthetic=is_synthetic,
+                        collected_at=capture.verified_at,
                     )
                 )
 

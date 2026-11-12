@@ -114,6 +114,12 @@ class CaptureRequest(BaseModel):
     attempt_id: UUID
 
 
+class RefundRequest(BaseModel):
+    attempt_id: UUID | None = None
+    amount_minor: int | None = Field(default=None, gt=0)
+    reason: str = Field(default="Operator requested refund", max_length=500)
+
+
 class ProposalSubmissionResponse(BaseModel):
     payment_intent: PaymentIntent
     decision: AuthorizationDecision
