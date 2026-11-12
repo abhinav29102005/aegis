@@ -6,7 +6,7 @@
 
 services:
   postgres:
-    ports:
+    ports: !override
       - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
@@ -19,7 +19,7 @@ services:
         max-file: "5"
 
   redis:
-    ports:
+    ports: !override
       - "127.0.0.1:6379:6379"
     command:
       - redis-server
@@ -40,7 +40,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
 
   api:
-    ports:
+    ports: !override
       - "127.0.0.1:${API_PORT:-8000}:8000"
     environment:
       APP_ENV: ${APP_ENV:-production}
@@ -50,6 +50,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
       NEXUS_API_KEY: ${NEXUS_API_KEY:?NEXUS_API_KEY must be set}
       CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS must be set to HTTPS origin}
+      EMAIL_VERIFICATION_REQUIRED: ${EMAIL_VERIFICATION_REQUIRED:-true}
       WEBHOOK_REQUIRE_HTTPS: ${WEBHOOK_REQUIRE_HTTPS:-true}
       WEBHOOK_LEGACY_SIGNATURE_FALLBACK: ${WEBHOOK_LEGACY_SIGNATURE_FALLBACK:-false}
       AEGIS_DATA_RESIDENCY: ${AEGIS_DATA_RESIDENCY:?AEGIS_DATA_RESIDENCY must be set (US|EU|IN)}
@@ -101,7 +102,7 @@ services:
         max-file: "5"
 
   web:
-    ports:
+    ports: !override
       - "127.0.0.1:${WEB_PORT:-3005}:3000"
     deploy:
       resources:

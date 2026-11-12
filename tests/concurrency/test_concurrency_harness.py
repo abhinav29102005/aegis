@@ -13,6 +13,7 @@ Verifies:
 from __future__ import annotations
 
 import concurrent.futures
+import os
 import sqlite3
 import time
 from datetime import UTC, datetime, timedelta
@@ -46,30 +47,36 @@ def _init_sqlite_wal(db_path: Path) -> None:
 @pytest.fixture()
 def concurrency_env(tmp_path: Path):
     db_path = tmp_path / "concurrency.db"
-    _init_sqlite_wal(db_path)
+    env_db_url = os.getenv("DATABASE_URL", "").strip()
+    if env_db_url.startswith("postgresql"):
+        db_url = env_db_url
+    else:
+        _init_sqlite_wal(db_path)
+        db_url = f"sqlite:///{db_path}?timeout=30"
 
     settings = NexusSettings(
-        database_url=f"sqlite:///{db_path}?timeout=30",
+        database_url=db_url,
         jwt_secret="concurrency-jwt-secret-key-32b-min",
         signing_secret="concurrency-signing-secret",
         evidence_storage_dir=str(tmp_path / "evidence"),
         rate_limit_rpm=20000,
     )
-    engine = create_db_engine(f"sqlite:///{db_path}?timeout=30")
+    engine = create_db_engine(db_url)
     init_db(engine)
     session_factory = create_session_factory(engine)
     app = create_app(settings=settings, engine=engine)
+    run_suffix = uuid4().hex[:8]
 
     with TestClient(app) as client:
         # Register owner and organization
         reg = client.post(
             "/v1/auth/register",
             json={
-                "email": "concurrency-admin@aegis-conc.test",
+                "email": f"concurrency-admin-{run_suffix}@aegis-conc.test",
                 "password": "StrongPassword!123",
                 "full_name": "Concurrency Admin",
-                "organization_name": "Concurrency Lab",
-                "organization_slug": "concurrency-lab",
+                "organization_name": f"Concurrency Lab {run_suffix}",
+                "organization_slug": f"concurrency-lab-{run_suffix}",
             },
         )
         assert reg.status_code == 201
