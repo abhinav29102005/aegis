@@ -73,3 +73,4 @@
 - **Security:** `HttpOnly; SameSite=Lax` cookie BFF (`/api/auth/*`), zero JWT storage in `localStorage`.
 - **E2E Browser QA:** `apps/web/tests/playwright_e2e_journeys.spec.ts` passed **`5/5` journeys in 11.1s** with 0 console, hydration, or HTTP errors.
 - **Live Status:** Responding `200 OK` on `http://20.124.91.36/login` and `http://20.124.91.36/`.
+

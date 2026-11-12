@@ -60,3 +60,4 @@ SELECT
 FROM financial_events
 GROUP BY tenant_id;
 ```
+

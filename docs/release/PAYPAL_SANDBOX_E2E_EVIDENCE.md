@@ -93,3 +93,4 @@ To execute the manual buyer approval step in the sandbox UI:
    - Call `POST /v1/guardian/payments/{intent_id}/buyer-approved` with `payer_id`.
    - Call `POST /v1/guardian/payments/{intent_id}/capture`.
    - The order will be captured live on PayPal Sandbox and settled in AEGIS.
+

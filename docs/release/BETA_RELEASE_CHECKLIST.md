@@ -52,3 +52,4 @@
 - [ ] Remote S3/R2 WORM bucket upload verification (`AEGIS_STORAGE_BACKEND=local` active).
 - [ ] External legal counsel sign-off on `/legal/*` (ToS, Privacy Policy, DPA) & DPDPA statutory notices.
 - [ ] Third-party penetration testing and SOC 2 Type II audit readiness.
+

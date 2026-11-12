@@ -84,3 +84,4 @@ curl -f http://127.0.0.1:3005/login
    sudo docker compose run --rm api alembic downgrade -1
    ```
 3. **Immutability Protection:** The `financial_events` table is protected by PostgreSQL trigger `trg_aegis_prevent_financial_event_mutation`. No migration or script can alter or delete ledger history.
+

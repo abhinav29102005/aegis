@@ -71,3 +71,4 @@ LIMIT 20;
 | **HTTP 400 on Webhook** | Malformed JSON payload. | Inspect request body in logs; ensure payload is a valid JSON dictionary. |
 | **Webhook Delivery Delayed** | PayPal Sandbox experiencing queuing. | PayPal guarantees retries with exponential backoff for up to 72 hours. Staging idempotency deduplicates when delivered. |
 | **Unmatched Order ID** | Webhook received for an order created outside AEGIS. | The event is recorded in `paypal_webhook_events` for auditing, but no internal `PaymentAttempt` is modified (`matched_payment_intent_id: null`). |
+

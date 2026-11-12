@@ -112,3 +112,4 @@ server {
 2. **Container Security:** Containers execute under unprivileged user `aegis` (UID 999).
 3. **Fail-Closed Webhook Verification:** The `/v1/paypal/webhooks` endpoint rejects any unauthenticated or tampered request with `401 Unauthorized`.
 4. **Firewall Rules:** Azure Network Security Group (NSG) restricts inbound access to port 22 (SSH), port 80 (HTTP), and port 443 (HTTPS). Database and Redis ports are not exposed on the Azure VM.
+

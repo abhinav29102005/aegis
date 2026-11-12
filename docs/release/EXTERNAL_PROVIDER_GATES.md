@@ -21,3 +21,4 @@
 
 - **Public Beta (Sandbox Pilot):** **UNBLOCKED**. Core functionality (agent governance, spending passports, policy engine, PayPal Sandbox Orders v2, and live webhooks) is fully operational.
 - **Commercial Production Launch:** **GATED** by Stripe Billing, live LLM evals, and remote S3/R2 WORM bucket credentials.
+
