@@ -21,3 +21,4 @@
 AEGIS RC1 **MUST NOT** be declared production-ready until:
 1. A live PostgreSQL 16 environment (e.g., GitHub Actions CI or Linux host with PostgreSQL 16) runs Alembic `upgrade head`/`downgrade base`/`upgrade head` cleanly, passes `packages/database/tests/test_database.py` (including PG triggers) and `services/api/tests/test_postgres_integration.py`, and passes all 18 tests in `tests/concurrency/` against PostgreSQL 16 with zero `DeadlockDetected` errors.
 2. `services/worker/tests/test_worker.py::test_worker_healthcheck_cli_and_loop_resilience` is verified passing on the Linux/CI release target (or `connect_timeout` is bounded).
+

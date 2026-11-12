@@ -26,3 +26,4 @@
 2. `packages/database/tests/test_database.py`: Added `test_sqlite_nested_savepoint_rolled_back_by_outer_rollback`.
 3. `tests/concurrency/test_rc1_deadlock_stress.py`, `test_rc1_financial_invariants.py`, `test_concurrency_harness.py`: Fallback check updated to `(os.getenv("DATABASE_URL") or os.getenv("AEGIS_TEST_POSTGRES_URL") or "").strip()` so CI `postgres:16-alpine` runs exercise PG16 instead of SQLite.
 4. `tests/concurrency/test_rc1_deadlock_stress.py::test_concurrent_budget_exhaustion`: Accepts both Layer 2 `InsufficientBudgetError` (`409`) and Layer 1 `PolicyDeniedError` (`403`, reason codes `DENIED_EXCEEDS_PASSPORT_BUDGET` / `DENIED_EXCEEDS_DAILY_LIMIT`) while asserting `3` successes, `12` denials, `passport.reserved_minor == 30_000`, and `len(reservations) == 3`.
+
