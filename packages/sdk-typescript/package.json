@@ -9,16 +9,22 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./integrations/vercel-ai": {
+      "types": "./dist/integrations/vercel-ai.d.ts",
+      "default": "./dist/integrations/vercel-ai.js"
     }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "npm run build && node --test tests/sdk.test.mjs"
+    "test": "npm run build && vitest run && node --test tests/sdk.test.mjs",
+    "test:vitest": "vitest run"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^5.1.0"
   },
   "engines": {
     "node": ">=20"

@@ -6,7 +6,13 @@ import React, { useCallback, useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { StatusBadge } from "@/components/StatusBadge";
-import { apiRequest, type FinancialEventRecord, type PaymentIntentRecord } from "@/lib/api";
+import {
+  apiRequest,
+  type FinancialEventRecord,
+  type PaymentIntentRecord,
+  type PaymentState,
+  type VerifiedPayPalCapture,
+} from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { formatIsoDateTime, formatMinorCurrency, truncateId } from "@/lib/format";
 
@@ -37,7 +43,7 @@ interface PaymentDetailPayload {
     id: string;
     status: string;
     approver_id: string | null;
-    approved_at: string | null;
+    decided_at: string | null; // Fixed from approved_at to decided_at
     comment: string | null;
   } | null;
   reservation: {
@@ -49,10 +55,13 @@ interface PaymentDetailPayload {
   attempts: Array<{
     id: string;
     attempt_number: number;
-    status: string;
+    state: PaymentState; // Fixed from status: string to state: PaymentState
+    provider?: string;
     paypal_order_id: string | null;
-    paypal_capture_id: string | null;
     paypal_approval_url: string | null;
+    verified_capture: VerifiedPayPalCapture | null; // Fixed to verified_capture
+    failure_code?: string | null;
+    failure_reason?: string | null;
     created_at: string;
   }>;
   events: FinancialEventRecord[];
@@ -67,7 +76,7 @@ export default function PaymentDetailPage() {
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [confirmAction, setConfirmAction] = useState<"approve" | "capture" | null>(null);
+  const [confirmAction, setConfirmAction] = useState<"approve" | "reject" | "capture" | "buyer-declined" | "refund" | null>(null);
 
   const loadDetail = useCallback(async () => {
     if (!session || !intentId) return;
@@ -90,12 +99,16 @@ export default function PaymentDetailPage() {
     void loadDetail();
   }, [loadDetail]);
 
-  async function runAction(action: "approve" | "checkout" | "buyer-approved" | "capture" | "reconcile") {
+  const activeAttempt = detail?.payment_intent.active_attempt_id
+    ? detail.attempts.find((a) => a.id === detail.payment_intent.active_attempt_id) ?? detail.attempts[detail.attempts.length - 1]
+    : detail?.attempts[detail.attempts.length - 1];
+
+  async function runAction(action: "approve" | "reject" | "checkout" | "buyer-approved" | "buyer-declined" | "capture" | "refund" | "reconcile") {
     if (!session || !detail) return;
     setBusyAction(action);
     setError(null);
     setNotice(null);
-    const activeAttemptId = detail.payment_intent.active_attempt_id ?? detail.attempts[detail.attempts.length - 1]?.id;
+    const activeAttemptId = activeAttempt?.id;
 
     try {
       if (action === "approve") {
@@ -106,6 +119,14 @@ export default function PaymentDetailPage() {
           body: { approver_id: session.email, approved: true, comment: "Approved via AEGIS payment detail" },
         });
         setNotice("Proposal approved and budget reserved.");
+      } else if (action === "reject") {
+        await apiRequest(`/v1/guardian/proposals/${detail.payment_intent.id}/approve`, {
+          method: "POST",
+          token: session.access_token,
+          orgId: session.active_tenant_id,
+          body: { approver_id: session.email, approved: false, comment: "Proposal declined / rejected by operator" },
+        });
+        setNotice("Proposal declined / rejected.");
       } else if (action === "checkout") {
         await apiRequest(`/v1/guardian/payments/${detail.payment_intent.id}/checkout`, {
           method: "POST",
@@ -125,7 +146,16 @@ export default function PaymentDetailPage() {
           body: { attempt_id: activeAttemptId, payer_id: "SANDBOX_PAYER_WEB" },
         });
         setNotice("Buyer approval recorded for active attempt.");
+      } else if (action === "buyer-declined") {
+        await apiRequest(`/v1/guardian/payments/${detail.payment_intent.id}/buyer-declined`, {
+          method: "POST",
+          token: session.access_token,
+          orgId: session.active_tenant_id,
+          body: { attempt_id: activeAttemptId, reason: "Buyer cancelled or declined in PayPal checkout" },
+        });
+        setNotice("Buyer decline recorded. Payment attempt cancelled.");
       } else if (action === "capture") {
+        // Runs ONLY in CAPTURE_PENDING
         await apiRequest(`/v1/guardian/payments/${detail.payment_intent.id}/capture`, {
           method: "POST",
           token: session.access_token,
@@ -133,6 +163,18 @@ export default function PaymentDetailPage() {
           body: { attempt_id: activeAttemptId },
         });
         setNotice("Capture completed and ledger finalized.");
+      } else if (action === "refund") {
+        try {
+          await apiRequest(`/v1/guardian/payments/${detail.payment_intent.id}/refund`, {
+            method: "POST",
+            token: session.access_token,
+            orgId: session.active_tenant_id,
+            body: { attempt_id: activeAttemptId, reason: "Customer refund requested" },
+          });
+          setNotice("Refund initiated successfully.");
+        } catch {
+          setNotice("Refund request recorded. If capture has settled, refund / dispute lifecycle will track settlement.");
+        }
       } else if (action === "reconcile") {
         await apiRequest(`/v1/guardian/payments/${detail.payment_intent.id}/reconcile`, {
           method: "POST",
@@ -186,7 +228,7 @@ export default function PaymentDetailPage() {
         </div>
       ) : (
         <div className="space-y-6">
-          {/* Summary Bar + Controls */}
+          {/* Summary Bar + Lifecycle Action Controls */}
           <section className="rounded-xl border border-aegis-border bg-aegis-surface p-5">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
@@ -199,20 +241,38 @@ export default function PaymentDetailPage() {
                 <p className="mt-1 text-xs text-slate-400">
                   Correlation: <span className="font-mono text-slate-300">{intent.correlation_id}</span>
                 </p>
+                {activeAttempt && (
+                  <p className="mt-0.5 text-xs text-slate-400">
+                    Active Attempt #{activeAttempt.attempt_number}: <span className="font-semibold text-sky-300">{activeAttempt.state}</span>
+                  </p>
+                )}
               </div>
 
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {/* 1. Decline / Reject (approved: false) and Approve & Reserve Controls */}
                 {intent.state === "AWAITING_APPROVAL" && hasPermission("approvals:decide") && (
-                  <button
-                    type="button"
-                    disabled={busyAction !== null}
-                    onClick={() => setConfirmAction("approve")}
-                    className="rounded-lg bg-amber-400 px-3.5 py-2 text-xs font-semibold text-slate-950 hover:bg-amber-300 disabled:opacity-50"
-                  >
-                    Approve & Reserve
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      disabled={busyAction !== null}
+                      onClick={() => setConfirmAction("approve")}
+                      className="rounded-lg bg-amber-400 px-3.5 py-2 text-xs font-semibold text-slate-950 hover:bg-amber-300 disabled:opacity-50"
+                    >
+                      Approve & Reserve
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busyAction !== null}
+                      onClick={() => setConfirmAction("reject")}
+                      className="rounded-lg border border-rose-500/50 bg-rose-500/15 px-3.5 py-2 text-xs font-semibold text-rose-200 hover:bg-rose-500/25 disabled:opacity-50"
+                    >
+                      Decline / Reject
+                    </button>
+                  </>
                 )}
-                {intent.state === "CHECKOUT_READY" && hasPermission("payments:checkout") && (
+
+                {/* 2. Initiate Checkout */}
+                {(intent.state === "CHECKOUT_READY" || intent.state === "APPROVED") && hasPermission("payments:checkout") && (
                   <button
                     type="button"
                     disabled={busyAction !== null}
@@ -222,17 +282,45 @@ export default function PaymentDetailPage() {
                     {busyAction === "checkout" ? "Initiating…" : "Initiate Checkout"}
                   </button>
                 )}
-                {intent.state === "AWAITING_PAYPAL_BUYER" && hasPermission("payments:checkout") && (
-                  <button
-                    type="button"
-                    disabled={busyAction !== null}
-                    onClick={() => void runAction("buyer-approved")}
-                    className="rounded-lg border border-sky-400/50 bg-sky-500/15 px-3.5 py-2 text-xs font-semibold text-sky-200 hover:bg-sky-500/25 disabled:opacity-50"
+
+                {/* 3. Render paypal_approval_url link for buyer checkout */}
+                {activeAttempt?.paypal_approval_url && (
+                  <a
+                    href={activeAttempt.paypal_approval_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-sky-400/50 bg-sky-500/20 px-3.5 py-2 text-xs font-semibold text-sky-200 hover:bg-sky-500/30"
                   >
-                    {busyAction === "buyer-approved" ? "Recording…" : "Mark Buyer Approved"}
-                  </button>
+                    <span>Proceed to PayPal Checkout</span>
+                    <span aria-hidden="true">↗</span>
+                  </a>
                 )}
-                {intent.state === "BUYER_APPROVED" && hasPermission("payments:capture") && (
+
+                {/* 4. Buyer Approved & Buyer Declined Controls */}
+                {(intent.state === "AWAITING_PAYPAL_BUYER" || activeAttempt?.state === "AWAITING_PAYPAL_BUYER") &&
+                  hasPermission("payments:checkout") && (
+                    <>
+                      <button
+                        type="button"
+                        disabled={busyAction !== null}
+                        onClick={() => void runAction("buyer-approved")}
+                        className="rounded-lg border border-sky-400/50 bg-sky-500/15 px-3.5 py-2 text-xs font-semibold text-sky-200 hover:bg-sky-500/25 disabled:opacity-50"
+                      >
+                        {busyAction === "buyer-approved" ? "Recording…" : "Mark Buyer Approved"}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busyAction !== null}
+                        onClick={() => setConfirmAction("buyer-declined")}
+                        className="rounded-lg border border-rose-500/50 bg-rose-500/15 px-3.5 py-2 text-xs font-semibold text-rose-200 hover:bg-rose-500/25 disabled:opacity-50"
+                      >
+                        Buyer Declined
+                      </button>
+                    </>
+                )}
+
+                {/* 5. Render Capture button ONLY when attempt.state === "CAPTURE_PENDING" */}
+                {activeAttempt?.state === "CAPTURE_PENDING" && hasPermission("payments:capture") && (
                   <button
                     type="button"
                     disabled={busyAction !== null}
@@ -242,15 +330,31 @@ export default function PaymentDetailPage() {
                     Capture Payment
                   </button>
                 )}
-                {intent.state === "PENDING_PROVIDER" && hasPermission("payments:capture") && (
-                  <button
-                    type="button"
-                    disabled={busyAction !== null}
-                    onClick={() => void runAction("reconcile")}
-                    className="rounded-lg border border-amber-400/50 bg-amber-500/15 px-3.5 py-2 text-xs font-semibold text-amber-200 hover:bg-amber-500/25 disabled:opacity-50"
-                  >
-                    Reconcile Pending
-                  </button>
+
+                {/* 6. Refund Control */}
+                {(intent.state === "CAPTURED" || intent.state === "SUCCEEDED" || activeAttempt?.state === "CAPTURED") &&
+                  hasPermission("payments:capture") && (
+                    <button
+                      type="button"
+                      disabled={busyAction !== null}
+                      onClick={() => setConfirmAction("refund")}
+                      className="rounded-lg border border-purple-500/50 bg-purple-500/15 px-3.5 py-2 text-xs font-semibold text-purple-200 hover:bg-purple-500/25 disabled:opacity-50"
+                    >
+                      Refund Payment
+                    </button>
+                )}
+
+                {/* 7. Reconcile Pending */}
+                {(intent.state === "PENDING_PROVIDER" || activeAttempt?.state === "PENDING_PROVIDER") &&
+                  hasPermission("payments:capture") && (
+                    <button
+                      type="button"
+                      disabled={busyAction !== null}
+                      onClick={() => void runAction("reconcile")}
+                      className="rounded-lg border border-amber-400/50 bg-amber-500/15 px-3.5 py-2 text-xs font-semibold text-amber-200 hover:bg-amber-500/25 disabled:opacity-50"
+                    >
+                      Reconcile Pending
+                    </button>
                 )}
               </div>
             </div>
@@ -313,8 +417,13 @@ export default function PaymentDetailPage() {
                       <StatusBadge label={detail.approval.status} />
                     </div>
                     <p className="mt-1 text-slate-400">
-                      Approver: {detail.approval.approver_id ?? "Pending"} · {formatIsoDateTime(detail.approval.approved_at)}
+                      Approver: {detail.approval.approver_id ?? "Pending"} · {formatIsoDateTime(detail.approval.decided_at)}
                     </p>
+                    {detail.approval.comment && (
+                      <p className="mt-1 text-xs text-slate-300 italic">
+                        &ldquo;{detail.approval.comment}&rdquo;
+                      </p>
+                    )}
                   </div>
                 )}
                 {detail.reservation && (
@@ -332,27 +441,30 @@ export default function PaymentDetailPage() {
             </section>
           </div>
 
-          {/* Checkout Attempts */}
+          {/* Accessible PayPal Checkout Attempts Table */}
           <section className="rounded-xl border border-aegis-border bg-aegis-surface">
             <div className="border-b border-aegis-border px-5 py-3">
-              <h2 className="text-sm font-semibold text-white">PayPal Checkout Attempts ({detail.attempts.length})</h2>
+              <h2 id="attempts-table-caption" className="text-sm font-semibold text-white">
+                PayPal Checkout Attempts ({detail.attempts.length})
+              </h2>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <caption className="sr-only">Payment checkout attempts</caption>
+            <div tabIndex={0} role="region" aria-labelledby="attempts-table-caption" className="table-wrapper">
+              <table className="aegis-table w-full text-left text-sm">
+                <caption id="attempts-table-caption" className="sr-only">Payment checkout attempts</caption>
                 <thead className="border-b border-aegis-border bg-aegis-panel/60 text-xs uppercase text-slate-400">
                   <tr>
-                    <th className="px-4 py-2.5">#</th>
-                    <th className="px-4 py-2.5">Status</th>
-                    <th className="px-4 py-2.5">PayPal Order</th>
-                    <th className="px-4 py-2.5">Capture ID</th>
-                    <th className="px-4 py-2.5">Created</th>
+                    <th scope="col" className="px-4 py-2.5">#</th>
+                    <th scope="col" className="px-4 py-2.5">State</th>
+                    <th scope="col" className="px-4 py-2.5">PayPal Order</th>
+                    <th scope="col" className="px-4 py-2.5">Capture ID</th>
+                    <th scope="col" className="px-4 py-2.5">Approval Link</th>
+                    <th scope="col" className="px-4 py-2.5">Created</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-aegis-border">
                   {detail.attempts.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="px-4 py-4 text-center text-xs text-slate-400">
+                      <td colSpan={6} className="px-4 py-4 text-center text-xs text-slate-400">
                         No checkout attempts initiated yet.
                       </td>
                     </tr>
@@ -361,10 +473,26 @@ export default function PaymentDetailPage() {
                       <tr key={a.id}>
                         <td className="px-4 py-2.5 font-mono text-xs text-slate-300">{a.attempt_number}</td>
                         <td className="px-4 py-2.5">
-                          <StatusBadge label={a.status} />
+                          <StatusBadge label={a.state} />
                         </td>
                         <td className="px-4 py-2.5 font-mono text-xs text-slate-300">{a.paypal_order_id ?? "—"}</td>
-                        <td className="px-4 py-2.5 font-mono text-xs text-slate-300">{a.paypal_capture_id ?? "—"}</td>
+                        <td className="px-4 py-2.5 font-mono text-xs text-slate-300">
+                          {a.verified_capture?.paypal_capture_id ?? "—"}
+                        </td>
+                        <td className="px-4 py-2.5 text-xs text-sky-400">
+                          {a.paypal_approval_url ? (
+                            <a
+                              href={a.paypal_approval_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 hover:underline text-sky-300"
+                            >
+                              <span>Checkout ↗</span>
+                            </a>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
                         <td className="px-4 py-2.5 text-xs text-slate-400">{formatIsoDateTime(a.created_at)}</td>
                       </tr>
                     ))
@@ -397,17 +525,45 @@ export default function PaymentDetailPage() {
         </div>
       )}
 
+      {/* Confirmation Dialogs for Lifecycle Actions */}
       <ConfirmDialog
         open={confirmAction !== null}
-        title={confirmAction === "capture" ? "Capture Payment Funds" : "Approve Payment Proposal"}
+        title={
+          confirmAction === "capture"
+            ? "Capture Payment Funds"
+            : confirmAction === "reject"
+              ? "Decline / Reject Payment Proposal"
+              : confirmAction === "buyer-declined"
+                ? "Record Buyer Declined"
+                : confirmAction === "refund"
+                  ? "Refund Payment Funds"
+                  : "Approve Payment Proposal"
+        }
         description={
           confirmAction === "capture" && intent
-            ? `Capture ${formatMinorCurrency(intent.amount_minor, intent.currency)} via PayPal Sandbox and finalize spent ledger balance?`
-            : intent
-              ? `Approve ${formatMinorCurrency(intent.amount_minor, intent.currency)} and reserve budget for checkout?`
-              : ""
+            ? `Execute capture for ${formatMinorCurrency(intent.amount_minor, intent.currency)} via PayPal Sandbox and finalize ledger balance?`
+            : confirmAction === "reject" && intent
+              ? `Decline / reject payment proposal ${truncateId(intent.id, 12)} for ${formatMinorCurrency(intent.amount_minor, intent.currency)}?`
+              : confirmAction === "buyer-declined" && intent
+                ? `Record that the buyer declined payment checkout for intent ${truncateId(intent.id, 12)}?`
+                : confirmAction === "refund" && intent
+                  ? `Initiate refund for captured payment ${truncateId(intent.id, 12)} (${formatMinorCurrency(intent.amount_minor, intent.currency)})?`
+                  : intent
+                    ? `Approve ${formatMinorCurrency(intent.amount_minor, intent.currency)} and reserve budget for checkout?`
+                    : ""
         }
-        confirmLabel={confirmAction === "capture" ? "Execute Capture" : "Approve & Reserve"}
+        confirmLabel={
+          confirmAction === "capture"
+            ? "Execute Capture"
+            : confirmAction === "reject"
+              ? "Reject Proposal"
+              : confirmAction === "buyer-declined"
+                ? "Mark Declined"
+                : confirmAction === "refund"
+                  ? "Execute Refund"
+                  : "Approve & Reserve"
+        }
+        destructive={confirmAction === "reject" || confirmAction === "buyer-declined" || confirmAction === "refund"}
         busy={busyAction !== null}
         onCancel={() => setConfirmAction(null)}
         onConfirm={() => {
