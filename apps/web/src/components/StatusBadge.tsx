@@ -2,18 +2,29 @@ import React from "react";
 import { badgeToneForStatus } from "@/lib/format";
 
 const TONE_CLASSES = {
-  success: "border-emerald-500/30 bg-emerald-500/15 text-emerald-300",
-  warning: "border-amber-500/30 bg-amber-500/15 text-amber-300",
-  danger: "border-rose-500/30 bg-rose-500/15 text-rose-300",
-  info: "border-sky-500/30 bg-sky-500/15 text-sky-300",
-  neutral: "border-slate-600/40 bg-slate-700/30 text-slate-300",
+  success: "border-[#3A4A28] bg-[#162112] text-[#D7F17B]",
+  warning: "border-[#4A3728] bg-[#211812] text-[#D58A62]",
+  danger: "border-[#4A2828] bg-[#211212] text-[#EF5350]",
+  info: "border-[#28332B] bg-[#1B211D] text-[#A8B1A9]",
+  neutral: "border-[#28332B] bg-[#161C18] text-[#8C988E]",
+};
+
+const DOT_CLASSES = {
+  success: "bg-[#D7F17B]",
+  warning: "bg-[#D58A62]",
+  danger: "bg-[#EF5350]",
+  info: "bg-[#A8B1A9]",
+  neutral: "bg-[#657167]",
 };
 
 export function StatusBadge({ label }: { label: string }) {
   const tone = badgeToneForStatus(label);
   return (
-    <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium ${TONE_CLASSES[tone]}`}>
-      {label}
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-[3px] border px-2 py-0.5 font-mono text-[11px] font-medium uppercase tracking-wider ${TONE_CLASSES[tone]}`}
+    >
+      <span className={`h-1.5 w-1.5 rounded-full ${DOT_CLASSES[tone]}`} aria-hidden="true" />
+      <span>{label}</span>
     </span>
   );
 }

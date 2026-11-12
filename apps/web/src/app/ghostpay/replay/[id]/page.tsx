@@ -85,66 +85,66 @@ export default function GhostPayReplayDetailPage() {
       title="Deterministic Replay & Counterfactual Lab"
       subtitle={`Payment Intent ${paymentIntentId}`}
     >
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <Link href="/ghostpay" className="text-xs font-medium text-sky-400 hover:underline">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2 font-mono text-xs">
+        <Link href="/ghostpay" className="text-aegis-accent hover:underline">
           ← Back to GhostPay Investigations
         </Link>
-        <Link href={`/payments/${paymentIntentId}`} className="text-xs font-medium text-slate-300 hover:underline">
+        <Link href={`/payments/${paymentIntentId}`} className="text-aegis-text-muted hover:text-aegis-text-primary hover:underline">
           Inspect Live Payment Lifecycle →
         </Link>
       </div>
 
       {error && (
-        <div role="alert" className="mb-4 rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
-          {error}
+        <div role="alert" className="mb-4 rounded border border-aegis-rose/40 bg-aegis-rose/10 px-4 py-3 font-mono text-xs text-aegis-rose">
+          [FAULT] {error}
         </div>
       )}
 
       {loading || !replay ? (
-        <div className="rounded-xl border border-aegis-border bg-aegis-surface p-6 text-sm text-slate-400">
+        <div className="rounded-xl border border-aegis-border bg-aegis-surface p-6 font-mono text-xs text-aegis-text-muted">
           Running deterministic replay and hash-chain verification…
         </div>
       ) : (
         <div className="space-y-6">
           {/* Replay Result */}
           <section className="rounded-xl border border-aegis-border bg-aegis-surface p-5">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-aegis-border pb-3">
               <div className="flex flex-wrap items-center gap-2">
                 <StatusBadge label={replay.consistency_status} />
                 <StatusBadge label={replay.integrity_valid ? "VERIFIED" : "INTEGRITY_FAILURE"} />
-                <span className="rounded-md border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 font-mono text-xs text-sky-300">
+                <span className="rounded border border-aegis-accent/40 bg-aegis-card px-2 py-0.5 font-mono text-xs text-aegis-accent">
                   executed_payment={String(replay.executed_payment)}
                 </span>
               </div>
-              <span className="font-mono text-xs text-slate-400">Policy {replay.policy_version}</span>
+              <span className="font-mono text-xs text-aegis-text-muted">Policy Engine: {replay.policy_version}</span>
             </div>
 
             <div className="mt-4 grid gap-4 md:grid-cols-2">
-              <div className="rounded-lg border border-aegis-border bg-aegis-panel p-4">
-                <div className="text-xs uppercase text-slate-400">Recorded Original Decision</div>
+              <div className="rounded border border-aegis-border bg-aegis-card p-4">
+                <div className="font-mono text-xs uppercase tracking-wider text-aegis-text-muted">Recorded Original Decision</div>
                 <div className="mt-2 flex items-center gap-2">
                   <StatusBadge label={replay.original_outcome} />
-                  <span className="text-xs text-slate-300">{replay.original_reason_codes.join(", ") || "—"}</span>
+                  <span className="font-mono text-xs text-aegis-text-muted">{replay.original_reason_codes.join(", ") || "—"}</span>
                 </div>
               </div>
-              <div className="rounded-lg border border-aegis-border bg-aegis-panel p-4">
-                <div className="text-xs uppercase text-slate-400">Recomputed Policy Decision</div>
+              <div className="rounded border border-aegis-border bg-aegis-card p-4">
+                <div className="font-mono text-xs uppercase tracking-wider text-aegis-text-muted">Recomputed Policy Decision</div>
                 <div className="mt-2 flex items-center gap-2">
                   <StatusBadge label={replay.recomputed_outcome} />
-                  <span className="text-xs text-slate-300">{replay.recomputed_reason_codes.join(", ") || "—"}</span>
+                  <span className="font-mono text-xs text-aegis-text-muted">{replay.recomputed_reason_codes.join(", ") || "—"}</span>
                 </div>
               </div>
             </div>
 
-            <p className="mt-4 text-sm text-slate-200">{replay.explanation}</p>
+            <p className="mt-4 text-xs text-aegis-text-primary leading-relaxed">{replay.explanation}</p>
 
             {replay.anomalies.length > 0 && (
-              <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+              <div className="mt-3 rounded border border-aegis-copper/40 bg-aegis-card p-3 font-mono text-xs text-aegis-copper">
                 Detected anomalies: {replay.anomalies.join(", ")}
               </div>
             )}
             {replay.missing_evidence.length > 0 && (
-              <div className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-200">
+              <div className="mt-3 rounded border border-aegis-rose/40 bg-aegis-card p-3 font-mono text-xs text-aegis-rose">
                 Missing evidence: {replay.missing_evidence.join(", ")}
               </div>
             )}
@@ -152,13 +152,16 @@ export default function GhostPayReplayDetailPage() {
 
           {/* Counterfactual Simulator */}
           <section className="rounded-xl border border-aegis-border bg-aegis-surface p-5">
-            <h2 className="text-sm font-semibold text-white">Counterfactual Policy Simulation</h2>
-            <p className="mt-0.5 text-xs text-slate-400">
-              Test what deterministic verdict the policy engine would produce under modified thresholds without altering stored ledger balances.
+            <div className="border-b border-aegis-border pb-3">
+              <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-copper">[SIMULATION // WHAT-IF]</span>
+              <h2 className="text-sm font-semibold tracking-wide text-aegis-text-primary">Counterfactual Policy Simulation</h2>
+            </div>
+            <p className="mt-2 text-xs text-aegis-text-muted">
+              Test what deterministic verdict the policy engine would produce under hypothetical thresholds without modifying stored ledger balances.
             </p>
-            <form onSubmit={handleRunSimulation} className="mt-4 grid gap-4 md:grid-cols-4">
+            <form onSubmit={handleRunSimulation} className="mt-4 grid gap-4 md:grid-cols-4 font-mono text-xs">
               <div>
-                <label htmlFor="sim-per-tx" className="block text-xs font-medium text-slate-300">
+                <label htmlFor="sim-per-tx" className="block text-[11px] uppercase tracking-wider text-aegis-text-muted">
                   Per-Tx Limit (USD)
                 </label>
                 <input
@@ -167,12 +170,12 @@ export default function GhostPayReplayDetailPage() {
                   step="0.01"
                   value={perTxUsd}
                   onChange={(e) => setPerTxUsd(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-panel px-3 py-2 text-sm text-white"
+                  className="mt-1 w-full rounded border border-aegis-border bg-aegis-card px-3 py-1.5 text-xs text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
                 />
               </div>
               <div>
-                <label htmlFor="sim-threshold" className="block text-xs font-medium text-slate-300">
-                  Human Approval Threshold (USD)
+                <label htmlFor="sim-threshold" className="block text-[11px] uppercase tracking-wider text-aegis-text-muted">
+                  Escalation Threshold (USD)
                 </label>
                 <input
                   id="sim-threshold"
@@ -180,16 +183,16 @@ export default function GhostPayReplayDetailPage() {
                   step="0.01"
                   value={humanThresholdUsd}
                   onChange={(e) => setHumanThresholdUsd(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-panel px-3 py-2 text-sm text-white"
+                  className="mt-1 w-full rounded border border-aegis-border bg-aegis-card px-3 py-1.5 text-xs text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
                 />
               </div>
               <div className="flex items-end pb-2">
-                <label className="flex items-center gap-2 text-xs text-slate-200">
+                <label className="flex items-center gap-2 text-xs text-aegis-text-primary">
                   <input
                     type="checkbox"
                     checked={allowUnknownMerchants}
                     onChange={(e) => setAllowUnknownMerchants(e.target.checked)}
-                    className="rounded border-aegis-border bg-aegis-panel"
+                    className="rounded border-aegis-border bg-aegis-card text-aegis-accent focus:ring-aegis-accent"
                   />
                   Allow unknown merchants
                 </label>
@@ -198,7 +201,7 @@ export default function GhostPayReplayDetailPage() {
                 <button
                   type="submit"
                   disabled={simulating || !hasPermission("ghostpay:simulate")}
-                  className="w-full rounded-lg bg-sky-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50"
+                  className="w-full rounded bg-aegis-accent px-4 py-2 font-semibold uppercase tracking-wider text-[#111513] hover:bg-[#c8e562] disabled:opacity-50 transition"
                 >
                   {simulating ? "Simulating…" : "Run Counterfactual"}
                 </button>
@@ -206,19 +209,19 @@ export default function GhostPayReplayDetailPage() {
             </form>
 
             {simulation && (
-              <div className="mt-4 rounded-lg border border-sky-500/30 bg-sky-500/10 p-4 text-xs">
+              <div className="mt-4 rounded border border-aegis-accent/40 bg-aegis-card p-4 text-xs font-mono">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-semibold text-sky-200">Counterfactual Result</span>
+                  <span className="font-semibold text-aegis-accent uppercase tracking-wider">Counterfactual Verdict</span>
                   <div className="flex items-center gap-2">
                     <StatusBadge label={simulation.original_outcome} />
-                    <span className="text-slate-300">→</span>
+                    <span className="text-aegis-text-muted">→</span>
                     <StatusBadge label={simulation.recomputed_outcome} />
                   </div>
                 </div>
-                <p className="mt-2 text-slate-200">{simulation.explanation}</p>
+                <p className="mt-2 text-aegis-text-primary">{simulation.explanation}</p>
                 {simulation.changed_constraints.length > 0 && (
-                  <p className="mt-1 font-mono text-[11px] text-sky-300">
-                    Changed constraints: {simulation.changed_constraints.join(", ")}
+                  <p className="mt-1 text-[11px] text-aegis-accent">
+                    Constraint deltas: {simulation.changed_constraints.join(", ")}
                   </p>
                 )}
               </div>
@@ -228,35 +231,38 @@ export default function GhostPayReplayDetailPage() {
           {/* Forensic Timeline */}
           <section className="rounded-xl border border-aegis-border bg-aegis-surface">
             <div className="border-b border-aegis-border px-5 py-3">
-              <h2 className="text-sm font-semibold text-white">Provenance Timeline ({replay.timeline.length})</h2>
+              <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-accent">[PROVENANCE // TIMELINE]</span>
+              <h2 className="text-sm font-semibold tracking-wide text-aegis-text-primary">
+                Tamper-Evident History ({replay.timeline.length} events)
+              </h2>
             </div>
             <div className="divide-y divide-aegis-border">
               {replay.timeline.map((entry) => (
                 <div key={`${entry.sequence_number}-${entry.event_type}`} className="flex flex-wrap items-start justify-between gap-2 px-5 py-3 text-xs">
                   <div className="space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-slate-400">#{entry.sequence_number}</span>
-                      <span className="font-semibold text-white">{entry.event_type}</span>
-                      <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[11px] text-slate-300">
+                      <span className="font-mono text-aegis-accent font-bold">#{entry.sequence_number}</span>
+                      <span className="font-semibold text-aegis-text-primary">{entry.event_type}</span>
+                      <span className="rounded border border-aegis-border bg-aegis-card px-1.5 py-0.5 font-mono text-[11px] text-aegis-text-muted">
                         {entry.actor_type}: {entry.actor_id}
                       </span>
                       {entry.integrity_verified !== undefined && (
-                        <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                        <span className={`rounded border px-1.5 py-0.5 font-mono text-[10px] font-medium ${
                           entry.integrity_verified
-                            ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
-                            : "bg-rose-500/10 text-rose-400 border border-rose-500/30"
+                            ? "border-aegis-accent/40 bg-aegis-accent/15 text-aegis-accent"
+                            : "border-aegis-rose/40 bg-aegis-rose/15 text-aegis-rose"
                         }`}>
                           {entry.integrity_verified ? "✓ Verified" : "✗ Integrity Fail"}
                         </span>
                       )}
                     </div>
-                    <p className="text-slate-300">{entry.summary}</p>
-                    <div className="flex flex-wrap items-center gap-4 font-mono text-[11px] text-slate-400">
-                      <span>Hash: <span className="text-sky-300">{truncateId(entry.event_hash, 12)}</span></span>
-                      <span>Prev: <span className="text-slate-400">{entry.previous_event_hash ? truncateId(entry.previous_event_hash, 12) : "GENESIS"}</span></span>
+                    <p className="text-aegis-text-muted">{entry.summary}</p>
+                    <div className="flex flex-wrap items-center gap-4 font-mono text-[11px] text-aegis-text-faint">
+                      <span>Hash: <span className="text-aegis-accent">{truncateId(entry.event_hash, 12)}</span></span>
+                      <span>Prev: <span className="text-aegis-text-muted">{entry.previous_event_hash ? truncateId(entry.previous_event_hash, 12) : "GENESIS"}</span></span>
                     </div>
                   </div>
-                  <span className="font-mono text-[11px] text-slate-400">{formatIsoDateTime(entry.occurred_at)}</span>
+                  <span className="font-mono text-[11px] text-aegis-text-faint">{formatIsoDateTime(entry.occurred_at)}</span>
                 </div>
               ))}
             </div>

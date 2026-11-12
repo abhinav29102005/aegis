@@ -49,19 +49,24 @@ export function ConfirmDialog({
           e.preventDefault();
         }
       }}
-      className="w-full max-w-md rounded-xl border border-aegis-border bg-aegis-panel p-6 text-slate-100 shadow-2xl"
+      className="w-full max-w-md rounded-md border border-aegis-border bg-aegis-surface p-6 text-aegis-text-primary shadow-panel"
     >
-      <h2 id={titleId} className="text-lg font-semibold text-white">
+      <div className="flex items-center gap-2 border-b border-aegis-border pb-3">
+        <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-accent font-semibold">
+          CONTROL CONFIRMATION
+        </span>
+      </div>
+      <h2 id={titleId} className="mt-3 text-base font-semibold text-aegis-text-primary tracking-tight">
         {title}
       </h2>
-      <p className="mt-2 text-sm text-slate-300">{description}</p>
-      <div className="mt-6 flex justify-end gap-3">
+      <p className="mt-2 text-xs leading-relaxed text-aegis-text-muted">{description}</p>
+      <div className="mt-6 flex justify-end gap-3 pt-3 border-t border-aegis-border-subtle">
         <button
           type="button"
           autoFocus={destructive}
           disabled={busy}
           onClick={onCancel}
-          className="rounded-lg border border-aegis-border bg-aegis-surface px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-800 disabled:opacity-50"
+          className="rounded-[3px] border border-aegis-border bg-aegis-card px-4 py-2 font-mono text-xs uppercase tracking-wider text-aegis-text-primary hover:bg-aegis-secondary hover:border-aegis-border-active disabled:opacity-50 transition-colors"
         >
           Cancel
         </button>
@@ -70,11 +75,11 @@ export function ConfirmDialog({
           autoFocus={!destructive}
           disabled={busy}
           onClick={onConfirm}
-          className={
+          className={`rounded-[3px] px-4 py-2 font-mono text-xs uppercase tracking-wider font-semibold disabled:opacity-50 transition-colors ${
             destructive
-              ? "rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-500 disabled:opacity-50"
-              : "rounded-lg bg-sky-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50"
-          }
+              ? "bg-[#EF5350] text-[#111513] hover:bg-[#ff6b6b]"
+              : "bg-aegis-accent text-[#111513] hover:bg-aegis-accent-hover"
+          }`}
         >
           {busy ? "Processing…" : confirmLabel}
         </button>

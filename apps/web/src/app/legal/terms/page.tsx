@@ -5,7 +5,7 @@ export default function TermsOfServicePage() {
   return (
     <div className="space-y-8 rounded-2xl border border-aegis-border bg-aegis-surface p-8 shadow-xl">
       <div className="border-b border-aegis-border pb-6">
-        <div className="flex items-center gap-2 text-sky-400">
+        <div className="flex items-center gap-2 text-aegis-accent">
           <FileText className="h-6 w-6" />
           <h1 className="text-2xl font-bold text-white">Master SaaS Terms of Service</h1>
         </div>
@@ -62,7 +62,7 @@ export default function TermsOfServicePage() {
         <section>
           <h2 className="text-sm font-semibold text-white">5. Service Level Agreement (SLA) & Availability</h2>
           <p className="mt-1">
-            AEGIS commits to a 99.9% Monthly Uptime Percentage for the Core Governance API and Verification Engine. Scheduled maintenance will be announced with at least 48 hours notice via the public status page at <a href="/status" className="text-sky-400 underline">/status</a>.
+            AEGIS commits to a 99.9% Monthly Uptime Percentage for the Core Governance API and Verification Engine. Scheduled maintenance will be announced with at least 48 hours notice via the public status page at <a href="/status" className="text-aegis-accent underline">/status</a>.
           </p>
         </section>
 
@@ -89,7 +89,7 @@ export default function TermsOfServicePage() {
       </div>
 
       <div className="border-t border-aegis-border pt-4 text-xs text-slate-400">
-        Questions regarding these Terms? Contact legal at <span className="font-mono text-sky-300">legal@aegis-platform.internal</span>.
+        Questions regarding these Terms? Contact legal at <span className="font-mono text-aegis-accent">legal@aegis-platform.internal</span>.
       </div>
     </div>
   );

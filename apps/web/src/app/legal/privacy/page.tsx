@@ -5,7 +5,7 @@ export default function PrivacyPolicyPage() {
   return (
     <div className="space-y-8 rounded-2xl border border-aegis-border bg-aegis-surface p-8 shadow-xl">
       <div className="border-b border-aegis-border pb-6">
-        <div className="flex items-center gap-2 text-sky-400">
+        <div className="flex items-center gap-2 text-aegis-accent">
           <Shield className="h-6 w-6" />
           <h1 className="text-2xl font-bold text-white">Global Privacy & Data Protection Policy</h1>
         </div>
@@ -80,7 +80,7 @@ export default function PrivacyPolicyPage() {
           <p className="mt-1">
             For inquiries regarding GDPR or India DPDPA compliance, or to exercise data rights, contact our Data Protection Officer at:
           </p>
-          <div className="mt-2 rounded-lg border border-aegis-border bg-aegis-panel p-3 font-mono text-[11px] text-sky-300">
+          <div className="mt-2 rounded-lg border border-aegis-border bg-aegis-panel p-3 font-mono text-[11px] text-aegis-accent">
             Data Protection Officer: dpo@aegis-platform.internal<br />
             AEGIS Platform Inc. Trust & Compliance Office<br />
             Jurisdiction: Delaware, USA & European Union Representative

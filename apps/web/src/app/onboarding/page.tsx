@@ -19,12 +19,12 @@ import { apiRequest } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 
 const STEPS = [
-  { id: 1, title: "Organization Profile", icon: Building2 },
-  { id: 2, title: "Payment Gateway", icon: CreditCard },
-  { id: 3, title: "Register AI Agent", icon: Bot },
-  { id: 4, title: "Spending Passport", icon: Wallet },
-  { id: 5, title: "Security & API Keys", icon: Key },
-  { id: 6, title: "Launch Workspace", icon: Rocket },
+  { id: 1, title: "Organization", icon: Building2 },
+  { id: 2, title: "Payment Rail", icon: CreditCard },
+  { id: 3, title: "AI Agent", icon: Bot },
+  { id: 4, title: "Passport", icon: Wallet },
+  { id: 5, title: "API Keys", icon: Key },
+  { id: 6, title: "Launch", icon: Rocket },
 ];
 
 export default function OnboardingPage() {
@@ -138,7 +138,7 @@ export default function OnboardingPage() {
   return (
     <AppShell
       title="Onboarding Wizard"
-      subtitle="Guided initial setup: configure tenant parameters, sandbox payment rail, and provision your first autonomous agent passport."
+      subtitle="Guided setup: configure tenant parameters, sandbox payment rail, and provision your first autonomous agent passport"
     >
       <div className="mx-auto max-w-3xl">
         {/* Progress Bar & Steps */}
@@ -151,19 +151,19 @@ export default function OnboardingPage() {
               return (
                 <div key={step.id} className="flex flex-col items-center">
                   <div
-                    className={`flex h-10 w-10 items-center justify-center rounded-xl transition ${
+                    className={`flex h-10 w-10 items-center justify-center rounded border transition ${
                       isDone
-                        ? "bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/40"
+                        ? "border-aegis-accent/40 bg-aegis-accent/15 text-aegis-accent"
                         : isCurrent
-                          ? "bg-sky-500 text-slate-950 font-bold shadow-lg shadow-sky-500/20"
-                          : "bg-aegis-surface text-slate-500 border border-aegis-border"
+                          ? "border-aegis-accent bg-aegis-accent text-[#111513] font-bold shadow-sm"
+                          : "border-aegis-border bg-aegis-card text-aegis-text-faint"
                     }`}
                   >
                     {isDone ? <CheckCircle2 className="h-5 w-5" /> : <Icon className="h-4 w-4" />}
                   </div>
                   <span
-                    className={`mt-2 hidden sm:block text-[11px] font-medium ${
-                      isCurrent ? "text-sky-300" : isDone ? "text-slate-300" : "text-slate-500"
+                    className={`mt-2 hidden sm:block font-mono text-[10px] uppercase tracking-wider ${
+                      isCurrent ? "text-aegis-accent font-semibold" : isDone ? "text-aegis-text-primary" : "text-aegis-text-faint"
                     }`}
                   >
                     {step.title}
@@ -172,9 +172,9 @@ export default function OnboardingPage() {
               );
             })}
           </div>
-          <div className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+          <div className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-aegis-card border border-aegis-border">
             <div
-              className="h-full bg-sky-500 transition-all duration-300"
+              className="h-full bg-aegis-accent transition-all duration-300"
               style={{ width: `${((currentStep - 1) / (STEPS.length - 1)) * 100}%` }}
             />
           </div>
@@ -184,28 +184,28 @@ export default function OnboardingPage() {
           <div
             role="alert"
             aria-live="assertive"
-            className="mb-6 rounded-xl border border-rose-500/40 bg-rose-500/10 p-4 text-xs text-rose-200"
+            className="mb-6 rounded border border-aegis-rose/40 bg-aegis-rose/10 p-4 font-mono text-xs text-aegis-rose"
           >
-            {error}
+            [FAULT] {error}
           </div>
         )}
 
         {/* STEP CONTENT */}
-        <div className="rounded-2xl border border-aegis-border bg-aegis-surface p-6 shadow-xl lg:p-8">
+        <div className="rounded-xl border border-aegis-border bg-aegis-surface p-6 shadow-sm lg:p-8">
           {/* Step 1: Organization */}
           {currentStep === 1 && (
             <div className="space-y-4">
-              <div className="flex items-center gap-2 text-sky-400">
-                <Building2 className="h-5 w-5" />
-                <h2 className="text-lg font-bold text-white">Step 1: Organization Environment</h2>
+              <div className="border-b border-aegis-border pb-3">
+                <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-accent">[SETUP // STEP 01]</span>
+                <h2 className="text-base font-semibold tracking-wide text-aegis-text-primary">Organization Environment</h2>
               </div>
-              <p className="text-xs text-slate-400">
-                Set baseline operating standards for this organization workspace.
+              <p className="text-xs text-aegis-text-muted">
+                Define the primary boundary parameters and settlement currency for this workspace.
               </p>
 
               <div className="grid gap-4 sm:grid-cols-2 pt-2">
                 <div>
-                  <label htmlFor="company-domain" className="block text-xs font-medium text-slate-300">
+                  <label htmlFor="company-domain" className="block font-mono text-[11px] uppercase tracking-wider text-aegis-text-muted">
                     Primary Corporate Domain
                   </label>
                   <input
@@ -214,19 +214,19 @@ export default function OnboardingPage() {
                     value={orgDomain}
                     onChange={(e) => setOrgDomain(e.target.value)}
                     placeholder="mycompany.com"
-                    className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-panel px-3 py-2 text-xs text-white"
+                    className="mt-1 w-full rounded border border-aegis-border bg-aegis-card px-3 py-1.5 font-mono text-xs text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
                   />
                 </div>
 
                 <div>
-                  <label htmlFor="default-currency" className="block text-xs font-medium text-slate-300">
+                  <label htmlFor="default-currency" className="block font-mono text-[11px] uppercase tracking-wider text-aegis-text-muted">
                     Default Ledger Currency
                   </label>
                   <select
                     id="default-currency"
                     value={currency}
                     onChange={(e) => setCurrency(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-panel px-3 py-2 text-xs text-white"
+                    className="mt-1 w-full rounded border border-aegis-border bg-aegis-card px-3 py-1.5 font-mono text-xs text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
                   >
                     <option value="USD">USD — United States Dollar</option>
                     <option value="EUR">EUR — Euro</option>
@@ -236,14 +236,14 @@ export default function OnboardingPage() {
                 </div>
 
                 <div className="sm:col-span-2">
-                  <label htmlFor="compliance-jurisdiction" className="block text-xs font-medium text-slate-300">
-                    Data Compliance Jurisdiction
+                  <label htmlFor="compliance-jurisdiction" className="block font-mono text-[11px] uppercase tracking-wider text-aegis-text-muted">
+                    Compliance Jurisdiction
                   </label>
                   <select
                     id="compliance-jurisdiction"
                     value={complianceRegion}
                     onChange={(e) => setComplianceRegion(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-panel px-3 py-2 text-xs text-white"
+                    className="mt-1 w-full rounded border border-aegis-border bg-aegis-card px-3 py-1.5 font-mono text-xs text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
                   >
                     <option value="US_EU_INDIA">Global: US SOX / EU GDPR / India DPDPA 2023</option>
                     <option value="EU_ONLY">Strict EU GDPR (Data localized to Frankfurt)</option>
@@ -257,17 +257,17 @@ export default function OnboardingPage() {
           {/* Step 2: Payment Rail */}
           {currentStep === 2 && (
             <div className="space-y-4">
-              <div className="flex items-center gap-2 text-sky-400">
-                <CreditCard className="h-5 w-5" />
-                <h2 className="text-lg font-bold text-white">Step 2: Payment Gateway & Sandbox Setup</h2>
+              <div className="border-b border-aegis-border pb-3">
+                <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-copper">[SETUP // STEP 02]</span>
+                <h2 className="text-base font-semibold tracking-wide text-aegis-text-primary">Payment Rail & Sandbox Integration</h2>
               </div>
-              <p className="text-xs text-slate-400">
-                AEGIS connects directly to your PayPal Sandbox or production merchant account. AEGIS never holds or escrows funds.
+              <p className="text-xs text-aegis-text-muted">
+                AEGIS coordinates with your PayPal Sandbox merchant credentials. AEGIS never holds or takes custody of funds.
               </p>
 
               <div className="space-y-3 pt-2">
                 <div>
-                  <label htmlFor="paypal-client-id" className="block text-xs font-medium text-slate-300">
+                  <label htmlFor="paypal-client-id" className="block font-mono text-[11px] uppercase tracking-wider text-aegis-text-muted">
                     PayPal Sandbox Client ID
                   </label>
                   <input
@@ -275,20 +275,20 @@ export default function OnboardingPage() {
                     type="text"
                     value={paypalClientId}
                     onChange={(e) => setPaypalClientId(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-panel px-3 py-2 text-xs text-white"
+                    className="mt-1 w-full rounded border border-aegis-border bg-aegis-card px-3 py-1.5 font-mono text-xs text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
                   />
                 </div>
 
-                <div className="flex items-center gap-3 rounded-lg border border-aegis-border bg-aegis-panel p-3">
+                <div className="flex items-center gap-3 rounded border border-aegis-border bg-aegis-card p-3">
                   <input
                     id="sandbox-toggle"
                     type="checkbox"
                     checked={sandboxMode}
                     onChange={(e) => setSandboxMode(e.target.checked)}
-                    className="h-4 w-4 rounded border-aegis-border text-sky-500 focus:ring-sky-400"
+                    className="h-4 w-4 rounded border-aegis-border bg-aegis-surface text-aegis-accent focus:ring-aegis-accent"
                   />
-                  <label htmlFor="sandbox-toggle" className="text-xs text-slate-300">
-                    Enable Mock & Sandbox Execution Mode (Recommended for testing before live deployment)
+                  <label htmlFor="sandbox-toggle" className="font-mono text-xs text-aegis-text-primary">
+                    Enable Isolated Sandbox Execution Mode (Recommended for testing before live deployment)
                   </label>
                 </div>
               </div>
@@ -298,17 +298,17 @@ export default function OnboardingPage() {
           {/* Step 3: Register Agent */}
           {currentStep === 3 && (
             <div className="space-y-4">
-              <div className="flex items-center gap-2 text-sky-400">
-                <Bot className="h-5 w-5" />
-                <h2 className="text-lg font-bold text-white">Step 3: Register Your First AI Agent</h2>
+              <div className="border-b border-aegis-border pb-3">
+                <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-accent">[SETUP // STEP 03]</span>
+                <h2 className="text-base font-semibold tracking-wide text-aegis-text-primary">Register Autonomous AI Agent</h2>
               </div>
-              <p className="text-xs text-slate-400">
-                Register an autonomous purchasing agent identity. Every agent must possess a unique cryptographic fingerprint.
+              <p className="text-xs text-aegis-text-muted">
+                Register an AI purchasing agent identity. Every autonomous actor receives a deterministic cryptographic fingerprint.
               </p>
 
               <div className="space-y-3 pt-2">
                 <div>
-                  <label htmlFor="agent-name-input" className="block text-xs font-medium text-slate-300">
+                  <label htmlFor="agent-name-input" className="block font-mono text-[11px] uppercase tracking-wider text-aegis-text-muted">
                     Agent Name
                   </label>
                   <input
@@ -318,19 +318,19 @@ export default function OnboardingPage() {
                     value={agentName}
                     onChange={(e) => setAgentName(e.target.value)}
                     placeholder="Procurement-Agent-Alpha"
-                    className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-panel px-3 py-2 text-xs text-white"
+                    className="mt-1 w-full rounded border border-aegis-border bg-aegis-card px-3 py-1.5 font-mono text-xs text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
                   />
                 </div>
 
                 <div>
-                  <label htmlFor="agent-framework-select" className="block text-xs font-medium text-slate-300">
+                  <label htmlFor="agent-framework-select" className="block font-mono text-[11px] uppercase tracking-wider text-aegis-text-muted">
                     Agent Framework
                   </label>
                   <select
                     id="agent-framework-select"
                     value={agentFramework}
                     onChange={(e) => setAgentFramework(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-panel px-3 py-2 text-xs text-white"
+                    className="mt-1 w-full rounded border border-aegis-border bg-aegis-card px-3 py-1.5 font-mono text-xs text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
                   >
                     <option value="LangChain">LangChain / LangGraph</option>
                     <option value="CrewAI">CrewAI</option>
@@ -341,15 +341,15 @@ export default function OnboardingPage() {
                 </div>
 
                 <div>
-                  <label htmlFor="agent-purpose-input" className="block text-xs font-medium text-slate-300">
-                    Operational Purpose & Scope
+                  <label htmlFor="agent-purpose-input" className="block font-mono text-[11px] uppercase tracking-wider text-aegis-text-muted">
+                    Operational Scope & Purpose
                   </label>
                   <textarea
                     id="agent-purpose-input"
                     rows={2}
                     value={agentPurpose}
                     onChange={(e) => setAgentPurpose(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-panel px-3 py-2 text-xs text-white"
+                    className="mt-1 w-full rounded border border-aegis-border bg-aegis-card px-3 py-1.5 text-xs text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
                   />
                 </div>
               </div>
@@ -359,17 +359,17 @@ export default function OnboardingPage() {
           {/* Step 4: Spending Passport */}
           {currentStep === 4 && (
             <div className="space-y-4">
-              <div className="flex items-center gap-2 text-sky-400">
-                <Wallet className="h-5 w-5" />
-                <h2 className="text-lg font-bold text-white">Step 4: Issue Spending Passport</h2>
+              <div className="border-b border-aegis-border pb-3">
+                <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-accent">[SETUP // STEP 04]</span>
+                <h2 className="text-base font-semibold tracking-wide text-aegis-text-primary">Issue Spending Passport</h2>
               </div>
-              <p className="text-xs text-slate-400">
-                Bound hard deterministic financial boundaries. Autonomous transactions exceeding limits escalate to human approval.
+              <p className="text-xs text-aegis-text-muted">
+                Bind deterministic financial limits. Proposals exceeding these boundaries require explicit human sign-off.
               </p>
 
               <div className="grid gap-4 sm:grid-cols-3 pt-2">
                 <div>
-                  <label htmlFor="total-budget" className="block text-xs font-medium text-slate-300">
+                  <label htmlFor="total-budget" className="block font-mono text-[11px] uppercase tracking-wider text-aegis-text-muted">
                     Total Lifetime Budget (${currency})
                   </label>
                   <input
@@ -377,12 +377,12 @@ export default function OnboardingPage() {
                     type="number"
                     value={totalBudget}
                     onChange={(e) => setTotalBudget(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-panel px-3 py-2 text-xs text-white"
+                    className="mt-1 w-full rounded border border-aegis-border bg-aegis-card px-3 py-1.5 font-mono text-xs text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
                   />
                 </div>
 
                 <div>
-                  <label htmlFor="tx-limit" className="block text-xs font-medium text-slate-300">
+                  <label htmlFor="tx-limit" className="block font-mono text-[11px] uppercase tracking-wider text-aegis-text-muted">
                     Per-Transaction Limit (${currency})
                   </label>
                   <input
@@ -390,12 +390,12 @@ export default function OnboardingPage() {
                     type="number"
                     value={txLimit}
                     onChange={(e) => setTxLimit(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-panel px-3 py-2 text-xs text-white"
+                    className="mt-1 w-full rounded border border-aegis-border bg-aegis-card px-3 py-1.5 font-mono text-xs text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
                   />
                 </div>
 
                 <div>
-                  <label htmlFor="approval-threshold" className="block text-xs font-medium text-slate-300">
+                  <label htmlFor="approval-threshold" className="block font-mono text-[11px] uppercase tracking-wider text-aegis-text-muted">
                     Human Escalation Threshold (${currency})
                   </label>
                   <input
@@ -403,7 +403,7 @@ export default function OnboardingPage() {
                     type="number"
                     value={approvalThreshold}
                     onChange={(e) => setApprovalThreshold(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-panel px-3 py-2 text-xs text-white"
+                    className="mt-1 w-full rounded border border-aegis-border bg-aegis-card px-3 py-1.5 font-mono text-xs text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
                   />
                 </div>
               </div>
@@ -413,26 +413,26 @@ export default function OnboardingPage() {
           {/* Step 5: API Key */}
           {currentStep === 5 && (
             <div className="space-y-4">
-              <div className="flex items-center gap-2 text-sky-400">
-                <Key className="h-5 w-5" />
-                <h2 className="text-lg font-bold text-white">Step 5: Runtime Authentication</h2>
+              <div className="border-b border-aegis-border pb-3">
+                <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-copper">[SETUP // STEP 05]</span>
+                <h2 className="text-base font-semibold tracking-wide text-aegis-text-primary">Runtime Secret Generation</h2>
               </div>
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-aegis-text-muted">
                 Your agent communicates using an <code>AGENT_SERVICE</code> scoped API key.
               </p>
 
               {issuedApiKey ? (
-                <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4">
-                  <span className="text-xs font-semibold text-amber-200">
-                    Copy Your Runtime Secret Now (shown only once):
+                <div className="rounded border border-aegis-copper/50 bg-aegis-card p-4">
+                  <span className="font-mono text-xs font-semibold uppercase tracking-wider text-aegis-copper">
+                    [SECRET] Copy Your Runtime Key (shown once):
                   </span>
-                  <code className="mt-2 block break-all rounded-lg border border-amber-500/30 bg-slate-950/80 p-3 font-mono text-xs text-amber-100">
+                  <code className="mt-2 block break-all rounded border border-aegis-copper/30 bg-[#111513] p-3 font-mono text-xs text-aegis-copper">
                     {issuedApiKey}
                   </code>
                 </div>
               ) : (
-                <div className="rounded-xl border border-dashed border-aegis-border p-6 text-center text-xs text-slate-400">
-                  Clicking Next will generate your initial <code>AGENT_SERVICE</code> API key and bind it to {agentName}.
+                <div className="rounded border border-dashed border-aegis-border p-6 text-center font-mono text-xs text-aegis-text-muted">
+                  Clicking Continue will generate your initial <code>AGENT_SERVICE</code> API key and bind it to {agentName}.
                 </div>
               )}
             </div>
@@ -441,30 +441,33 @@ export default function OnboardingPage() {
           {/* Step 6: Launch */}
           {currentStep === 6 && (
             <div className="space-y-4 text-center py-4">
-              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-500/20 text-emerald-400 ring-2 ring-emerald-500/40">
-                <Sparkles className="h-8 w-8" />
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded border border-aegis-accent/40 bg-aegis-accent/15 text-aegis-accent">
+                <Sparkles className="h-7 w-7" />
               </div>
-              <h2 className="text-xl font-bold text-white">Workspace Configuration Complete!</h2>
-              <p className="mx-auto max-w-md text-xs text-slate-300">
-                Your organization is provisioned with financial governance controls, an AI Agent identity, a deterministic spending passport, and cryptographic hash chaining.
+              <div>
+                <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-accent">[SETUP // COMPLETED]</span>
+                <h2 className="text-xl font-bold tracking-tight text-aegis-text-primary">Workspace Provisioned Successfully</h2>
+              </div>
+              <p className="mx-auto max-w-md text-xs text-aegis-text-muted">
+                Your tenant is locked with financial governance limits, an autonomous agent identity, deterministic budget passport, and SHA-256 hash chaining.
               </p>
 
-              <div className="mx-auto max-w-sm rounded-xl border border-aegis-border bg-aegis-panel p-4 text-left text-xs text-slate-300 space-y-1.5">
-                <div>✓ Agent: <strong className="text-white">{agentName}</strong></div>
-                <div>✓ Passport Budget: <strong className="text-white">${totalBudget} {currency}</strong></div>
-                <div>✓ Human Approval Threshold: <strong className="text-white">${approvalThreshold} {currency}</strong></div>
-                <div>✓ Regulatory Baseline: <strong className="text-white">GDPR & India DPDPA Compliant</strong></div>
+              <div className="mx-auto max-w-sm rounded border border-aegis-border bg-aegis-card p-4 text-left font-mono text-xs text-aegis-text-muted space-y-1.5">
+                <div>✓ Agent: <span className="text-aegis-text-primary font-semibold">{agentName}</span></div>
+                <div>✓ Lifetime Budget: <span className="text-aegis-accent font-semibold">${totalBudget} {currency}</span></div>
+                <div>✓ Human Threshold: <span className="text-aegis-copper font-semibold">${approvalThreshold} {currency}</span></div>
+                <div>✓ Compliance: <span className="text-aegis-text-primary">GDPR & India DPDPA Baseline</span></div>
               </div>
             </div>
           )}
 
           {/* Wizard Controls */}
-          <div className="mt-8 flex items-center justify-between border-t border-aegis-border pt-5">
+          <div className="mt-8 flex items-center justify-between border-t border-aegis-border pt-5 font-mono text-xs">
             <button
               type="button"
               disabled={currentStep === 1 || busy}
               onClick={() => setCurrentStep((prev) => prev - 1)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-aegis-border px-4 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800 disabled:opacity-30"
+              className="inline-flex items-center gap-1.5 rounded border border-aegis-border bg-aegis-card px-4 py-2 text-aegis-text-primary hover:bg-aegis-secondary disabled:opacity-30 transition"
             >
               <ChevronLeft className="h-4 w-4" />
               <span>Back</span>
@@ -474,7 +477,7 @@ export default function OnboardingPage() {
               type="button"
               disabled={busy}
               onClick={() => void handleNext()}
-              className="inline-flex items-center gap-2 rounded-lg bg-sky-500 px-5 py-2.5 text-xs font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50"
+              className="inline-flex items-center gap-2 rounded bg-aegis-accent px-5 py-2.5 font-semibold uppercase tracking-wider text-[#111513] hover:bg-[#c8e562] disabled:opacity-50 transition"
             >
               <span>{currentStep === 6 ? "Enter Dashboard" : busy ? "Provisioning…" : "Continue"}</span>
               <ChevronRight className="h-4 w-4" />
