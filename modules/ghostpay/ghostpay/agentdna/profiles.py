@@ -10,6 +10,7 @@ from contracts import compute_payload_hash
 from pydantic import BaseModel, Field, field_validator
 
 from ghostpay.agentdna.features import extract_agent_features
+from ghostpay.domain.exceptions import CrossTenantAccessError
 
 if TYPE_CHECKING:
     from ghostpay.domain.models import PaymentTrace
@@ -53,16 +54,39 @@ def build_agent_profile(
     cutoff_time: datetime | None = None,
     exclude_trace_id: UUID | None = None,
 ) -> AgentBehaviorProfile:
-    """Build a versioned, reproducible AgentBehaviorProfile strictly prior to cutoff_time."""
+    """Build a versioned, reproducible AgentBehaviorProfile strictly prior to cutoff_time.
+
+    Deduplicates trace_ids, enforces tenant-isolation, and prevents future data leakage.
+    """
+    seen_trace_ids: set[UUID] = set()
+    sanitized_history: list[PaymentTrace] = []
+    c_time = _normalize_utc(cutoff_time) if cutoff_time else None
+
+    for tr in history:
+        if tr.tenant_id != tenant_id:
+            raise CrossTenantAccessError(f"Cross-tenant trace {tr.trace_id} detected in history")
+        if tr.agent_id != agent_id:
+            continue
+        if tr.trace_id in seen_trace_ids:
+            continue
+        seen_trace_ids.add(tr.trace_id)
+        if exclude_trace_id and tr.trace_id == exclude_trace_id:
+            continue
+        if c_time:
+            tr_created = _normalize_utc(tr.created_at)
+            if tr_created and tr_created >= c_time:
+                continue
+        sanitized_history.append(tr)
+
     features = extract_agent_features(
-        history,
+        sanitized_history,
         cutoff_time=cutoff_time,
         exclude_trace_id=exclude_trace_id,
     )
 
     now = _utc_now()
-    if history:
-        sorted_h = sorted(history, key=lambda t: t.created_at)
+    if sanitized_history:
+        sorted_h = sorted(sanitized_history, key=lambda t: t.created_at)
         start_time = sorted_h[0].created_at
         end_time = sorted_h[-1].created_at
     else:

@@ -110,6 +110,7 @@ def test_api_ingest_and_get_trace(endpoints: dict) -> None:
         recorded_merchant=req.recorded_merchant,
         approval_record=req.approval_record,
         payment_intent=req.payment_intent,
+        proposal=req.proposal,
     )
 
     trace = endpoints["ingest_trace"](ingest_req, TENANT_ALPHA_ID)
@@ -156,6 +157,7 @@ def test_api_agent_dna_and_investigation(endpoints: dict) -> None:
         recorded_merchant=req.recorded_merchant,
         approval_record=req.approval_record,
         payment_intent=req.payment_intent,
+        proposal=req.proposal,
     )
     trace = endpoints["ingest_trace"](ingest_req, TENANT_ALPHA_ID)
 

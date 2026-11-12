@@ -10,8 +10,10 @@ from guardian.domain.exceptions import (
     PolicyDeniedError,
 )
 from guardian.domain.service import GuardianService
+from guardian.mcp_server import AegisMCPServer
 
 __all__ = [
+    "AegisMCPServer",
     "GuardianService",
     "GuardianError",
     "PolicyDeniedError",

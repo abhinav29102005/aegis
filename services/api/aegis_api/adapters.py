@@ -37,6 +37,7 @@ from contracts.fixtures import (
     build_synthetic_dispute_fixture,
 )
 from database import LedgerRepository, PlatformRepository
+from ghostpay.domain.models import PaymentTrace
 from ghostpay.repository import (
     GhostPayReplayRepository,
     InvestigationListResponse,
@@ -87,21 +88,52 @@ class SqlAlchemyGhostPayRepository(GhostPayReplayRepository):
             )
 
         replay_passport = passport
-        reservation = (
-            self.ledger.get_reservation(tenant_id, intent.reservation_id)
-            if intent.reservation_id
-            else None
-        )
-        if reservation is not None and reservation.status == ReservationStatus.HELD:
-            replay_passport = passport.model_copy(
-                update={"reserved_minor": max(0, passport.reserved_minor - reservation.amount_minor)}
+        snapshot_fn = getattr(self.ledger, "get_passport_snapshot_for_decision", None)
+        snapshot = snapshot_fn(tenant_id, decision.id) if snapshot_fn else None
+
+        if snapshot is not None:
+            # Reconstruct exact immutable snapshot state at decision time (GAP-013)
+            replay_passport = SpendingPassport(
+                id=getattr(snapshot, "passport_id", passport.id),
+                tenant_id=tenant_id,
+                agent_id=getattr(snapshot, "agent_id", passport.agent_id),
+                per_tx_limit_minor=getattr(snapshot, "per_tx_limit_minor", passport.per_tx_limit_minor),
+                daily_limit_minor=getattr(snapshot, "daily_limit_minor", passport.daily_limit_minor),
+                total_budget_minor=getattr(snapshot, "total_budget_minor", passport.total_budget_minor),
+                spent_minor=getattr(snapshot, "spent_minor", passport.spent_minor),
+                reserved_minor=getattr(snapshot, "reserved_minor", passport.reserved_minor),
+                currency=getattr(snapshot, "currency", passport.currency),
+                allowed_merchant_ids=getattr(snapshot, "allowed_merchant_ids", passport.allowed_merchant_ids),
+                allow_unknown_merchants=getattr(snapshot, "allow_unknown_merchants", passport.allow_unknown_merchants),
+                allowed_categories=getattr(snapshot, "allowed_categories", passport.allowed_categories),
+                human_approval_threshold_minor=getattr(snapshot, "human_approval_threshold_minor", passport.human_approval_threshold_minor),
+                status=getattr(snapshot, "status", passport.status),
+                policy_version=getattr(snapshot, "policy_version", passport.policy_version),
+                created_at=getattr(snapshot, "created_at", passport.created_at),
+                updated_at=getattr(snapshot, "created_at", passport.updated_at),
+                expires_at=getattr(snapshot, "expires_at", passport.expires_at),
             )
-        elif intent.state == PaymentState.SUCCEEDED or (
-            reservation is not None and reservation.status == ReservationStatus.CAPTURED
-        ):
-            replay_passport = passport.model_copy(
-                update={"spent_minor": max(0, passport.spent_minor - intent.amount_minor)}
+        elif decision.policy_inputs and "passport" in decision.policy_inputs:
+            # Reconstruct from AuthorizationDecision.policy_inputs (GAP-013)
+            p_dict = decision.policy_inputs["passport"]
+            if isinstance(p_dict, dict):
+                replay_passport = SpendingPassport.model_validate(p_dict)
+        else:
+            reservation = (
+                self.ledger.get_reservation(tenant_id, intent.reservation_id)
+                if intent.reservation_id
+                else None
             )
+            if reservation is not None and reservation.status == ReservationStatus.HELD:
+                replay_passport = passport.model_copy(
+                    update={"reserved_minor": max(0, passport.reserved_minor - reservation.amount_minor)}
+                )
+            elif intent.state == PaymentState.SUCCEEDED or (
+                reservation is not None and reservation.status == ReservationStatus.CAPTURED
+            ):
+                replay_passport = passport.model_copy(
+                    update={"spent_minor": max(0, passport.spent_minor - intent.amount_minor)}
+                )
 
         events = self.ledger.list_events(tenant_id, correlation_id=intent.correlation_id)
         evidence = self.ledger.list_evidence(tenant_id, correlation_id=intent.correlation_id)
@@ -202,6 +234,72 @@ class SqlAlchemyGhostPayRepository(GhostPayReplayRepository):
             limit=limit,
             offset=offset,
         )
+
+    def save_trace(self, tenant_id: UUID, trace: PaymentTrace) -> None:
+        """Persist a payment trace defensively if Machine 1 database methods are active."""
+        save_fn = getattr(self.ledger, "save_ghostpay_trace", getattr(self.platform, "save_ghostpay_trace", None))
+        if save_fn:
+            save_fn(tenant_id, trace)
+
+    def get_trace(self, tenant_id: UUID, trace_id: UUID) -> PaymentTrace | None:
+        """Fetch a payment trace defensively if Machine 1 database methods are active."""
+        get_fn = getattr(self.ledger, "get_ghostpay_trace", getattr(self.platform, "get_ghostpay_trace", None))
+        if get_fn:
+            return get_fn(tenant_id, trace_id)
+        return None
+
+    def list_traces(
+        self,
+        tenant_id: UUID,
+        *,
+        agent_id: UUID | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[PaymentTrace]:
+        """List payment traces defensively via Machine 1 DB or reconstructed from intents."""
+        list_fn = getattr(self.ledger, "list_ghostpay_traces", getattr(self.platform, "list_ghostpay_traces", None))
+        if list_fn:
+            return list_fn(tenant_id, agent_id=agent_id, limit=limit, offset=offset)
+
+        intents = self.ledger.list_intents(tenant_id, limit=limit, offset=offset)
+        traces: list[PaymentTrace] = []
+        for intent in intents:
+            if agent_id and intent.agent_id != agent_id:
+                continue
+            rep_req = self._build_replay_request(tenant_id, intent)
+            if rep_req:
+                traces.append(
+                    PaymentTrace(
+                        trace_id=intent.id,
+                        tenant_id=tenant_id,
+                        agent_id=intent.agent_id,
+                        payment_intent_id=intent.id,
+                        policy_version=rep_req.policy_version,
+                        payment_intent=intent,
+                        proposal=rep_req.proposal,
+                        quote_snapshot=rep_req.quote_snapshot,
+                        recorded_passport=rep_req.recorded_passport,
+                        recorded_merchant=rep_req.recorded_merchant,
+                        recorded_decision=rep_req.recorded_decision,
+                        approval_record=rep_req.approval_record,
+                        ordered_events=rep_req.events,
+                        authorization_evidence=rep_req.evidence_records,
+                    )
+                )
+        return traces
+
+    def save_agent_dna_profile(self, tenant_id: UUID, profile: Any) -> None:
+        """Persist an Agent DNA profile defensively if Machine 1 DB methods are active."""
+        save_fn = getattr(self.ledger, "save_agent_dna_profile", getattr(self.platform, "save_agent_dna_profile", None))
+        if save_fn:
+            save_fn(tenant_id, profile)
+
+    def get_agent_dna_profile(self, tenant_id: UUID, agent_id: UUID) -> Any | None:
+        """Fetch an Agent DNA profile defensively if Machine 1 DB methods are active."""
+        get_fn = getattr(self.ledger, "get_agent_dna_profile", getattr(self.platform, "get_agent_dna_profile", None))
+        if get_fn:
+            return get_fn(tenant_id, agent_id)
+        return None
 
     @staticmethod
     def _to_investigation(row: Any) -> PersistedInvestigation:

@@ -1,7 +1,7 @@
 """Forensics package for GhostPay."""
 
-from ghostpay.forensics.anomalies import detect_anomalies
-from ghostpay.forensics.provenance import (
+from ghostpay.anomalies.detector import detect_anomalies
+from ghostpay.provenance.verifier import (
     ProvenanceEdge,
     ProvenanceGraph,
     ProvenanceNode,
@@ -11,7 +11,7 @@ from ghostpay.forensics.provenance import (
     verify_provenance_and_integrity,
     verify_quote_snapshot_integrity,
 )
-from ghostpay.forensics.timeline import (
+from ghostpay.timelines.builder import (
     build_timeline,
     correlate_evidence_ids,
     format_event_summary,

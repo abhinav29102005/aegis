@@ -17,6 +17,7 @@ from contracts import (
     PassportStatus,
     PaymentIntent,
     PaymentState,
+    PurchaseProposal,
     QuoteSnapshot,
     SpendingPassport,
     compute_payload_hash,
@@ -71,6 +72,23 @@ def make_test_trace(
         line_items=line_items,
         quote_hash=q_hash,
         expires_at=t_time + timedelta(hours=1),
+        created_at=t_time,
+    )
+
+    proposal = PurchaseProposal(
+        id=proposal_id,
+        tenant_id=tenant_id,
+        correlation_id=corr_id,
+        agent_id=agent_id,
+        passport_id=PASSPORT_DEFAULT_ID,
+        merchant_id=merchant_id,
+        merchant_name="CloudCompute Sandbox Store",
+        amount_minor=amount_minor,
+        currency="USD",
+        line_items=line_items,
+        item_summary="Cloud VM Instance",
+        rationale="Forensic test proposal",
+        idempotency_key=f"prop-idem-{uuid4().hex[:12]}",
         created_at=t_time,
     )
 
@@ -236,6 +254,7 @@ def make_test_trace(
         recorded_passport=passport,
         recorded_merchant=merchant,
         payment_intent=intent,
+        proposal=proposal,
         integrity_status=integrity_status,
         created_at=t_time,
     )

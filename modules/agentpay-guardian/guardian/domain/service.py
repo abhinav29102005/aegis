@@ -9,6 +9,7 @@ Strictly enforces:
 
 from __future__ import annotations
 
+import contextlib
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
@@ -29,6 +30,7 @@ from paypal import PayPalSandboxClient
 from guardian.approvals.service import ApprovalService
 from guardian.budgets.coordinator import BudgetCoordinator
 from guardian.domain.exceptions import (
+    DuplicateIntentError,
     IntentNotFoundError,
     InvalidStateTransitionError,
     PolicyDeniedError,
@@ -88,6 +90,17 @@ class GuardianService:
             proposal.tenant_id, proposal.idempotency_key
         )
         if existing_intent is not None:
+            if (
+                existing_intent.amount_minor != proposal.amount_minor
+                or existing_intent.currency.upper() != proposal.currency.upper()
+                or existing_intent.merchant_id != proposal.merchant_id
+                or existing_intent.agent_id != proposal.agent_id
+                or existing_intent.quote_hash != quote.quote_hash
+            ):
+                raise DuplicateIntentError(
+                    f"Idempotency key '{proposal.idempotency_key}' already used with different parameters"
+                )
+
             decision = None
             if existing_intent.authorization_decision_id:
                 decision = self.repo.get_decision(
@@ -158,9 +171,33 @@ class GuardianService:
             target_state=PaymentState.POLICY_CHECK,
         )
 
-        # 5. Fetch passport and merchant for deterministic evaluation
+        # 5. Fetch passport, merchant, agent, and rolling daily spend
         passport = self.passport_service.get_passport(proposal.tenant_id, proposal.passport_id)
         merchant = self.passport_service.get_merchant(proposal.tenant_id, proposal.merchant_id)
+        agent = None
+        get_agent_fn = getattr(self.repo, "get_agent", None)
+        if callable(get_agent_fn):
+            with contextlib.suppress(Exception):
+                agent = get_agent_fn(proposal.tenant_id, proposal.agent_id)
+
+        daily_spent = 0
+        list_intents_fn = getattr(self.repo, "list_intents", None)
+        if callable(list_intents_fn):
+            try:
+                today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                intents = list_intents_fn(proposal.tenant_id, agent_id=proposal.agent_id, limit=100)
+                for it in intents:
+                    it_created = it.created_at
+                    if it_created.tzinfo is None:
+                        it_created = it_created.replace(tzinfo=UTC)
+                    if (
+                        it.passport_id == proposal.passport_id
+                        and it_created >= today_start
+                        and it.state in (PaymentState.SUCCEEDED, PaymentState.CAPTURE_PENDING, PaymentState.PENDING_PROVIDER)
+                    ):
+                        daily_spent += it.amount_minor
+            except Exception:
+                daily_spent = 0
 
         # 6. Evaluate policy deterministically
         decision = self.policy_engine.evaluate(
@@ -168,10 +205,23 @@ class GuardianService:
             passport=passport,
             merchant=merchant,
             quote=quote,
+            agent=agent,
+            historical_daily_spend_minor=daily_spent,
             payment_intent_id=saved_intent.id,
             now=now,
         )
         saved_decision = self.repo.save_decision(decision)
+
+        # Record passport snapshot if supported by repo (GAP-022)
+        save_snapshot_fn = getattr(self.repo, "save_passport_snapshot", None)
+        if callable(save_snapshot_fn):
+            with contextlib.suppress(Exception):
+                save_snapshot_fn(
+                    tenant_id=proposal.tenant_id,
+                    passport_id=passport.id,
+                    decision_id=saved_decision.id,
+                    snapshot_data=passport.model_dump(mode="json"),
+                )
 
         self.repo.append_financial_event(
             tenant_id=proposal.tenant_id,
@@ -299,6 +349,7 @@ class GuardianService:
             current_amount_minor=intent.amount_minor,
             current_currency=intent.currency,
             current_quote_hash=intent.quote_hash,
+            payment_intent_id=intent.id,
         )
 
         # Reserve budget atomically
@@ -319,6 +370,51 @@ class GuardianService:
             reservation_id=reservation.id,
         )
         return ready_intent, consumed_approval
+
+    def reject_approval(
+        self,
+        *,
+        tenant_id: UUID,
+        intent_id: UUID,
+        approval_id: UUID,
+        approver_id: str,
+        comment: str | None = None,
+    ) -> tuple[PaymentIntent, ApprovalRecord]:
+        """Record human rejection of a proposal, cancel intent and release budget hold."""
+        intent = self.repo.get_intent(tenant_id, intent_id)
+        if intent is None:
+            raise IntentNotFoundError(f"PaymentIntent {intent_id} not found")
+
+        if intent.state != PaymentState.AWAITING_APPROVAL:
+            raise InvalidStateTransitionError(
+                f"Cannot reject approval for intent in state {intent.state.value} "
+                f"(must be AWAITING_APPROVAL)"
+            )
+
+        rejected_approval = self.approval_service.decide_approval(
+            tenant_id=tenant_id,
+            approval_id=approval_id,
+            approver_id=approver_id,
+            approved=False,
+            comment=comment,
+        )
+
+        if intent.reservation_id:
+            self.budget_coordinator.release(
+                tenant_id=tenant_id,
+                correlation_id=intent.correlation_id,
+                payment_intent_id=intent.id,
+                reservation_id=intent.reservation_id,
+                reason=comment or "Rejected by human approver",
+            )
+
+        cancelled_intent = self.repo.transition_intent(
+            tenant_id=tenant_id,
+            intent_id=intent_id,
+            target_state=PaymentState.CANCELLED,
+            approval_record_id=rejected_approval.id,
+        )
+        return cancelled_intent, rejected_approval
 
     # -------------------------------------------------------------------------
     # Checkout & PayPal Flow
@@ -406,6 +502,36 @@ class GuardianService:
             tenant_id=tenant_id,
             intent_id=intent_id,
             attempt_id=attempt_id,
+        )
+
+    async def refund_intent(
+        self,
+        *,
+        tenant_id: UUID,
+        intent_id: UUID,
+        amount_minor: int | None = None,
+        note: str | None = None,
+    ) -> tuple[PaymentIntent, Any]:
+        """Refund a succeeded payment intent."""
+        return await self.payment_coordinator.refund_order(
+            tenant_id=tenant_id,
+            intent_id=intent_id,
+            amount_minor=amount_minor,
+            note=note,
+        )
+
+    async def void_intent(
+        self,
+        *,
+        tenant_id: UUID,
+        intent_id: UUID,
+        note: str | None = None,
+    ) -> PaymentIntent:
+        """Void an authorized payment intent and release budget hold."""
+        return await self.payment_coordinator.void_authorization(
+            tenant_id=tenant_id,
+            intent_id=intent_id,
+            note=note,
         )
 
     # -------------------------------------------------------------------------

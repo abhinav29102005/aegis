@@ -12,6 +12,7 @@ from contracts import (
     FinancialEvent,
     Merchant,
     PaymentIntent,
+    PurchaseProposal,
     QuoteSnapshot,
     ReplayRequest,
     ReplayResult,
@@ -22,18 +23,18 @@ from contracts import (
 from ghostpay.agentdna.detector import AgentDNAAnomalyResult, AgentDNADetector
 from ghostpay.agentdna.explanations import format_agent_dna_explanation
 from ghostpay.agentdna.profiles import AgentBehaviorProfile, build_agent_profile
+from ghostpay.anomalies.detector import detect_anomalies
 from ghostpay.domain.exceptions import (
     CrossTenantAccessError,
     InvestigationNotFoundError,
     TraceNotFoundError,
 )
 from ghostpay.domain.models import InvestigationReport, PaymentTrace
-from ghostpay.forensics.anomalies import detect_anomalies
-from ghostpay.forensics.timeline import build_timeline
 from ghostpay.ingestion.adapter import TraceIngestionAdapter
+from ghostpay.replay.engine import PolicyTimeMachine
+from ghostpay.timelines.builder import build_timeline
 from ghostpay.timemachine.policies import CounterfactualPolicy
 from ghostpay.timemachine.recommendations import generate_safeguard_recommendations
-from ghostpay.timemachine.replay import PolicyTimeMachine
 
 if TYPE_CHECKING:
     from ghostpay.timemachine.comparison import PolicyComparisonReport
@@ -69,6 +70,7 @@ class GhostPayService:
         recorded_merchant: Merchant | None = None,
         approval_record: ApprovalRecord | None = None,
         payment_intent: PaymentIntent | None = None,
+        proposal: PurchaseProposal | None = None,
         policy_version: str = "policy-v1",
         strict_integrity: bool = False,
     ) -> PaymentTrace:
@@ -84,6 +86,7 @@ class GhostPayService:
             recorded_merchant=recorded_merchant,
             approval_record=approval_record,
             payment_intent=payment_intent,
+            proposal=proposal,
             policy_version=policy_version,
             strict_integrity=strict_integrity,
         )

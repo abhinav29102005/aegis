@@ -543,3 +543,111 @@ def test_11_langgraph_purchasing_agent_cannot_authorize_or_capture() -> None:
 
     with pytest.raises((AgentSecurityViolationError, PermissionError)):
         copilot.capture_payment()
+
+
+def test_12_human_rejection_transitions_to_cancelled_and_releases_budget(
+    guardian_service: GuardianService,
+    repo: InMemoryLedgerRepository,
+) -> None:
+    proposal, quote = _make_proposal_and_quote(
+        amount_minor=6000,  # > 5000 human threshold -> ESCALATE
+        merchant_id=MERCHANT_SANDBOX_CLOUD_ID,
+    )
+    intent, decision = guardian_service.submit_proposal(proposal=proposal, quote=quote)
+    assert intent.state == PaymentState.AWAITING_APPROVAL
+    assert intent.approval_record_id is not None
+
+    # Human explicitly rejects proposal
+    cancelled_intent, rejected_approval = guardian_service.reject_approval(
+        tenant_id=TENANT_ALPHA_ID,
+        intent_id=intent.id,
+        approval_id=intent.approval_record_id,
+        approver_id="security-lead@aegis.io",
+        comment="Exceeds current sprint budget allocation",
+    )
+    assert cancelled_intent.state == PaymentState.CANCELLED
+    assert rejected_approval.status == ApprovalStatus.REJECTED
+
+    # Verify HUMAN_REJECTED event emitted
+    events = repo.list_events(TENANT_ALPHA_ID, payment_intent_id=intent.id)
+    event_types = [e.event_type for e in events]
+    assert FinancialEventType.HUMAN_REJECTED in event_types
+
+
+def test_13_duplicate_intent_mismatched_payload_raises_duplicate_intent_error(
+    guardian_service: GuardianService,
+) -> None:
+    proposal, quote = _make_proposal_and_quote(amount_minor=3000, idempotency_key="idemp-key-shared-001")
+    guardian_service.submit_proposal(proposal=proposal, quote=quote)
+
+    # Submitting with same idempotency key but different amount must raise DuplicateIntentError
+    proposal_diff, quote_diff = _make_proposal_and_quote(
+        amount_minor=4500, idempotency_key="idemp-key-shared-001"
+    )
+    from guardian.domain.exceptions import DuplicateIntentError
+    with pytest.raises(DuplicateIntentError):
+        guardian_service.submit_proposal(proposal=proposal_diff, quote=quote_diff)
+
+
+def test_14_approval_payment_intent_mismatch_raises_approval_mismatch(
+    guardian_service: GuardianService,
+) -> None:
+    proposal, quote = _make_proposal_and_quote(amount_minor=6000)
+    intent, _ = guardian_service.submit_proposal(proposal=proposal, quote=quote)
+    assert intent.approval_record_id is not None
+
+    # Try consuming approval with a different payment_intent_id
+    from guardian.domain.exceptions import ApprovalMismatchError
+    guardian_service.approval_service.decide_approval(
+        tenant_id=TENANT_ALPHA_ID,
+        approval_id=intent.approval_record_id,
+        approver_id="manager@aegis.io",
+        approved=True,
+    )
+    with pytest.raises(ApprovalMismatchError):
+        guardian_service.approval_service.consume_approval(
+            tenant_id=TENANT_ALPHA_ID,
+            approval_id=intent.approval_record_id,
+            current_merchant_id=intent.merchant_id,
+            current_amount_minor=intent.amount_minor,
+            current_currency=intent.currency,
+            current_quote_hash=intent.quote_hash,
+            payment_intent_id=uuid4(),  # Different intent ID!
+        )
+
+
+def test_15_capture_on_invalid_state_rejected(
+    guardian_service: GuardianService,
+) -> None:
+    proposal, quote = _make_proposal_and_quote(amount_minor=3000)
+    intent, _ = guardian_service.submit_proposal(proposal=proposal, quote=quote)
+
+    # In CHECKOUT_READY, attempt capture directly -> must fail
+    from guardian.domain.exceptions import InvalidStateTransitionError
+    with pytest.raises(InvalidStateTransitionError):
+        run_sync(
+            guardian_service.execute_capture(
+                tenant_id=TENANT_ALPHA_ID,
+                intent_id=intent.id,
+                attempt_id=uuid4(),
+            )
+        )
+
+
+def test_16_refund_and_void_order(
+    guardian_service: GuardianService,
+    repo: InMemoryLedgerRepository,
+) -> None:
+    # Test void on checkout-ready intent
+    proposal, quote = _make_proposal_and_quote(amount_minor=3000)
+    intent, _ = guardian_service.submit_proposal(proposal=proposal, quote=quote)
+    assert intent.state == PaymentState.CHECKOUT_READY
+
+    voided_intent = run_sync(guardian_service.void_intent(tenant_id=TENANT_ALPHA_ID, intent_id=intent.id, note="User abort"))
+    assert voided_intent.state == PaymentState.CANCELLED
+
+    # Check financial event
+    events = repo.list_events(TENANT_ALPHA_ID, payment_intent_id=intent.id)
+    event_types = [e.event_type for e in events]
+    assert FinancialEventType.AUTHORIZATION_VOIDED in event_types
+

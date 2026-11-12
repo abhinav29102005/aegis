@@ -25,6 +25,7 @@ from disputeos.cases.service import (
     ApprovalGateError,
     CaseNotFoundError,
     DisputeCaseService,
+    DisputeTransitionError,
     SyntheticSubmissionError,
 )
 from disputeos.evidence.graph import EvidenceGraph, build_evidence_graph
@@ -75,6 +76,13 @@ class SubmitDisputeRequest(BaseModel):
     draft_response_text: str | None = Field(default=None, max_length=4000)
 
 
+class ResolveDisputeRequest(BaseModel):
+    """Request payload for marking a dispute case resolved."""
+
+    resolution_outcome: str = Field(min_length=1, max_length=128)
+    notes: str | None = Field(default=None, max_length=4000)
+
+
 class DisputeCaseDetailResponse(BaseModel):
     """Combined dispute case, attached evidence, and latest analysis."""
 
@@ -123,6 +131,8 @@ def _resolve_tenant_id(
 def _raise_http_for_domain_error(exc: Exception) -> None:
     if isinstance(exc, CaseNotFoundError):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    if isinstance(exc, DisputeTransitionError):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if isinstance(
         exc,
         (
@@ -157,9 +167,11 @@ def create_disputeos_router(
     @api_router.get("/cases", response_model=list[DisputeCase])
     def list_cases(
         tenant_id: Annotated[UUID, Depends(_resolve_tenant_id)],
+        limit: int = 50,
+        offset: int = 0,
     ) -> list[DisputeCase]:
         try:
-            return svc.list_cases(tenant_id)
+            return svc.list_cases(tenant_id, limit=limit, offset=offset)
         except Exception as exc:
             _raise_http_for_domain_error(exc)
             raise
@@ -367,6 +379,48 @@ def create_disputeos_router(
             )
             updated_case = svc.mark_submitted(tenant_id=tenant_id, case_id=case_id)
             return SubmitDisputeResponse(case=updated_case, submission=submission)
+        except Exception as exc:
+            _raise_http_for_domain_error(exc)
+            raise
+
+    @api_router.post("/cases/{case_id}/resolve", response_model=DisputeCase)
+    def resolve_case(
+        case_id: UUID,
+        payload: ResolveDisputeRequest,
+        tenant_id: Annotated[UUID, Depends(_resolve_tenant_id)],
+    ) -> DisputeCase:
+        try:
+            return svc.mark_resolved(
+                tenant_id=tenant_id,
+                case_id=case_id,
+                resolution_outcome=payload.resolution_outcome,
+            )
+        except Exception as exc:
+            _raise_http_for_domain_error(exc)
+            raise
+
+    @api_router.get("/cases/{case_id}/artifacts/{artifact_id}")
+    def download_evidence_artifact(
+        case_id: UUID,
+        artifact_id: UUID,
+        tenant_id: Annotated[UUID, Depends(_resolve_tenant_id)],
+    ) -> dict[str, Any]:
+        try:
+            svc.get_case(tenant_id, case_id)
+            evidence_list = svc.get_case_evidence(tenant_id, case_id)
+            matching = [ev for ev in evidence_list if ev.id == artifact_id]
+            if not matching:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Artifact {artifact_id} not found in case {case_id}",
+                )
+            art = matching[0]
+            if art.dispute_case_id and art.dispute_case_id != case_id:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Artifact {artifact_id} does not belong to case {case_id}",
+                )
+            return {"artifact_id": str(art.id), "content": art.content, "title": art.title}
         except Exception as exc:
             _raise_http_for_domain_error(exc)
             raise

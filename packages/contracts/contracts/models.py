@@ -180,13 +180,18 @@ class QuoteSnapshot(NexusBaseModel):
         return _normalize_utc(v)  # type: ignore[return-value]
 
     @model_validator(mode="after")
-    def _populate_hash(self) -> QuoteSnapshot:
+    def _populate_and_verify_hash(self) -> QuoteSnapshot:
+        computed = compute_quote_hash(
+            merchant_id=self.merchant_id,
+            amount_minor=self.amount_minor,
+            currency=self.currency,
+            line_items=self.line_items,
+        )
         if not self.quote_hash:
-            self.quote_hash = compute_quote_hash(
-                merchant_id=self.merchant_id,
-                amount_minor=self.amount_minor,
-                currency=self.currency,
-                line_items=self.line_items,
+            self.quote_hash = computed
+        elif self.quote_hash != computed:
+            raise ValueError(
+                f"Quote hash mismatch: provided {self.quote_hash} != computed {computed}"
             )
         return self
 
@@ -413,6 +418,8 @@ class ReplayTimelineEntry(NexusBaseModel):
     occurred_at: datetime
     summary: str
     evidence_ids: list[UUID] = Field(default_factory=list)
+    event_hash: str | None = None
+    previous_event_hash: str | None = None
     integrity_verified: bool = True
 
     @field_validator("occurred_at")
@@ -491,6 +498,10 @@ class DisputeCase(NexusBaseModel):
     approved_by: str | None = Field(default=None, max_length=128)
     approved_at: datetime | None = None
     response_payload_hash: str | None = Field(default=None, max_length=128)
+    response_due_by: datetime | None = None
+    resolved_at: datetime | None = None
+    resolution_outcome: str | None = None
+    external_status: str | None = None
     opened_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
@@ -499,7 +510,7 @@ class DisputeCase(NexusBaseModel):
     def _upper_currency(cls, v: str) -> str:
         return v.upper()
 
-    @field_validator("approved_at", "opened_at", "updated_at")
+    @field_validator("approved_at", "opened_at", "updated_at", "response_due_by", "resolved_at")
     @classmethod
     def _utc_dates(cls, v: datetime | None) -> datetime | None:
         return _normalize_utc(v)
@@ -527,14 +538,127 @@ class DisputeAnalysis(NexusBaseModel):
     missing_evidence: list[str] = Field(default_factory=list)
     citations: list[DisputeEvidenceCitation] = Field(default_factory=list)
     rejected_claims: list[str] = Field(default_factory=list)
+    recommended_actions: list[str] = Field(default_factory=list)
     grounded_summary: str = Field(min_length=1, max_length=4000)
     draft_response_text: str = Field(min_length=1, max_length=4000)
     requires_human_approval: bool = True
     generated_with_llm: bool = False
+    llm_provider: str | None = Field(default=None, max_length=64)
+    llm_model: str | None = Field(default=None, max_length=64)
     analyzed_at: datetime = Field(default_factory=utc_now)
 
     @field_validator("analyzed_at")
     @classmethod
     def _utc_analyzed(cls, v: datetime) -> datetime:
         return _normalize_utc(v)  # type: ignore[return-value]
+
+
+# ---------------------------------------------------------------------------
+# Multi-Rail, Protocol & Token Provenance Models (AP2 / TAP / x402 / Stripe)
+# ---------------------------------------------------------------------------
+
+class AP2CheckoutMandate(NexusBaseModel):
+    """Google AP2 Checkout Mandate specification for autonomous agent purchasing."""
+
+    mandate_id: UUID = Field(default_factory=uuid4)
+    tenant_id: UUID
+    correlation_id: UUID
+    agent_id: UUID
+    merchant_id: UUID
+    amount_minor: int = Field(gt=0)
+    currency: str = Field(default="USD", min_length=3, max_length=3)
+    line_items: list[dict[str, Any]] = Field(default_factory=list)
+    signature: str = Field(min_length=8, max_length=512)
+    expires_at: datetime
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class AP2PaymentMandate(NexusBaseModel):
+    """Google AP2 Payment Mandate executing authorized settlement."""
+
+    mandate_id: UUID = Field(default_factory=uuid4)
+    checkout_mandate_id: UUID
+    tenant_id: UUID
+    correlation_id: UUID
+    payment_intent_id: UUID
+    provider: str = Field(default="PAYPAL_SANDBOX", max_length=64)
+    capture_mode: str = Field(default="AUTOMATIC", max_length=32)
+    amount_minor: int = Field(gt=0)
+    currency: str = Field(default="USD", min_length=3, max_length=3)
+    signature: str = Field(min_length=8, max_length=512)
+    authorized_at: datetime = Field(default_factory=utc_now)
+
+
+class TokenProvenanceProof(NexusBaseModel):
+    """Visa TAP / Mastercard Agent Pay token provenance verification proof."""
+
+    token_id: UUID = Field(default_factory=uuid4)
+    tenant_id: UUID
+    network: str = Field(pattern=r"^(VISA_TAP|MASTERCARD_AGENT_PAY|AMEX_EXPRESS|DISCOVER)$")
+    token_reference: str = Field(min_length=4, max_length=128)
+    assurance_level: str = Field(default="HIGH", max_length=32)
+    agent_fingerprint: str = Field(min_length=8, max_length=128)
+    device_fingerprint: str = Field(min_length=8, max_length=128)
+    signature: str = Field(min_length=8, max_length=512)
+    verified: bool = True
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class X402SettlementProof(NexusBaseModel):
+    """HTTP 402 / Web3 autonomous agent micro-settlement proof."""
+
+    proof_id: UUID = Field(default_factory=uuid4)
+    tenant_id: UUID
+    correlation_id: UUID
+    chain_id: int = Field(gt=0)
+    transaction_hash: str = Field(pattern=r"^0x[a-fA-F0-9]{64}$")
+    token_address: str = Field(pattern=r"^0x[a-fA-F0-9]{40}$")
+    amount_units: str = Field(min_length=1, max_length=78)
+    payer_address: str = Field(pattern=r"^0x[a-fA-F0-9]{40}$")
+    recipient_address: str = Field(pattern=r"^0x[a-fA-F0-9]{40}$")
+    block_number: int = Field(gt=0)
+    verified: bool = True
+    settled_at: datetime = Field(default_factory=utc_now)
+
+
+class StripePaymentIntentPayload(NexusBaseModel):
+    """Stripe PaymentIntent REST representation."""
+
+    payment_intent_id: str = Field(min_length=4, max_length=128)
+    tenant_id: UUID
+    client_secret: str = Field(min_length=4, max_length=255)
+    amount_minor: int = Field(gt=0)
+    currency: str = Field(default="USD", min_length=3, max_length=3)
+    status: str = Field(max_length=64)
+    payment_method_types: list[str] = Field(default_factory=lambda: ["card"])
+    capture_method: str = Field(default="automatic", max_length=32)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class StripeSharedPaymentToken(NexusBaseModel):
+    """Stripe Shared Payment Token (SPT) for agent delegated payments."""
+
+    token_id: UUID = Field(default_factory=uuid4)
+    tenant_id: UUID
+    customer_id: str = Field(min_length=4, max_length=128)
+    merchant_account_id: str = Field(min_length=4, max_length=128)
+    payment_intent_id: UUID | None = None
+    token_hash: str = Field(min_length=8, max_length=128)
+    status: str = Field(default="ACTIVE", pattern=r"^(ACTIVE|CONSUMED|REVOKED|EXPIRED)$")
+    expires_at: datetime
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class StripeSmartDisputePayload(NexusBaseModel):
+    """Stripe Smart Disputes integration model."""
+
+    dispute_id: str = Field(min_length=4, max_length=128)
+    tenant_id: UUID
+    payment_intent_id: str = Field(min_length=4, max_length=128)
+    amount_minor: int = Field(gt=0)
+    currency: str = Field(default="USD", min_length=3, max_length=3)
+    reason: str = Field(max_length=128)
+    status: str = Field(max_length=64)
+    evidence_due_by: datetime | None = None
+    evidence_submitted: bool = False
 

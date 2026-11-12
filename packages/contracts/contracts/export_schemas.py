@@ -9,11 +9,14 @@ from pydantic.json_schema import models_json_schema
 
 from contracts.models import (
     AgentIdentity,
+    AP2CheckoutMandate,
+    AP2PaymentMandate,
     ApprovalRecord,
     AuthorizationDecision,
     BudgetReservation,
     DisputeAnalysis,
     DisputeCase,
+    DisputeEvidenceCitation,
     EvidenceRecord,
     FinancialEvent,
     Merchant,
@@ -23,8 +26,14 @@ from contracts.models import (
     QuoteSnapshot,
     ReplayRequest,
     ReplayResult,
+    ReplayTimelineEntry,
     SpendingPassport,
+    StripePaymentIntentPayload,
+    StripeSharedPaymentToken,
+    StripeSmartDisputePayload,
     Tenant,
+    TokenProvenanceProof,
+    X402SettlementProof,
 )
 
 MODELS = [
@@ -41,10 +50,19 @@ MODELS = [
     PaymentAttempt,
     FinancialEvent,
     EvidenceRecord,
+    ReplayTimelineEntry,
     ReplayRequest,
     ReplayResult,
     DisputeCase,
+    DisputeEvidenceCitation,
     DisputeAnalysis,
+    AP2CheckoutMandate,
+    AP2PaymentMandate,
+    TokenProvenanceProof,
+    X402SettlementProof,
+    StripePaymentIntentPayload,
+    StripeSharedPaymentToken,
+    StripeSmartDisputePayload,
 ]
 
 

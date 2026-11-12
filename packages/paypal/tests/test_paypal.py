@@ -30,6 +30,55 @@ def _sandbox_settings(**overrides) -> NexusSettings:
 def test_minor_to_paypal_value_formatting() -> None:
     assert minor_to_paypal_value(3900) == "39.00"
     assert minor_to_paypal_value(5) == "0.05"
+    # ISO 4217 exponents
+    assert minor_to_paypal_value(3900, "JPY") == "3900"
+    assert minor_to_paypal_value(3900, "KWD") == "3.900"
+    assert minor_to_paypal_value(50, "BHD") == "0.050"
+
+
+@pytest.mark.asyncio
+async def test_refund_and_void_operations() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/oauth2/token":
+            return httpx.Response(200, json={"access_token": "tok-123", "expires_in": 3600})
+        if request.url.path == "/v2/payments/captures/CAP-1/refund":
+            return httpx.Response(201, json={"id": "REF-1", "status": "COMPLETED", "amount": {"value": "39.00", "currency_code": "USD"}})
+        if request.url.path == "/v2/payments/authorizations/AUTH-1/void":
+            return httpx.Response(204)
+        return httpx.Response(404)
+
+    async_client = httpx.AsyncClient(base_url="https://api-m.sandbox.paypal.com", transport=httpx.MockTransport(handler))
+    client = PayPalSandboxClient(_sandbox_settings(), http_client=async_client)
+
+    refund = await client.refund_capture(capture_id="CAP-1", amount_minor=3900, currency="USD")
+    assert refund.refund_id == "REF-1"
+    assert refund.status == "COMPLETED"
+
+    void_res = await client.void_authorization(authorization_id="AUTH-1")
+    assert void_res["status"] == "VOIDED"
+    await async_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_disputes_provide_evidence_and_accept_claim() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/oauth2/token":
+            return httpx.Response(200, json={"access_token": "tok-123", "expires_in": 3600})
+        if request.url.path == "/v1/customer/disputes/DISP-1/provide-evidence":
+            return httpx.Response(200, json={"status": "EVIDENCE_SUBMITTED"})
+        if request.url.path == "/v1/customer/disputes/DISP-1/accept-claim":
+            return httpx.Response(200, json={"status": "CLAIM_ACCEPTED"})
+        return httpx.Response(404)
+
+    async_client = httpx.AsyncClient(base_url="https://api-m.sandbox.paypal.com", transport=httpx.MockTransport(handler))
+    client = PayPalSandboxClient(_sandbox_settings(paypal_disputes_api_enabled=True), http_client=async_client)
+
+    ev_res = await client.provide_evidence(dispute_id="DISP-1", evidence_type="PROOF_OF_FULFILLMENT")
+    assert ev_res["status"] == "EVIDENCE_SUBMITTED"
+
+    claim_res = await client.accept_claim(dispute_id="DISP-1", note="Settled")
+    assert claim_res["status"] == "CLAIM_ACCEPTED"
+    await async_client.aclose()
 
 
 @pytest.mark.asyncio

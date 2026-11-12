@@ -167,3 +167,7 @@ def build_timeline(
         )
 
     return timeline
+
+
+format_event_summary = _format_event_summary
+correlate_evidence_ids = _correlate_evidence_ids

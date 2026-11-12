@@ -11,6 +11,7 @@ from contracts import (
     FinancialEvent,
     Merchant,
     PaymentIntent,
+    PurchaseProposal,
     QuoteSnapshot,
     ReplayRequest,
     SpendingPassport,
@@ -32,6 +33,7 @@ class IngestTraceRequest(BaseModel):
     recorded_merchant: Merchant | None = None
     approval_record: ApprovalRecord | None = None
     payment_intent: PaymentIntent | None = None
+    proposal: PurchaseProposal | None = None
     policy_version: str = Field(default="policy-v1", max_length=64)
     strict_integrity: bool = False
 

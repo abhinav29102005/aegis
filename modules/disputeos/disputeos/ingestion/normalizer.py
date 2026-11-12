@@ -35,6 +35,32 @@ def _compute_evidence_hash(
     })
 
 
+def compute_full_evidence_hash(
+    *,
+    tenant_id: UUID,
+    dispute_case_id: UUID | None,
+    correlation_id: UUID,
+    is_synthetic: bool,
+    collected_at: datetime,
+    source_type: EvidenceSourceType,
+    source_ref: str,
+    title: str,
+    content: dict[str, Any],
+) -> str:
+    """Compute deterministic cryptographic hash of the full evidence context (GAP-017)."""
+    return compute_payload_hash({
+        "tenant_id": str(tenant_id),
+        "dispute_case_id": str(dispute_case_id) if dispute_case_id else None,
+        "correlation_id": str(correlation_id),
+        "is_synthetic": is_synthetic,
+        "collected_at": collected_at.isoformat() if hasattr(collected_at, "isoformat") else str(collected_at),
+        "source_type": source_type.value if hasattr(source_type, "value") else str(source_type),
+        "source_ref": source_ref,
+        "title": title,
+        "content": content,
+    })
+
+
 def _clean_text(value: str, field_name: str, max_length: int = 255) -> str:
     cleaned = value.strip()
     if not cleaned:
@@ -137,16 +163,34 @@ def normalize_evidence_record(
         or resolved_source_type == EvidenceSourceType.SYNTHETIC_FIXTURE
     )
 
-    resolved_hash = content_hash or raw.get("content_hash")
-    if not resolved_hash:
-        resolved_hash = _compute_evidence_hash(
-            source_type=resolved_source_type,
-            source_ref=resolved_source_ref,
-            title=resolved_title,
-            content=resolved_content,
-        )
-
     resolved_collected_at = collected_at or raw.get("collected_at") or utc_now()
+
+    computed_direct = _compute_evidence_hash(
+        source_type=resolved_source_type,
+        source_ref=resolved_source_ref,
+        title=resolved_title,
+        content=resolved_content,
+    )
+    computed_full = compute_full_evidence_hash(
+        tenant_id=resolved_tenant_id,
+        dispute_case_id=resolved_dispute_case_id,
+        correlation_id=resolved_correlation_id,
+        is_synthetic=resolved_synthetic,
+        collected_at=resolved_collected_at,
+        source_type=resolved_source_type,
+        source_ref=resolved_source_ref,
+        title=resolved_title,
+        content=resolved_content,
+    )
+    computed_payload = compute_payload_hash(resolved_content)
+
+    resolved_hash = content_hash or raw.get("content_hash")
+    if resolved_hash:
+        valid_hashes = {computed_direct, computed_full, computed_payload}
+        if resolved_hash not in valid_hashes:
+            raise ValueError("Tampered content_hash on EvidenceRecord")
+    else:
+        resolved_hash = computed_direct
 
     return EvidenceRecord(
         id=resolved_id or uuid4(),

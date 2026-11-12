@@ -1,5 +1,10 @@
 """Policy Time Machine package for GhostPay."""
 
+from ghostpay.replay.engine import (
+    PolicyTimeMachine,
+    ReplayEngine,
+    evaluate_deterministic_policy,
+)
 from ghostpay.timemachine.comparison import (
     PolicyComparisonEntry,
     PolicyComparisonReport,
@@ -7,11 +12,6 @@ from ghostpay.timemachine.comparison import (
 )
 from ghostpay.timemachine.policies import CounterfactualPolicy
 from ghostpay.timemachine.recommendations import generate_safeguard_recommendations
-from ghostpay.timemachine.replay import (
-    PolicyTimeMachine,
-    ReplayEngine,
-    evaluate_deterministic_policy,
-)
 
 __all__ = [
     "CounterfactualPolicy",

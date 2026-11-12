@@ -163,6 +163,7 @@ class ApprovalService:
         current_amount_minor: int,
         current_currency: str,
         current_quote_hash: str,
+        payment_intent_id: UUID | None = None,
         now: datetime | None = None,
     ) -> ApprovalRecord:
         current_time = now or _utc_now()
@@ -186,7 +187,13 @@ class ApprovalService:
                 f"Approval {approval_id} cannot be consumed in status {record.status.value}"
             )
 
-        # Cryptographic quote and scope binding validation
+        # Cryptographic quote, payment intent, and scope binding validation
+        if payment_intent_id is not None and record.payment_intent_id != payment_intent_id:
+            raise ApprovalMismatchError(
+                f"Payment intent mismatch: approved for {record.payment_intent_id}, "
+                f"attempted for {payment_intent_id}"
+            )
+
         if record.bound_merchant_id != current_merchant_id:
             raise ApprovalMismatchError(
                 f"Merchant mismatch: approved for {record.bound_merchant_id}, "

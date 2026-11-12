@@ -14,6 +14,8 @@ class PaymentState(StrEnum):
     FAILED = "FAILED"
     PENDING_PROVIDER = "PENDING_PROVIDER"
     CANCELLED = "CANCELLED"
+    REFUNDED = "REFUNDED"
+    PARTIALLY_REFUNDED = "PARTIALLY_REFUNDED"
 
 
 VALID_PAYMENT_TRANSITIONS: dict[PaymentState, frozenset[PaymentState]] = {
@@ -54,7 +56,15 @@ VALID_PAYMENT_TRANSITIONS: dict[PaymentState, frozenset[PaymentState]] = {
         PaymentState.FAILED,
         PaymentState.CANCELLED,
     }),
-    PaymentState.SUCCEEDED: frozenset(),
+    PaymentState.SUCCEEDED: frozenset({
+        PaymentState.REFUNDED,
+        PaymentState.PARTIALLY_REFUNDED,
+    }),
+    PaymentState.PARTIALLY_REFUNDED: frozenset({
+        PaymentState.REFUNDED,
+        PaymentState.PARTIALLY_REFUNDED,
+    }),
+    PaymentState.REFUNDED: frozenset(),
     PaymentState.FAILED: frozenset(),
     PaymentState.CANCELLED: frozenset(),
 }
@@ -138,9 +148,15 @@ class FinancialEventType(StrEnum):
     PAYPAL_TIMEOUT_PENDING = "PAYPAL_TIMEOUT_PENDING"
     PAYPAL_WEBHOOK_RECEIVED = "PAYPAL_WEBHOOK_RECEIVED"
     PAYMENT_FAILED = "PAYMENT_FAILED"
+    PAYMENT_REFUNDED = "PAYMENT_REFUNDED"
+    PAYMENT_PARTIALLY_REFUNDED = "PAYMENT_PARTIALLY_REFUNDED"
+    AUTHORIZATION_VOIDED = "AUTHORIZATION_VOIDED"
     DISPUTE_OPENED = "DISPUTE_OPENED"
     DISPUTE_ANALYZED = "DISPUTE_ANALYZED"
     DISPUTE_RESPONSE_APPROVED = "DISPUTE_RESPONSE_APPROVED"
+    DISPUTE_SUBMITTED = "DISPUTE_SUBMITTED"
+    DISPUTE_RESOLVED = "DISPUTE_RESOLVED"
+    EVIDENCE_ATTACHED = "EVIDENCE_ATTACHED"
 
 
 class EvidenceSourceType(StrEnum):

@@ -7,11 +7,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Protocol
 
 import httpx
 from contracts import VerifiedPayPalCapture, compute_payload_hash
+from contracts.policy_v1 import format_minor_to_major, parse_major_to_minor
 from security import NexusSettings, get_settings
 
 
@@ -36,13 +36,14 @@ class PayPalDisputesDisabledError(PermissionError):
     """Raised when PayPal Disputes API is invoked while feature-flagged off."""
 
 
-def minor_to_paypal_value(amount_minor: int) -> str:
-    return f"{Decimal(amount_minor) / Decimal(100):.2f}"
+def minor_to_paypal_value(amount_minor: int, currency: str = "USD") -> str:
+    """Format minor currency units to PayPal string using ISO 4217 exponents."""
+    return format_minor_to_major(amount_minor, currency)
 
 
-def paypal_value_to_minor(value_str: str) -> int:
-    dec = (Decimal(value_str) * Decimal(100)).quantize(Decimal(1), rounding=ROUND_HALF_UP)
-    return int(dec)
+def paypal_value_to_minor(value_str: str, currency: str = "USD") -> int:
+    """Parse PayPal decimal string to integer minor units using ISO 4217 exponents."""
+    return parse_major_to_minor(value_str, currency)
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,15 @@ class PayPalOrderCreationResult:
 @dataclass(frozen=True)
 class PayPalCaptureResult:
     verified_capture: VerifiedPayPalCapture
+    raw_response: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class PayPalRefundResult:
+    refund_id: str
+    status: str
+    amount_minor: int
+    currency: str
     raw_response: dict[str, Any]
 
 
@@ -192,7 +202,7 @@ class PayPalSandboxClient:
                     "description": description[:127],
                     "amount": {
                         "currency_code": currency.upper(),
-                        "value": minor_to_paypal_value(amount_minor),
+                        "value": minor_to_paypal_value(amount_minor, currency),
                     },
                 }
             ],
@@ -403,8 +413,14 @@ class PayPalSandboxClient:
             return False
         return resp.json().get("verification_status") == "SUCCESS"
 
-    async def list_disputes(self) -> dict[str, Any]:
-        """Feature-flagged PayPal Customer Disputes API v1 read-only listing."""
+    async def list_disputes(
+        self,
+        *,
+        page_size: int = 10,
+        next_page_token: str | None = None,
+        dispute_state: str | None = None,
+    ) -> dict[str, Any]:
+        """Feature-flagged PayPal Customer Disputes API v1 read-only listing with pagination."""
         if not self.settings.paypal_disputes_api_enabled:
             raise PayPalDisputesDisabledError(
                 "PAYPAL_DISPUTES_API_ENABLED is false; confirm sandbox Disputes permissions before enabling."
@@ -412,11 +428,19 @@ class PayPalSandboxClient:
         token = await self.get_access_token()
         close_after = self._external_client is None
         client = self._client()
+        params: dict[str, Any] = {"page_size": min(max(1, page_size), 50)}
+        if next_page_token:
+            params["next_page_token"] = next_page_token
+        if dispute_state:
+            params["dispute_state"] = dispute_state
         try:
             resp = await client.get(
                 "/v1/customer/disputes",
+                params=params,
                 headers={"Authorization": f"Bearer {token}"},
             )
+        except httpx.TimeoutException as exc:
+            raise PayPalTimeoutError("Timed out querying PayPal Customer Disputes API") from exc
         finally:
             if close_after:
                 await client.aclose()
@@ -426,6 +450,176 @@ class PayPalSandboxClient:
                 status_code=resp.status_code,
             )
         return resp.json()
+
+    async def provide_evidence(
+        self,
+        *,
+        dispute_id: str,
+        evidence_type: str = "PROOF_OF_FULFILLMENT",
+        evidence_info: dict[str, Any] | None = None,
+        notes: str | None = None,
+        files: list[Any] | None = None,
+    ) -> dict[str, Any]:
+        """Submit evidence to PayPal for an open customer dispute (GAP-009)."""
+        if not self.settings.paypal_disputes_api_enabled:
+            raise PayPalDisputesDisabledError(
+                "PAYPAL_DISPUTES_API_ENABLED is false; confirm sandbox Disputes permissions before enabling."
+            )
+        token = await self.get_access_token()
+        close_after = self._external_client is None
+        client = self._client()
+
+        payload: dict[str, Any] = {
+            "evidence_type": evidence_type,
+            "evidence_info": evidence_info or {},
+            "notes": notes or "Evidence submitted via AgentPay Nexus DisputeOS",
+        }
+
+        try:
+            resp = await client.post(
+                f"/v1/customer/disputes/{dispute_id}/provide-evidence",
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+            )
+        except httpx.TimeoutException as exc:
+            raise PayPalTimeoutError(f"Timed out providing evidence for dispute {dispute_id}") from exc
+        finally:
+            if close_after:
+                await client.aclose()
+
+        if resp.status_code >= 400:
+            raise PayPalAPIError(
+                f"PayPal provide evidence failed ({resp.status_code}): {resp.text}",
+                status_code=resp.status_code,
+            )
+        return resp.json() if resp.text else {"status": "SUCCESS", "dispute_id": dispute_id}
+
+    async def accept_claim(
+        self,
+        *,
+        dispute_id: str,
+        note: str | None = None,
+        accept_claim_type: str = "REFUND",
+    ) -> dict[str, Any]:
+        """Accept dispute claim and issue refund via PayPal Disputes API (GAP-009)."""
+        if not self.settings.paypal_disputes_api_enabled:
+            raise PayPalDisputesDisabledError(
+                "PAYPAL_DISPUTES_API_ENABLED is false; confirm sandbox Disputes permissions before enabling."
+            )
+        token = await self.get_access_token()
+        close_after = self._external_client is None
+        client = self._client()
+        payload = {"accept_claim_type": accept_claim_type, "note_to_dispute": note or "Accepted claim"}
+        try:
+            resp = await client.post(
+                f"/v1/customer/disputes/{dispute_id}/accept-claim",
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+            )
+        except httpx.TimeoutException as exc:
+            raise PayPalTimeoutError(f"Timed out accepting claim for dispute {dispute_id}") from exc
+        finally:
+            if close_after:
+                await client.aclose()
+
+        if resp.status_code >= 400:
+            raise PayPalAPIError(
+                f"PayPal accept claim failed ({resp.status_code}): {resp.text}",
+                status_code=resp.status_code,
+            )
+        return resp.json() if resp.text else {"status": "ACCEPTED", "dispute_id": dispute_id}
+
+    async def refund_capture(
+        self,
+        *,
+        capture_id: str,
+        amount_minor: int | None = None,
+        currency: str = "USD",
+        note: str | None = None,
+    ) -> PayPalRefundResult:
+        """Issue full or partial refund for a captured payment (GAP-012)."""
+        token = await self.get_access_token()
+        payload: dict[str, Any] = {}
+        if amount_minor is not None:
+            payload["amount"] = {
+                "value": minor_to_paypal_value(amount_minor, currency),
+                "currency_code": currency.upper(),
+            }
+        if note:
+            payload["note_to_payer"] = note[:255]
+
+        close_after = self._external_client is None
+        client = self._client()
+        try:
+            resp = await client.post(
+                f"/v2/payments/captures/{capture_id}/refund",
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+            )
+        except httpx.TimeoutException as exc:
+            raise PayPalTimeoutError(f"Timed out refunding capture {capture_id}") from exc
+        finally:
+            if close_after:
+                await client.aclose()
+
+        if resp.status_code >= 400:
+            raise PayPalAPIError(
+                f"PayPal refund failed ({resp.status_code}): {resp.text}",
+                status_code=resp.status_code,
+            )
+        data = resp.json()
+        refund_amt_minor = (
+            paypal_value_to_minor(data["amount"]["value"], data["amount"].get("currency_code", currency))
+            if "amount" in data
+            else (amount_minor or 0)
+        )
+        return PayPalRefundResult(
+            refund_id=data["id"],
+            status=data.get("status", "COMPLETED"),
+            amount_minor=refund_amt_minor,
+            currency=currency.upper(),
+            raw_response=data,
+        )
+
+    async def void_authorization(
+        self,
+        *,
+        authorization_id: str,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        """Void an uncaptured PayPal authorization hold (GAP-012)."""
+        token = await self.get_access_token()
+        close_after = self._external_client is None
+        client = self._client()
+        try:
+            resp = await client.post(
+                f"/v2/payments/authorizations/{authorization_id}/void",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+            )
+        except httpx.TimeoutException as exc:
+            raise PayPalTimeoutError(f"Timed out voiding authorization {authorization_id}") from exc
+        finally:
+            if close_after:
+                await client.aclose()
+
+        if resp.status_code not in (200, 204):
+            raise PayPalAPIError(
+                f"PayPal void authorization failed ({resp.status_code}): {resp.text}",
+                status_code=resp.status_code,
+            )
+        return resp.json() if resp.text else {"status": "VOIDED", "authorization_id": authorization_id}
 
     @staticmethod
     def _extract_verified_capture(
@@ -450,7 +644,7 @@ class PayPalSandboxClient:
 
         amt = completed_capture.get("amount") or {}
         actual_currency = str(amt.get("currency_code", "")).upper()
-        actual_minor = paypal_value_to_minor(str(amt.get("value", "0.00")))
+        actual_minor = paypal_value_to_minor(str(amt.get("value", "0.00")), actual_currency)
         if actual_currency != expected_currency.upper() or actual_minor != expected_amount_minor:
             raise PayPalAPIError(
                 f"Captured amount mismatch: expected {expected_amount_minor} {expected_currency}, "

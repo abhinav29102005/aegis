@@ -15,6 +15,10 @@ class MissingEvidenceError(GhostPayError):
     """Raised when essential historical context or evidence is missing."""
 
 
+class InsufficientEvidenceError(MissingEvidenceError):
+    """Raised when essential historical context or evidence is missing to replay or simulate."""
+
+
 class InsufficientHistoryError(GhostPayError):
     """Raised when insufficient historical observations exist for Agent DNA baseline."""
 

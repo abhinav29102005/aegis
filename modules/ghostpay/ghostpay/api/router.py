@@ -13,7 +13,7 @@ from contracts import (
 )
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field
-from security import TenantIsolationError, assert_same_tenant, get_settings
+from security import Permission, TenantIsolationError, assert_same_tenant, get_settings
 from security.settings import DEFAULT_TENANT_UUID
 
 from ghostpay.agentdna.detector import AgentDNAAnomalyResult
@@ -183,6 +183,16 @@ def create_ghostpay_router(
 
     repo_dep = repo_resolver or resolve_repo
 
+    def require_perm(perm: Permission) -> Callable[..., None]:
+        def _check(http_request: Request) -> None:
+            auth_ctx = getattr(http_request.state, "auth_context", None)
+            if auth_ctx is not None and hasattr(auth_ctx, "permissions") and perm not in auth_ctx.permissions:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Permission denied: {perm.value} required.",
+                )
+        return _check
+
     def _require_repo(repo: GhostPayReplayRepository | None) -> GhostPayReplayRepository:
         if repo is None:
             raise HTTPException(
@@ -198,10 +208,28 @@ def create_ghostpay_router(
     # -------------------------------------------------------------------------
     # Traces & Timelines
     # -------------------------------------------------------------------------
+    @api_router.get("/traces", response_model=list[PaymentTrace])
+    def list_traces(
+        tenant_id: Annotated[UUID, Depends(resolve_tenant)],
+        repo: Annotated[GhostPayReplayRepository | None, Depends(repo_dep)] = None,
+        agent_id: UUID | None = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+        offset: Annotated[int, Query(ge=0)] = 0,
+        _perm: Annotated[None, Depends(require_perm(Permission.GHOSTPAY_READ))] = None,
+    ) -> list[PaymentTrace]:
+        if repo is not None and hasattr(repo, "list_traces"):
+            return repo.list_traces(tenant_id, agent_id=agent_id, limit=limit, offset=offset)
+        traces = [
+            t for t in svc.ingestion.traces.values()
+            if t.tenant_id == tenant_id and (agent_id is None or t.agent_id == agent_id)
+        ]
+        return traces[offset : offset + limit]
+
     @api_router.post("/traces/ingest", response_model=PaymentTrace)
     def ingest_trace(
         req: IngestTraceRequest,
         tenant_id: Annotated[UUID, Depends(resolve_tenant)],
+        _perm: Annotated[None, Depends(require_perm(Permission.GHOSTPAY_SIMULATE))] = None,
     ) -> PaymentTrace:
         try:
             assert_same_tenant(tenant_id, req.tenant_id, "ingest_trace_request")
@@ -217,6 +245,7 @@ def create_ghostpay_router(
                 recorded_merchant=req.recorded_merchant,
                 approval_record=req.approval_record,
                 payment_intent=req.payment_intent,
+                proposal=req.proposal,
                 policy_version=req.policy_version,
                 strict_integrity=req.strict_integrity,
             )
@@ -228,6 +257,7 @@ def create_ghostpay_router(
     def get_trace(
         trace_id: UUID,
         tenant_id: Annotated[UUID, Depends(resolve_tenant)],
+        _perm: Annotated[None, Depends(require_perm(Permission.GHOSTPAY_READ))] = None,
     ) -> PaymentTrace:
         try:
             return svc.get_trace(tenant_id, trace_id)
@@ -239,6 +269,7 @@ def create_ghostpay_router(
     def get_trace_timeline(
         trace_id: UUID,
         tenant_id: Annotated[UUID, Depends(resolve_tenant)],
+        _perm: Annotated[None, Depends(require_perm(Permission.GHOSTPAY_READ))] = None,
     ) -> list[ReplayTimelineEntry]:
         try:
             return svc.get_timeline(tenant_id, trace_id)
@@ -253,6 +284,7 @@ def create_ghostpay_router(
     def replay_transaction(
         request: ReplayRequest,
         tenant_id: Annotated[UUID, Depends(resolve_tenant)],
+        _perm: Annotated[None, Depends(require_perm(Permission.GHOSTPAY_SIMULATE))] = None,
     ) -> ReplayResult:
         try:
             assert_same_tenant(tenant_id, request.tenant_id, "replay_request")
@@ -268,6 +300,7 @@ def create_ghostpay_router(
         tenant_id: Annotated[UUID, Depends(resolve_tenant)],
         repo: Annotated[GhostPayReplayRepository | None, Depends(repo_dep)],
         payload: ReplayByPaymentRequest | None = None,
+        _perm: Annotated[None, Depends(require_perm(Permission.GHOSTPAY_SIMULATE))] = None,
     ) -> ReplayResult:
         active_repo = _require_repo(repo)
         try:
@@ -300,6 +333,7 @@ def create_ghostpay_router(
     def compare_policies_endpoint(
         req: ReplayCompareRequest,
         tenant_id: Annotated[UUID, Depends(resolve_tenant)],
+        _perm: Annotated[None, Depends(require_perm(Permission.GHOSTPAY_SIMULATE))] = None,
     ) -> PolicyComparisonReport:
         try:
             assert_same_tenant(tenant_id, req.replay_request.tenant_id, "replay_compare_request")
@@ -312,6 +346,7 @@ def create_ghostpay_router(
     def simulate_policy(
         payload: SimulateRequest,
         tenant_id: Annotated[UUID, Depends(resolve_tenant)],
+        _perm: Annotated[None, Depends(require_perm(Permission.GHOSTPAY_SIMULATE))] = None,
     ) -> ReplayResult:
         try:
             assert_same_tenant(tenant_id, payload.request.tenant_id, "simulation_request")
@@ -327,6 +362,7 @@ def create_ghostpay_router(
         http_request: Request,
         tenant_id: Annotated[UUID, Depends(resolve_tenant)],
         repo: Annotated[GhostPayReplayRepository | None, Depends(repo_dep)],
+        _perm: Annotated[None, Depends(require_perm(Permission.GHOSTPAY_SIMULATE))] = None,
     ) -> ReplayResult:
         active_repo = _require_repo(repo)
         try:
@@ -359,6 +395,7 @@ def create_ghostpay_router(
     def simulate_counterfactual_alias(
         payload: SimulateRequest,
         tenant_id: Annotated[UUID, Depends(resolve_tenant)],
+        _perm: Annotated[None, Depends(require_perm(Permission.GHOSTPAY_SIMULATE))] = None,
     ) -> ReplayResult:
         try:
             assert_same_tenant(tenant_id, payload.request.tenant_id, "counterfactual_request")
@@ -371,6 +408,7 @@ def create_ghostpay_router(
     def reconstruct_timeline(
         payload: TimelineRequest,
         tenant_id: Annotated[UUID, Depends(resolve_tenant)],
+        _perm: Annotated[None, Depends(require_perm(Permission.GHOSTPAY_SIMULATE))] = None,
     ) -> list[ReplayTimelineEntry]:
         try:
             for ev in payload.events:
@@ -387,6 +425,7 @@ def create_ghostpay_router(
         payment_intent_id: UUID,
         tenant_id: Annotated[UUID, Depends(resolve_tenant)],
         repo: Annotated[GhostPayReplayRepository | None, Depends(repo_dep)],
+        _perm: Annotated[None, Depends(require_perm(Permission.GHOSTPAY_READ))] = None,
     ) -> list[ReplayTimelineEntry]:
         active_repo = _require_repo(repo)
         try:
@@ -411,6 +450,7 @@ def create_ghostpay_router(
     def get_agent_profile(
         agent_id: UUID,
         tenant_id: Annotated[UUID, Depends(resolve_tenant)],
+        _perm: Annotated[None, Depends(require_perm(Permission.GHOSTPAY_READ))] = None,
     ) -> AgentBehaviorProfile:
         try:
             return svc.get_agent_profile(tenant_id, agent_id)
@@ -423,6 +463,7 @@ def create_ghostpay_router(
         agent_id: UUID,
         req: AnalyzeAgentRequest,
         tenant_id: Annotated[UUID, Depends(resolve_tenant)],
+        _perm: Annotated[None, Depends(require_perm(Permission.GHOSTPAY_SIMULATE))] = None,
     ) -> AgentDNAAnomalyResult:
         try:
             return svc.analyze_agent(tenant_id, agent_id, req.target_trace_id)
@@ -442,6 +483,7 @@ def create_ghostpay_router(
         drift_detected: bool | None = None,
         limit: Annotated[int, Query(ge=1, le=100)] = 50,
         offset: Annotated[int, Query(ge=0)] = 0,
+        _perm: Annotated[None, Depends(require_perm(Permission.GHOSTPAY_READ))] = None,
     ) -> InvestigationListResponse:
         active_repo = _require_repo(repo)
         return active_repo.list_investigations(
@@ -457,6 +499,7 @@ def create_ghostpay_router(
     def create_investigation(
         req: CreateInvestigationRequest,
         tenant_id: Annotated[UUID, Depends(resolve_tenant)],
+        _perm: Annotated[None, Depends(require_perm(Permission.GHOSTPAY_SIMULATE))] = None,
     ) -> InvestigationReport:
         try:
             return svc.create_investigation(
@@ -476,6 +519,7 @@ def create_ghostpay_router(
         investigation_id: UUID,
         tenant_id: Annotated[UUID, Depends(resolve_tenant)],
         repo: Annotated[GhostPayReplayRepository | None, Depends(repo_dep)] = None,
+        _perm: Annotated[None, Depends(require_perm(Permission.GHOSTPAY_READ))] = None,
     ) -> PersistedInvestigation | InvestigationReport:
         if repo is not None:
             item = repo.get_investigation(tenant_id, investigation_id)
@@ -496,6 +540,7 @@ def create_ghostpay_router(
     def get_investigation_evidence_bundle(
         investigation_id: UUID,
         tenant_id: Annotated[UUID, Depends(resolve_tenant)],
+        _perm: Annotated[None, Depends(require_perm(Permission.GHOSTPAY_READ))] = None,
     ) -> DisputeOSEvidenceBundle:
         try:
             inv = svc.get_investigation(tenant_id, investigation_id)

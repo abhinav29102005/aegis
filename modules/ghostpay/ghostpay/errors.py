@@ -33,6 +33,14 @@ class UnsupportedPolicyVersionError(GhostPayError, ValueError):
         )
 
 
-class ReplayExecutionForbiddenError(GhostPayError, RuntimeError):
+class ReplayExecutionForbiddenError(GhostPayError, RuntimeError, PermissionError):
     """Fail-closed safeguard if replay or simulation attempts non-read-only execution."""
+
+
+class IllegalSideEffectError(ReplayExecutionForbiddenError, PermissionError):
+    """Raised if any execution or side-effect method is invoked on a replay or simulation component."""
+
+
+class InsufficientEvidenceError(GhostPayError, ValueError):
+    """Raised when essential historical context or evidence is missing to replay or simulate."""
 

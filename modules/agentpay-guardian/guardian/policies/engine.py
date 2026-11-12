@@ -2,6 +2,7 @@
 
 Never incorporates LLM reasoning or heuristic prompts in policy decisions.
 All checks are deterministic, synchronous, and mathematically verifiable.
+Delegates canonical 'policy-v1' evaluation to contracts.policy_v1.
 """
 
 from __future__ import annotations
@@ -11,6 +12,8 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from contracts import (
+    AgentIdentity,
+    ApprovalRecord,
     AuthorizationDecision,
     DecisionOutcome,
     DecisionReasonCode,
@@ -20,6 +23,7 @@ from contracts import (
     QuoteSnapshot,
     SpendingPassport,
 )
+from contracts.policy_v1 import evaluate_policy_v1
 
 
 def _utc_now() -> datetime:
@@ -39,12 +43,30 @@ class PolicyEngine:
         passport: SpendingPassport,
         merchant: Merchant,
         quote: QuoteSnapshot,
+        agent: AgentIdentity | None = None,
+        approval_record: ApprovalRecord | None = None,
+        historical_daily_spend_minor: int = 0,
         payment_intent_id: UUID | None = None,
         now: datetime | None = None,
     ) -> AuthorizationDecision:
         current_time = now or _utc_now()
         intent_id = payment_intent_id or uuid4()
 
+        if self.policy_version == "policy-v1":
+            return evaluate_policy_v1(
+                proposal=proposal,
+                passport=passport,
+                merchant=merchant,
+                quote=quote,
+                agent=agent,
+                approval_record=approval_record,
+                historical_daily_spend_minor=historical_daily_spend_minor,
+                payment_intent_id=intent_id,
+                evaluation_time=current_time,
+                policy_version=self.policy_version,
+            )
+
+        # Fallback evaluation for legacy / alternative policy versions
         denials: list[DecisionReasonCode] = []
         escalations: list[DecisionReasonCode] = []
         violations: list[str] = []
@@ -62,7 +84,7 @@ class PolicyEngine:
             )
 
         # 2. Currency check
-        if proposal.currency != passport.currency or proposal.currency != quote.currency:
+        if proposal.currency.upper() != passport.currency.upper() or proposal.currency.upper() != quote.currency.upper():
             denials.append(DecisionReasonCode.DENIED_CATEGORY_NOT_ALLOWED)
             violations.append(
                 f"Currency mismatch: proposal={proposal.currency}, "
@@ -185,6 +207,9 @@ def evaluate_proposal(
     passport: SpendingPassport,
     merchant: Merchant,
     quote: QuoteSnapshot,
+    agent: AgentIdentity | None = None,
+    approval_record: ApprovalRecord | None = None,
+    historical_daily_spend_minor: int = 0,
     payment_intent_id: UUID | None = None,
     now: datetime | None = None,
     policy_version: str = "policy-v1",
@@ -196,7 +221,9 @@ def evaluate_proposal(
         passport=passport,
         merchant=merchant,
         quote=quote,
+        agent=agent,
+        approval_record=approval_record,
+        historical_daily_spend_minor=historical_daily_spend_minor,
         payment_intent_id=payment_intent_id,
         now=now,
     )
-

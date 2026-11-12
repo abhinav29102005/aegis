@@ -13,10 +13,10 @@ from contracts.fixtures import (
 )
 
 from ghostpay.domain.exceptions import IllegalSideEffectError
+from ghostpay.replay.engine import PolicyTimeMachine
 from ghostpay.testing import make_test_trace
 from ghostpay.timemachine.comparison import compare_policies
 from ghostpay.timemachine.policies import CounterfactualPolicy
-from ghostpay.timemachine.replay import PolicyTimeMachine
 
 
 def test_t07_original_allowed_purchase_becomes_denied_under_stricter_limit(

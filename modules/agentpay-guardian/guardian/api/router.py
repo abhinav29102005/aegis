@@ -27,6 +27,7 @@ from guardian.domain.exceptions import (
     ApprovalMismatchError,
     ApprovalNotFoundError,
     AttemptNotFoundError,
+    DuplicateIntentError,
     GuardianError,
     InsufficientBudgetError,
     IntentNotFoundError,
@@ -63,6 +64,11 @@ def create_guardian_router(
         try:
             intent, decision = svc.submit_proposal(proposal=proposal, quote=quote)
             return ProposalSubmissionResponse(payment_intent=intent, decision=decision)
+        except DuplicateIntentError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"error": "DUPLICATE_INTENT", "message": str(exc)},
+            ) from exc
         except PolicyDeniedError as exc:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -91,6 +97,16 @@ def create_guardian_router(
         svc: Annotated[GuardianService, Depends(get_service)],
     ) -> ApprovalActionResponse:
         try:
+            if request.approved is False:
+                intent, approval = svc.reject_approval(
+                    tenant_id=tenant_id,
+                    intent_id=intent_id,
+                    approval_id=approval_id,
+                    approver_id=request.approver_id,
+                    comment=request.comment,
+                )
+                return ApprovalActionResponse(payment_intent=intent, approval=approval)
+
             intent, approval = svc.approve_and_consume(
                 tenant_id=tenant_id,
                 intent_id=intent_id,
@@ -260,6 +276,50 @@ def create_guardian_router(
                 detail=f"PaymentIntent {intent_id} not found",
             )
         return intent
+
+    @api_router.post("/payments/{intent_id}/refund")
+    async def refund_payment(
+        intent_id: UUID,
+        tenant_id: UUID,
+        svc: Annotated[GuardianService, Depends(get_service)],
+        amount_minor: int | None = None,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        try:
+            intent, result = await svc.refund_intent(
+                tenant_id=tenant_id,
+                intent_id=intent_id,
+                amount_minor=amount_minor,
+                note=note,
+            )
+            return {"payment_intent": intent.model_dump(mode="json"), "refund": getattr(result, "__dict__", str(result))}
+        except IntentNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except InvalidStateTransitionError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except GuardianError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @api_router.post("/payments/{intent_id}/void")
+    async def void_payment(
+        intent_id: UUID,
+        tenant_id: UUID,
+        svc: Annotated[GuardianService, Depends(get_service)],
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        try:
+            intent = await svc.void_intent(
+                tenant_id=tenant_id,
+                intent_id=intent_id,
+                note=note,
+            )
+            return {"payment_intent": intent.model_dump(mode="json")}
+        except IntentNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except InvalidStateTransitionError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except GuardianError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     return api_router
 

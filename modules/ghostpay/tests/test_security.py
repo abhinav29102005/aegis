@@ -13,9 +13,9 @@ from contracts.fixtures import (
 
 from ghostpay.domain.exceptions import CrossTenantAccessError
 from ghostpay.domain.service import GhostPayService
+from ghostpay.replay.engine import PolicyTimeMachine
 from ghostpay.testing import make_test_trace
 from ghostpay.timemachine.policies import CounterfactualPolicy
-from ghostpay.timemachine.replay import PolicyTimeMachine
 
 
 def test_tenant_isolation_on_investigations(service: GhostPayService) -> None:

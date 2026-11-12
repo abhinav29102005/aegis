@@ -15,10 +15,11 @@ from contracts import (
 
 def detect_anomalies(
     request: ReplayRequest,
+    timeline: Any = None,
     *,
-    original_decision: AuthorizationDecision,
-    recomputed_outcome: DecisionOutcome,
-    recomputed_reason_codes: list[Any],
+    original_decision: AuthorizationDecision | None = None,
+    recomputed_outcome: DecisionOutcome | None = None,
+    recomputed_reason_codes: list[Any] | None = None,
     integrity_errors: list[str] | None = None,
     executed_policy_version: str | None = None,
 ) -> list[str]:
@@ -30,7 +31,10 @@ def detect_anomalies(
     passport = request.recorded_passport
     merchant = request.recorded_merchant
     intent = request.payment_intent
-    eval_time = request.evaluation_time or original_decision.decided_at
+    orig_dec = original_decision or request.recorded_decision
+    recomp_out = recomputed_outcome if recomputed_outcome is not None else (orig_dec.outcome if orig_dec else DecisionOutcome.ALLOW)
+    recomp_reasons = recomputed_reason_codes if recomputed_reason_codes is not None else (orig_dec.reason_codes if orig_dec else [])
+    eval_time = request.evaluation_time or (orig_dec.decided_at if orig_dec else quote.created_at)
 
     # 1. Merchant substitution detection
     if merchant.id != proposal.merchant_id:
@@ -41,20 +45,27 @@ def detect_anomalies(
         anomalies.append(
             f"MERCHANT_SUBSTITUTION: Recorded merchant ({merchant.id}) differs from quote merchant ({quote.merchant_id})."
         )
-    if merchant.id not in passport.allowed_merchant_ids and not passport.allow_unknown_merchants:
-        anomalies.append(
-            f"MERCHANT_SUBSTITUTION: Merchant ({merchant.id}, '{merchant.name}') is not allowlisted in passport ({passport.id})."
-        )
+    both_denied = (
+        orig_dec is not None
+        and orig_dec.outcome == DecisionOutcome.DENY
+        and recomp_out == DecisionOutcome.DENY
+    )
 
-    # 2. Amount spike detection
-    if proposal.amount_minor > passport.per_tx_limit_minor:
-        anomalies.append(
-            f"AMOUNT_SPIKE: Amount {proposal.amount_minor} exceeds per-transaction limit of {passport.per_tx_limit_minor}."
-        )
-    if proposal.amount_minor > passport.available_budget_minor:
-        anomalies.append(
-            f"AMOUNT_SPIKE: Amount {proposal.amount_minor} exceeds passport available budget of {passport.available_budget_minor}."
-        )
+    if not both_denied:
+        if merchant.id not in passport.allowed_merchant_ids and not passport.allow_unknown_merchants:
+            anomalies.append(
+                f"MERCHANT_SUBSTITUTION: Merchant ({merchant.id}, '{merchant.name}') is not allowlisted in passport ({passport.id})."
+            )
+
+        # 2. Amount spike detection
+        if proposal.amount_minor > passport.per_tx_limit_minor:
+            anomalies.append(
+                f"AMOUNT_SPIKE: Amount {proposal.amount_minor} exceeds per-transaction limit of {passport.per_tx_limit_minor}."
+            )
+        if proposal.amount_minor > passport.available_budget_minor:
+            anomalies.append(
+                f"AMOUNT_SPIKE: Amount {proposal.amount_minor} exceeds passport available budget of {passport.available_budget_minor}."
+            )
 
     # 3. Expired passport detection
     if passport.status == PassportStatus.EXPIRED:
@@ -87,9 +98,9 @@ def detect_anomalies(
         anomalies.append(
             f"QUOTE_MISMATCH: Payment intent quote hash ({intent.quote_hash}) does not match quote snapshot ({quote.quote_hash})."
         )
-    if original_decision.quote_hash and quote.quote_hash and original_decision.quote_hash != quote.quote_hash:
+    if orig_dec and orig_dec.quote_hash and quote.quote_hash and orig_dec.quote_hash != quote.quote_hash:
         anomalies.append(
-            f"QUOTE_MISMATCH: Original authorization decision quote hash ({original_decision.quote_hash}) does not match quote snapshot ({quote.quote_hash})."
+            f"QUOTE_MISMATCH: Original authorization decision quote hash ({orig_dec.quote_hash}) does not match quote snapshot ({quote.quote_hash})."
         )
 
     # Recheck quote snapshot hash integrity
@@ -105,21 +116,22 @@ def detect_anomalies(
         )
 
     # 5. Authorization drift detection
-    if original_decision.outcome != recomputed_outcome:
-        anomalies.append(
-            f"AUTHORIZATION_DRIFT: Decision outcome drifted from {original_decision.outcome.value} to {recomputed_outcome.value}."
-        )
-    elif set(original_decision.reason_codes) != set(recomputed_reason_codes):
-        anomalies.append(
-            f"AUTHORIZATION_DRIFT: Reason codes changed from {[r.value for r in original_decision.reason_codes]} to {[r.value for r in recomputed_reason_codes]}."
-        )
+    if orig_dec:
+        if orig_dec.outcome != recomp_out:
+            anomalies.append(
+                f"AUTHORIZATION_DRIFT: Decision outcome drifted from {orig_dec.outcome.value} to {recomp_out.value}."
+            )
+        elif set(orig_dec.reason_codes) != set(recomp_reasons):
+            anomalies.append(
+                f"AUTHORIZATION_DRIFT: Reason codes changed from {[r.value for r in orig_dec.reason_codes]} to {[r.value for r in recomp_reasons]}."
+            )
 
     # 6. Policy version mismatch detection
     active_policy_version = executed_policy_version or request.policy_version
-    if original_decision.policy_version != active_policy_version:
+    if orig_dec and orig_dec.policy_version != active_policy_version:
         anomalies.append(
             f"POLICY_VERSION_MISMATCH: Replayed under '{active_policy_version}', "
-            f"recorded_decision used '{original_decision.policy_version}'."
+            f"recorded_decision used '{orig_dec.policy_version}'."
         )
     if passport.policy_version != active_policy_version:
         anomalies.append(

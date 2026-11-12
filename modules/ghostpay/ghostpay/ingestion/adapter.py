@@ -11,6 +11,7 @@ from contracts import (
     FinancialEvent,
     Merchant,
     PaymentIntent,
+    PurchaseProposal,
     QuoteSnapshot,
     SpendingPassport,
 )
@@ -70,6 +71,7 @@ class TraceIngestionAdapter:
         recorded_merchant: Merchant | None = None,
         approval_record: ApprovalRecord | None = None,
         payment_intent: PaymentIntent | None = None,
+        proposal: PurchaseProposal | None = None,
         policy_version: str = "policy-v1",
         strict_integrity: bool = False,
     ) -> PaymentTrace:
@@ -133,6 +135,7 @@ class TraceIngestionAdapter:
             recorded_merchant=recorded_merchant,
             approval_record=approval_record,
             payment_intent=payment_intent,
+            proposal=proposal,
             policy_version=policy_version,
             integrity_status=integrity_status,
             missing_evidence=missing_evidence + all_errors,

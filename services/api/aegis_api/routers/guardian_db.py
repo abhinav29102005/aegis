@@ -35,13 +35,14 @@ from guardian.domain.exceptions import (
     ApprovalMismatchError,
     ApprovalNotFoundError,
     AttemptNotFoundError,
+    DuplicateIntentError,
     GuardianError,
     InsufficientBudgetError,
     IntentNotFoundError,
     InvalidStateTransitionError,
     PolicyDeniedError,
 )
-from paypal import PayPalSandboxClient
+from paypal import PayPalAPIError, PayPalSandboxClient, PayPalTimeoutError
 from pydantic import BaseModel, ConfigDict, Field
 from security import AuthContext, Permission, assert_same_tenant
 from sqlalchemy.orm import Session
@@ -136,8 +137,11 @@ def _guardian_service(session: Session, paypal_client: PayPalSandboxClient) -> G
 def list_agents(
     auth: Annotated[AuthContext, Depends(require_permission(Permission.AGENTS_READ))],
     session: Annotated[Session, Depends(get_db_session)],
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[AgentIdentity]:
-    return LedgerRepository(session).list_agents(auth.tenant_id)
+    agents = LedgerRepository(session).list_agents(auth.tenant_id)
+    return agents[offset : offset + limit]
 
 
 @router.post("/agents", response_model=AgentIdentity, status_code=status.HTTP_201_CREATED)
@@ -200,8 +204,11 @@ def update_agent_status(
 def list_merchants(
     auth: Annotated[AuthContext, Depends(require_permission(Permission.PASSPORTS_READ))],
     session: Annotated[Session, Depends(get_db_session)],
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[Merchant]:
-    return LedgerRepository(session).list_merchants(auth.tenant_id)
+    merchants = LedgerRepository(session).list_merchants(auth.tenant_id)
+    return merchants[offset : offset + limit]
 
 
 @router.post("/merchants", response_model=Merchant, status_code=status.HTTP_201_CREATED)
@@ -244,8 +251,11 @@ def toggle_merchant_allowlist(
 def list_passports(
     auth: Annotated[AuthContext, Depends(require_permission(Permission.PASSPORTS_READ))],
     session: Annotated[Session, Depends(get_db_session)],
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[SpendingPassport]:
-    return LedgerRepository(session).list_passports(auth.tenant_id)
+    passports = LedgerRepository(session).list_passports(auth.tenant_id)
+    return passports[offset : offset + limit]
 
 
 @router.post("/passports", response_model=SpendingPassport, status_code=status.HTTP_201_CREATED)
@@ -392,6 +402,11 @@ def submit_proposal(
     try:
         intent, decision = svc.submit_proposal(proposal=proposal, quote=quote)
         return ProposalSubmissionResponse(payment_intent=intent, decision=decision)
+    except DuplicateIntentError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": "DUPLICATE_INTENT", "message": str(exc)},
+        ) from exc
     except PolicyDeniedError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -430,6 +445,16 @@ def approve_proposal(
 
     approver = auth.email or auth.actor_id or request.approver_id
     try:
+        if request.approved is False:
+            intent, approval = svc.reject_approval(
+                tenant_id=auth.tenant_id,
+                intent_id=intent_id,
+                approval_id=resolved_approval_id,
+                approver_id=approver,
+                comment=request.comment,
+            )
+            return ApprovalActionResponse(payment_intent=intent, approval=approval)
+
         intent, approval = svc.approve_and_consume(
             tenant_id=auth.tenant_id,
             intent_id=intent_id,
@@ -487,6 +512,10 @@ async def initiate_checkout(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"error": "INTENT_NOT_FOUND", "message": str(exc)}) from exc
     except InvalidStateTransitionError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"error": "INVALID_STATE", "message": str(exc)}) from exc
+    except PayPalTimeoutError as exc:
+        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail={"error": "PAYPAL_TIMEOUT", "message": str(exc)}) from exc
+    except PayPalAPIError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail={"error": "PAYPAL_API_ERROR", "message": str(exc)}) from exc
     except GuardianError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"error": "GUARDIAN_ERROR", "message": str(exc)}) from exc
 
@@ -532,6 +561,12 @@ async def execute_capture(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"error": "NOT_FOUND", "message": str(exc)}) from exc
     except InvalidStateTransitionError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"error": "INVALID_STATE", "message": str(exc)}) from exc
+    except PayPalTimeoutError as exc:
+        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail={"error": "PAYPAL_TIMEOUT", "message": str(exc)}) from exc
+    except PayPalAPIError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail={"error": "PAYPAL_API_ERROR", "message": str(exc)}) from exc
+    except GuardianError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"error": "GUARDIAN_ERROR", "message": str(exc)}) from exc
 
 
 @router.post("/payments/{intent_id}/buyer-declined")
@@ -569,6 +604,93 @@ async def reconcile_pending(
             tenant_id=auth.tenant_id,
             intent_id=intent_id,
             attempt_id=request.attempt_id,
+        )
+        return {"payment_intent": intent.model_dump(mode="json"), "attempt": attempt.model_dump(mode="json")}
+    except (IntentNotFoundError, AttemptNotFoundError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"error": "NOT_FOUND", "message": str(exc)}) from exc
+    except PayPalTimeoutError as exc:
+        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail={"error": "PAYPAL_TIMEOUT", "message": str(exc)}) from exc
+    except PayPalAPIError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail={"error": "PAYPAL_API_ERROR", "message": str(exc)}) from exc
+    except GuardianError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"error": "GUARDIAN_ERROR", "message": str(exc)}) from exc
+
+
+@router.post("/payments/{intent_id}/refund")
+async def refund_payment(
+    intent_id: UUID,
+    auth: Annotated[AuthContext, Depends(require_permission(Permission.PAYMENTS_CAPTURE))],
+    session: Annotated[Session, Depends(get_db_session)],
+    paypal_client: Annotated[PayPalSandboxClient, Depends(get_paypal_client)],
+    amount_minor: int | None = None,
+    note: str | None = None,
+) -> dict[str, Any]:
+    svc = _guardian_service(session, paypal_client)
+    try:
+        intent, refund_res = await svc.refund_intent(
+            tenant_id=auth.tenant_id,
+            intent_id=intent_id,
+            amount_minor=amount_minor,
+            note=note,
+        )
+        return {
+            "payment_intent": intent.model_dump(mode="json"),
+            "refund": getattr(refund_res, "__dict__", str(refund_res)),
+        }
+    except IntentNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except InvalidStateTransitionError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except PayPalTimeoutError as exc:
+        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=str(exc)) from exc
+    except PayPalAPIError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    except GuardianError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/payments/{intent_id}/void")
+async def void_payment(
+    intent_id: UUID,
+    auth: Annotated[AuthContext, Depends(require_permission(Permission.PAYMENTS_CAPTURE))],
+    session: Annotated[Session, Depends(get_db_session)],
+    paypal_client: Annotated[PayPalSandboxClient, Depends(get_paypal_client)],
+    note: str | None = None,
+) -> dict[str, Any]:
+    svc = _guardian_service(session, paypal_client)
+    try:
+        intent = await svc.void_intent(
+            tenant_id=auth.tenant_id,
+            intent_id=intent_id,
+            note=note,
+        )
+        return {"payment_intent": intent.model_dump(mode="json")}
+    except IntentNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except InvalidStateTransitionError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except GuardianError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+class ReconcilePaymentRequest(BaseModel):
+    attempt_id: UUID
+
+
+@router.post("/payments/{intent_id}/reconcile")
+async def reconcile_payment(
+    intent_id: UUID,
+    payload: ReconcilePaymentRequest,
+    auth: Annotated[AuthContext, Depends(require_permission(Permission.PAYMENTS_CAPTURE))],
+    session: Annotated[Session, Depends(get_db_session)],
+    paypal_client: Annotated[PayPalSandboxClient, Depends(get_paypal_client)],
+) -> dict[str, Any]:
+    svc = _guardian_service(session, paypal_client)
+    try:
+        intent, attempt = await svc.reconcile_pending(
+            tenant_id=auth.tenant_id,
+            intent_id=intent_id,
+            attempt_id=payload.attempt_id,
         )
         return {"payment_intent": intent.model_dump(mode="json"), "attempt": attempt.model_dump(mode="json")}
     except (IntentNotFoundError, AttemptNotFoundError) as exc:

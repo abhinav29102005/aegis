@@ -69,6 +69,13 @@ class AddDisputeNoteRequest(BaseModel):
     body: str = Field(min_length=1, max_length=2000)
 
 
+class ResolveDisputeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    resolution_outcome: str = Field(min_length=1, max_length=128)
+    notes: str | None = Field(default=None, max_length=4000)
+
+
 def _build_services(session: Session) -> tuple[LedgerRepository, PlatformRepository, DisputeCaseService]:
     ledger = LedgerRepository(session)
     platform = PlatformRepository(session)
@@ -82,9 +89,11 @@ def list_cases(
     session: Annotated[Session, Depends(get_db_session)],
     status_filter: DisputeStatus | None = None,
     is_synthetic: bool | None = None,
+    limit: int = 50,
+    offset: int = 0,
 ) -> list[DisputeCase]:
     _, _, svc = _build_services(session)
-    cases = svc.list_cases(auth.tenant_id)
+    cases = svc.list_cases(auth.tenant_id, limit=limit, offset=offset)
     if status_filter is not None:
         cases = [c for c in cases if c.status == status_filter]
     if is_synthetic is not None:
@@ -346,9 +355,17 @@ def download_evidence_artifact(
     _, platform, svc = _build_services(session)
     try:
         svc.get_case(auth.tenant_id, case_id)
+        evidence_list = svc.get_case_evidence(auth.tenant_id, case_id)
+        case_ev_ids = {ev.id for ev in evidence_list}
+
         art = platform.get_evidence_artifact(auth.tenant_id, artifact_id)
         if art is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Artifact not found")
+
+        # Anti-IDOR check: verify artifact belongs to this case's evidence records
+        if art.evidence_record_id not in case_ev_ids and getattr(art, "dispute_case_id", None) != case_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Artifact does not belong to specified case")
+
         raw = storage.get_bytes(tenant_id=auth.tenant_id, object_key=art.object_key, expected_sha256=art.sha256)
         return Response(
             content=raw,
@@ -357,6 +374,26 @@ def download_evidence_artifact(
         )
     except HTTPException:
         raise
+    except Exception as exc:
+        _raise_http_for_domain_error(exc)
+        raise
+
+
+@router.post("/cases/{case_id}/resolve", response_model=DisputeCase)
+def resolve_case(
+    case_id: UUID,
+    payload: ResolveDisputeRequest,
+    auth: Annotated[AuthContext, Depends(require_permission(Permission.DISPUTES_WRITE))],
+    session: Annotated[Session, Depends(get_db_session)],
+) -> DisputeCase:
+    _, _, svc = _build_services(session)
+    try:
+        return svc.mark_resolved(
+            tenant_id=auth.tenant_id,
+            case_id=case_id,
+            resolution_outcome=payload.resolution_outcome,
+            actor_id=auth.actor_id,
+        )
     except Exception as exc:
         _raise_http_for_domain_error(exc)
         raise

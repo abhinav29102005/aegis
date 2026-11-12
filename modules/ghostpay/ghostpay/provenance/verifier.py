@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hmac
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from contracts import (
     EvidenceRecord,
@@ -17,6 +19,75 @@ from security import (
     assert_same_tenant,
     verify_financial_event_chain,
 )
+
+if TYPE_CHECKING:
+    from ghostpay.domain.models import PaymentTrace
+
+
+@dataclass
+class ProvenanceNode:
+    node_id: str
+    node_type: str  # "MANDATE", "PROPOSAL", "QUOTE", "DECISION", "APPROVAL", "RESERVATION", "PAYPAL_ORDER", "CAPTURE"
+    properties: dict = field(default_factory=dict)
+
+
+@dataclass
+class ProvenanceEdge:
+    source_id: str
+    target_id: str
+    relationship: str  # "GENERATED", "BOUND_TO", "EVALUATED_AGAINST", "AUTHORIZED_BY", "CAPTURED_BY"
+    is_inferred: bool = False
+
+
+@dataclass
+class ProvenanceGraph:
+    nodes: dict[str, ProvenanceNode] = field(default_factory=dict)
+    edges: list[ProvenanceEdge] = field(default_factory=list)
+
+    def add_node(self, node_id: str, node_type: str, properties: dict | None = None) -> None:
+        self.nodes[node_id] = ProvenanceNode(node_id, node_type, properties or {})
+
+    def add_edge(self, source_id: str, target_id: str, relationship: str, is_inferred: bool = False) -> None:
+        self.edges.append(ProvenanceEdge(source_id, target_id, relationship, is_inferred))
+
+
+def build_provenance_graph(trace: PaymentTrace) -> ProvenanceGraph:
+    """Build a lightweight directed provenance graph representing trace relationships."""
+    graph = ProvenanceGraph()
+
+    # Intent node
+    intent_id = str(trace.payment_intent_id)
+    graph.add_node(intent_id, "PAYMENT_INTENT", {"state": trace.payment_intent.state if trace.payment_intent else "UNKNOWN"})
+
+    # Passport node
+    if trace.recorded_passport:
+        passport_id = str(trace.recorded_passport.id)
+        graph.add_node(passport_id, "SPENDING_PASSPORT", {"status": trace.recorded_passport.status.value})
+        graph.add_edge(passport_id, intent_id, "GOVERNS")
+
+    # Quote node
+    if trace.quote_snapshot:
+        quote_id = str(trace.quote_snapshot.id)
+        graph.add_node(quote_id, "QUOTE", {"quote_hash": trace.quote_snapshot.quote_hash, "amount_minor": trace.quote_snapshot.amount_minor})
+        graph.add_edge(quote_id, intent_id, "BOUND_TO")
+
+    # Decision node
+    if trace.recorded_decision:
+        decision_id = str(trace.recorded_decision.id)
+        graph.add_node(decision_id, "POLICY_DECISION", {"outcome": trace.recorded_decision.outcome.value})
+        graph.add_edge(decision_id, intent_id, "EVALUATED_FOR")
+
+    # Events
+    prev_ev_id: str | None = None
+    for ev in trace.ordered_events:
+        ev_id = str(ev.id)
+        graph.add_node(ev_id, "FINANCIAL_EVENT", {"type": ev.event_type.value, "seq": ev.sequence_number})
+        graph.add_edge(ev_id, intent_id, "RECORDS")
+        if prev_ev_id:
+            graph.add_edge(prev_ev_id, ev_id, "CHAINED_TO")
+        prev_ev_id = ev_id
+
+    return graph
 
 
 def verify_evidence_digest(ev: EvidenceRecord) -> tuple[bool, str | None]:
@@ -39,7 +110,7 @@ def verify_evidence_digest(ev: EvidenceRecord) -> tuple[bool, str | None]:
     if hmac.compare_digest(envelope_hash, ev.content_hash):
         return True, None
 
-    # 3. Canonical fixture & artifact hashes
+    # 3. Canonical fixture & artifact hashes (contracts/fixtures.py compatibility)
     content = ev.content or {}
     if ev.source_type == EvidenceSourceType.QUOTE:
         if "quote_hash" in content and "amount_minor" in content:
@@ -161,8 +232,13 @@ def verify_provenance_and_integrity(
     if not quote_ok and quote_err:
         errors.append(quote_err)
 
-    # Step 4: Verify each evidence record digest and correlation binding
+    # Step 4: Verify each evidence record digest, tenancy, and correlation binding
     for ev in request.evidence_records:
+        if ev.tenant_id != request.tenant_id:
+            errors.append(
+                f"Tenant mismatch on EvidenceRecord {ev.id}: "
+                f"expected {request.tenant_id}, got {ev.tenant_id}"
+            )
         if ev.correlation_id != request.correlation_id:
             errors.append(
                 f"Correlation mismatch on EvidenceRecord {ev.id}: "

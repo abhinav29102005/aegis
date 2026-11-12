@@ -120,7 +120,7 @@ class TraceValidator:
         evidence_records: list[EvidenceRecord],
     ) -> tuple[bool, list[str]]:
         """Validate evidence content hashes."""
-        from ghostpay.forensics.provenance import verify_evidence_digest
+        from ghostpay.provenance.verifier import verify_evidence_digest
 
         errors: list[str] = []
         for rec in evidence_records:

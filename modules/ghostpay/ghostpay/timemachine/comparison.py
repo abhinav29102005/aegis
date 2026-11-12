@@ -8,8 +8,8 @@ from uuid import UUID, uuid4
 from contracts import DecisionOutcome, ReplayRequest, ReplayResult
 from pydantic import BaseModel, Field
 
+from ghostpay.replay.engine import PolicyTimeMachine
 from ghostpay.timemachine.policies import CounterfactualPolicy
-from ghostpay.timemachine.replay import PolicyTimeMachine
 
 
 class PolicyComparisonEntry(BaseModel):

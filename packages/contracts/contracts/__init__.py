@@ -19,6 +19,8 @@ from contracts.enums import (
 from contracts.hashing import canonical_json, compute_payload_hash, compute_quote_hash
 from contracts.models import (
     AgentIdentity,
+    AP2CheckoutMandate,
+    AP2PaymentMandate,
     ApprovalRecord,
     AuthorizationDecision,
     BudgetReservation,
@@ -37,12 +39,29 @@ from contracts.models import (
     ReplayResult,
     ReplayTimelineEntry,
     SpendingPassport,
+    StripePaymentIntentPayload,
+    StripeSharedPaymentToken,
+    StripeSmartDisputePayload,
     Tenant,
+    TokenProvenanceProof,
     VerifiedPayPalCapture,
+    X402SettlementProof,
 )
+from contracts.policy_v1 import (
+    CURRENCY_EXPONENTS,
+    evaluate_policy_v1,
+    evaluate_policy_v1_rules,
+    format_minor_to_major,
+    get_currency_exponent,
+    parse_major_to_minor,
+)
+from contracts.providers import PaymentProviderAdapter
 
 __all__ = [
+    "CURRENCY_EXPONENTS",
     "VALID_PAYMENT_TRANSITIONS",
+    "AP2CheckoutMandate",
+    "AP2PaymentMandate",
     "AgentIdentity",
     "ApprovalRecord",
     "ApprovalStatus",
@@ -65,6 +84,7 @@ __all__ = [
     "PayPalBuyerApproval",
     "PaymentAttempt",
     "PaymentIntent",
+    "PaymentProviderAdapter",
     "PaymentState",
     "PurchaseProposal",
     "QuoteSnapshot",
@@ -73,12 +93,22 @@ __all__ = [
     "ReplayTimelineEntry",
     "ReservationStatus",
     "SpendingPassport",
+    "StripePaymentIntentPayload",
+    "StripeSharedPaymentToken",
+    "StripeSmartDisputePayload",
     "Tenant",
+    "TokenProvenanceProof",
     "VerifiedPayPalCapture",
+    "X402SettlementProof",
     "assert_payment_transition",
     "can_transition_payment",
     "canonical_json",
     "compute_payload_hash",
     "compute_quote_hash",
+    "evaluate_policy_v1",
+    "evaluate_policy_v1_rules",
+    "format_minor_to_major",
+    "get_currency_exponent",
+    "parse_major_to_minor",
 ]
 

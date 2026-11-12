@@ -76,6 +76,12 @@ class PaymentCoordinator:
             )
 
         # Check if attempt already exists for this idempotency key
+        list_attempts_fn = getattr(self.repo, "list_attempts_for_intent", None)
+        if callable(list_attempts_fn):
+            for att in list_attempts_fn(intent.tenant_id, intent.id):
+                if att.idempotency_key == idempotency_key:
+                    return att
+
         attempt_id = uuid4()
         now = _utc_now()
 
@@ -225,6 +231,12 @@ class PaymentCoordinator:
         intent = self.repo.get_intent(tenant_id, intent_id)
         if intent is None:
             raise IntentNotFoundError(f"PaymentIntent {intent_id} not found")
+
+        if intent.state != PaymentState.CAPTURE_PENDING:
+            raise InvalidStateTransitionError(
+                f"Cannot capture order for intent in state {intent.state.value} "
+                f"(must be CAPTURE_PENDING)"
+            )
 
         attempt = self.repo.get_attempt(tenant_id, attempt_id)
         if attempt is None:
@@ -563,3 +575,112 @@ class PaymentCoordinator:
 
         # Still pending or unconfirmed
         return intent, attempt
+
+    async def refund_order(
+        self,
+        *,
+        tenant_id: UUID,
+        intent_id: UUID,
+        amount_minor: int | None = None,
+        note: str | None = None,
+    ) -> tuple[PaymentIntent, Any]:
+        intent = self.repo.get_intent(tenant_id, intent_id)
+        if intent is None:
+            raise IntentNotFoundError(f"PaymentIntent {intent_id} not found")
+
+        if intent.state not in (PaymentState.SUCCEEDED, PaymentState.PARTIALLY_REFUNDED):
+            raise InvalidStateTransitionError(
+                f"Cannot refund intent in state {intent.state.value} (must be SUCCEEDED or PARTIALLY_REFUNDED)"
+            )
+
+        active_attempt = None
+        if intent.active_attempt_id:
+            active_attempt = self.repo.get_attempt(tenant_id, intent.active_attempt_id)
+
+        capture_id = None
+        if active_attempt and active_attempt.verified_capture:
+            capture_id = active_attempt.verified_capture.paypal_capture_id
+
+        if not capture_id:
+            raise GuardianError("Cannot refund intent: verified capture ID not found")
+
+        ref_amount = amount_minor if amount_minor is not None else intent.amount_minor
+        refund_result = await self.paypal_client.refund_capture(
+            capture_id=capture_id,
+            amount_minor=ref_amount,
+            currency=intent.currency,
+            note=note,
+        )
+
+        is_partial = (amount_minor is not None and amount_minor < intent.amount_minor)
+        target_state = PaymentState.PARTIALLY_REFUNDED if is_partial else PaymentState.REFUNDED
+        event_type = FinancialEventType.PAYMENT_PARTIALLY_REFUNDED if is_partial else FinancialEventType.PAYMENT_REFUNDED
+
+        updated_intent = self.repo.transition_intent(
+            tenant_id=tenant_id,
+            intent_id=intent_id,
+            target_state=target_state,
+        )
+
+        self.repo.append_financial_event(
+            tenant_id=tenant_id,
+            correlation_id=intent.correlation_id,
+            payment_intent_id=intent.id,
+            event_type=event_type,
+            actor_type="PAYMENT_COORDINATOR",
+            actor_id="guardian-payments",
+            payload={
+                "refund_id": refund_result.refund_id,
+                "capture_id": capture_id,
+                "amount_minor": ref_amount,
+                "currency": intent.currency,
+                "status": refund_result.status,
+            },
+        )
+        return updated_intent, refund_result
+
+    async def void_authorization(
+        self,
+        *,
+        tenant_id: UUID,
+        intent_id: UUID,
+        note: str | None = None,
+    ) -> PaymentIntent:
+        intent = self.repo.get_intent(tenant_id, intent_id)
+        if intent is None:
+            raise IntentNotFoundError(f"PaymentIntent {intent_id} not found")
+
+        if intent.state in (PaymentState.SUCCEEDED, PaymentState.REFUNDED, PaymentState.PARTIALLY_REFUNDED, PaymentState.CANCELLED, PaymentState.FAILED):
+            raise InvalidStateTransitionError(
+                f"Cannot void authorization for intent in terminal or captured state: {intent.state.value}"
+            )
+
+        if intent.reservation_id:
+            self.budget_coordinator.release(
+                tenant_id=tenant_id,
+                correlation_id=intent.correlation_id,
+                payment_intent_id=intent.id,
+                reservation_id=intent.reservation_id,
+                reason=note or "Authorization voided",
+            )
+
+        updated_intent = self.repo.transition_intent(
+            tenant_id=tenant_id,
+            intent_id=intent_id,
+            target_state=PaymentState.CANCELLED,
+        )
+
+        self.repo.append_financial_event(
+            tenant_id=tenant_id,
+            correlation_id=intent.correlation_id,
+            payment_intent_id=intent.id,
+            event_type=FinancialEventType.AUTHORIZATION_VOIDED,
+            actor_type="PAYMENT_COORDINATOR",
+            actor_id="guardian-payments",
+            payload={
+                "intent_id": str(intent_id),
+                "note": note,
+            },
+        )
+        return updated_intent
+

@@ -2,6 +2,33 @@
 
 from __future__ import annotations
 
+import sys
+
+if sys.platform == "win32":
+    try:
+        import asyncio.proactor_events as pe
+
+        class _SandboxDummySocket:
+            def fileno(self) -> int:
+                return -1
+
+            def setblocking(self, blocking: bool) -> None:
+                pass
+
+            def close(self) -> None:
+                pass
+
+        def _sandbox_fake_self_pipe(self) -> None:
+            self._ssock = _SandboxDummySocket()
+            self._csock = _SandboxDummySocket()
+            self._internal_fds = 0
+
+        pe.BaseProactorEventLoop._make_self_pipe = _sandbox_fake_self_pipe
+        pe.BaseProactorEventLoop._close_self_pipe = lambda self: None
+        pe.BaseProactorEventLoop._loop_self_reading = lambda self, f=None: None
+    except Exception:
+        pass
+
 import threading
 from datetime import UTC, datetime
 from typing import Any
@@ -336,6 +363,13 @@ class InMemoryLedgerRepository:
         with self._lock:
             attempt_id = self.paypal_order_map.get(paypal_order_id)
             return self.attempts.get(attempt_id) if attempt_id else None
+
+    def list_attempts_for_intent(self, tenant_id: UUID, intent_id: UUID) -> list[PaymentAttempt]:
+        with self._lock:
+            return [
+                a for a in self.attempts.values()
+                if a.tenant_id == tenant_id and a.payment_intent_id == intent_id
+            ]
 
     def update_attempt(self, attempt: PaymentAttempt) -> PaymentAttempt:
         with self._lock:

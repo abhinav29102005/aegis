@@ -179,4 +179,47 @@ def detect_contradictions(case: DisputeCase, evidence: list[EvidenceRecord]) -> 
                     f"and PAYPAL_CAPTURE {capture_rec.id} (capture recorded despite policy denial)."
                 )
 
+    # GAP-017 Heuristic 1: Card AVS/CVV/3DS checks (3DS pass/fail vs unauthorized claim)
+    case_reason_claim = f"{case.reason} {case.buyer_claim}".upper().replace("_", " ")
+    unauthorized_tokens = ("UNAUTHORIZED", "FRAUD", "NOT RECOGNIZED", "DID NOT AUTHORIZE")
+    if any(tok in case_reason_claim for tok in unauthorized_tokens):
+        for rec in evidence:
+            c = rec.content
+            three_ds = c.get("three_d_secure") or c.get("3ds_status") or c.get("liability_shift")
+            cvv = c.get("cvv_match") or c.get("cvv_code")
+            avs = c.get("avs_match") or c.get("avs_code")
+            is_3ds_pass = str(three_ds).upper() in ("TRUE", "Y", "AUTHENTICATED", "SUCCESS")
+            is_cvv_match = str(cvv).upper() in ("TRUE", "Y", "M", "MATCH")
+            if is_3ds_pass or is_cvv_match:
+                contradictions.append(
+                    f"Contradiction: Buyer claims unauthorized charge, but {rec.source_type.value} {rec.id} "
+                    f"confirms authentication verification (3DS={three_ds}, CVV={cvv}, AVS={avs})."
+                )
+
+    # GAP-017 Heuristic 2: Telemetry checks (active IP/session login vs non-access claim)
+    non_access_tokens = ("NOT ACCESSED", "NEVER USED", "DID NOT USE", "NO ACCESS", "SERVICE NOT RECEIVED")
+    if any(tok in case_reason_claim for tok in non_access_tokens):
+        for rec in evidence:
+            c = rec.content
+            login_time = c.get("last_login") or c.get("session_started_at") or c.get("active_timestamp")
+            login_ip = c.get("ip_address") or c.get("client_ip")
+            if login_time or login_ip:
+                contradictions.append(
+                    f"Contradiction: Buyer claims non-access, but telemetry in {rec.source_type.value} {rec.id} "
+                    f"shows verified active session (login={login_time}, ip={login_ip})."
+                )
+
+    # GAP-017 Heuristic 3: Cancellation proofs (cancellation requested after renewal date vs pre-renewal claim)
+    cancel_tokens = ("CANCELLED BEFORE", "CANCELED BEFORE", "CANCELLED PRIOR", "PRE-RENEWAL")
+    if any(tok in case_reason_claim for tok in cancel_tokens):
+        for rec in evidence:
+            c = rec.content
+            cancel_date = c.get("cancellation_requested_at") or c.get("cancellation_date")
+            billing_date = c.get("renewal_date") or c.get("billing_date")
+            if cancel_date and billing_date and str(cancel_date) > str(billing_date):
+                contradictions.append(
+                    f"Contradiction: Buyer claims pre-renewal cancellation, but {rec.source_type.value} {rec.id} "
+                    f"shows cancellation was requested on {cancel_date}, after billing date {billing_date}."
+                )
+
     return contradictions
