@@ -44,3 +44,4 @@
    - **Where:** `apps/web/src/app/icon.svg`
    - **Finding:** Every browser navigation logged a `404` console error for `/favicon.ico`.
    - **Fix:** Added `apps/web/src/app/icon.svg` so Next.js serves an icon cleanly (`24/24` routes built).
+
