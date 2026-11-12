@@ -1,7 +1,7 @@
-# 14 — Engineering Maturity Scorecard (`93.0 / 100`)
+# 14 — Engineering Maturity Scorecard (`94.0 / 100`)
 
-**Progression:** Baseline (`1be376e`): `43.5 / 100` -> M1+M3 (`498043e`): `72.5 / 100` -> M1+M2+M3 (`ebe4069`): `87.0 / 100` -> RC1 Integration (`f8768bd`): `90.0 / 100` -> **P0 Deadlock Fix (`fix/rc1-guardian-deadlock`, `2026-11-12`): `93.0 / 100` (`+49.5 pts` vs Baseline, `+3.0 pts` vs `f8768bd`)**  
-**Scoring Rule:** Earned credit reflects strictly verified integrated behavior and observed post-fix runtime evidence (`-7.0 pts` withheld for `BLOCKED` live PayPal Sandbox and `NOT VERIFIED` remote VPS/Stripe/LLM/S3/external audits).
+**Progression:** Baseline (`1be376e`): `43.5 / 100` -> M1+M3 (`498043e`): `72.5 / 100` -> M1+M2+M3 (`ebe4069`): `87.0 / 100` -> RC1 Integration (`f8768bd`): `90.0 / 100` -> **Deadlock Fix + Live PayPal Sandbox OAuth/Order (`fix/rc1-guardian-deadlock`, `2026-11-12`): `94.0 / 100` (`+50.5 pts` vs Baseline, `+4.0 pts` vs `f8768bd`)**  
+**Scoring Rule:** Earned credit reflects strictly verified integrated behavior and observed post-fix runtime evidence (`-6.0 pts` withheld for unverified PayPal buyer capture/live webhooks and `NOT VERIFIED` remote VPS/Stripe/LLM/S3/external audits).
 
 ---
 
@@ -9,7 +9,7 @@
 
 | # | Category | Weight | Baseline | M1+M2+M3 | Current (`RC1`) | % of Max | Key Observed Evidence (Verified Gains vs Remaining Blockers / Open Items) |
 |---:|---|---:|---:|---:|---:|---:|---|
-| 1 | **Core financial correctness** | 15 | 7.5 | 13.5 | **14.0** | 93.3% | `+` P0 PG deadlock **CLOSED**: `18 passed` × 3 PG16 concurrency stress runs (`2/10/50/100` identical, distinct-key burst, budget exhaustion, rollback/timeout, worker mix) & `GAP-001/005/011/012/016` verified.<br>`-` Live PayPal Sandbox `BLOCKED` (`-1.0`). |
+| 1 | **Core financial correctness** | 15 | 7.5 | 13.5 | **14.5** | 96.7% | `+` P0 PG deadlock **CLOSED** (`18 passed` × 3 PG16 stress runs) & live PayPal Sandbox OAuth + Order creation **PASS** (`packages/paypal/tests/`: `12 passed in 3.52s`); `GAP-001/005/011/012/016` verified.<br>`-` Live buyer capture, live webhook delivery, & Disputes v1 `NOT VERIFIED` (`-0.5`). |
 | 2 | **Security and tenant isolation** | 15 | 6.5 | 13.5 | **14.5** | 96.7% | `+` **`pip-audit`: `0` CVEs** (`11` resolved); **`apps/web` `npm audit --omit=dev`: `0` CVEs** (`next@16.4.6`); `sdk-typescript`: `0` CVEs; `20/20` adversarial tests PASS (`+11` in `test_rc1_security_regressions.py`); non-root/digest Dockerfiles + `cap_drop: ALL`.<br>`-` External pen-test not yet performed. |
 | 3 | **Reliability and recovery** | 12 | 5.5 | 11.0 | **11.5** | 95.8% | `+` Live Compose failure injection (`aegis_fi`): DB stop/start `/ready` (`200->503->200`), worker `--healthcheck` across restart, `4/4` `test_rc1_failure_injection.py` PASS; post-response `session.commit()` race fixed in `auth_orgs.py`, `guardian_db.py`, `disputeos_db.py`.<br>`-` Live S3/R2 WORM & proposal burst deadlock fix pending. |
 | 4 | **Backend / API maturity** | 10 | 5.5 | 9.0 | **10.0** | 100.0% | `+` Load baseline (`c=10/25`, `50` reqs/endpoint): **`0.0%` error rate across all endpoints** (`POST /v1/guardian/proposals` `63.35/60.96 RPS`, reads/replay `112.94–1,483.37 RPS`). |
@@ -21,7 +21,7 @@
 | 10 | **Observability and operations** | 5 | 1.5 | 4.5 | **4.5** | 90.0% | `+` Full-stack `make compose-smoke` (including `web`) PASS post-merge; `/metrics` Prometheus, JSON logs, `deploy/linux-staging/` `ports: !override` & Nginx hardening verified.<br>`-` Remote Linux VPS + Certbot TLS runtime `NOT VERIFIED`. |
 | 11 | **Compliance & governance readiness** | 4 | 1.5 | 3.0 | **3.5** | 87.5% | `+` `RC1_COMPLIANCE_REVIEW_CHECKLIST.md` + `13/13` GDPR/DPDPA/SSRF/KMS/webhook tests PASS.<br>`-` External legal counsel sign-off, DPDPA statutory copy updates, & SOC 2 Type II `NOT VERIFIED`. |
 | 12 | **Commercial readiness** | 3 | 0.5 | 2.0 | **2.5** | 83.3% | `+` Billing UI/API aligned (`/v1/billing/subscription`), `0` prod CVEs, E2E & Compose smoke green.<br>`-` Live Stripe API, live PayPal Sandbox, & proposal deadlock fix pending before external beta. |
-| **TOTAL** | **100** | **43.5** | **87.0** | **93.0** | **93.0%** | **P0 PG deadlock CLOSED; all local CVE, Chromium E2E, failure-injection, concurrency, & load gates PASS; `NO-GO FOR EXTERNAL BETA` until PayPal Sandbox & live VPS staging are verified.** |
+| **TOTAL** | **100** | **43.5** | **87.0** | **94.0** | **94.0%** | **P0 PG deadlock CLOSED & live PayPal Sandbox OAuth/order PASS; `NO-GO FOR EXTERNAL BETA` until live buyer capture/webhooks & live VPS staging are verified.** |
 
 ---
 
