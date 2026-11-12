@@ -3,7 +3,7 @@
 **Audit Revision:** Post-RC1 Hardening & Dual-Computer Integration (`2026-11-12`)  
 **Repository:** `/home/bigboyaks/Projects/agentpay-nexus`  
 **Integrated Branch:** `integration/nexus` *(merging `release/rc1-c1-security-e2e-deploy` @ `98cf8eb` and `release/rc1-c2-payments-ops-load` @ `4c02caa` at `3211220`, plus `docs/release/RC1_FINAL_SIGN_OFF.md` @ `f8768bd`)*  
-**Audit Method:** Direct runtime execution of `uv run ruff check .`, full PG16 `uv run pytest -q` (`354 passed, 3 skipped, 0 failed`), 3× PG16 concurrency stress runs (`18 passed` × 3), real Chromium Playwright E2E (`5/5` passed on `98cf8eb`), full-stack Docker Compose `make compose-smoke` (on `3211220`), failure-injection Compose drill, synthetic async load baseline (`tests/load/load_benchmark.py`, `0.0%` error rate across all endpoints), TS SDK `vitest`/`tsc`, Next.js `lint`/`test`/`next build`, `pip-audit`, and `npm audit --omit=dev`.
+**Audit Method:** Direct runtime execution of `uv run ruff check .`, full PG16 `uv run pytest -q` (`354 passed, 3 skipped, 0 failed`), 3× PG16 concurrency stress runs (`18 passed` × 3), real Chromium Playwright E2E (`5/5` passed on `98cf8eb`), full-stack Docker Compose `make compose-smoke` (`exit 0` on `fix/rc1-guardian-deadlock`), failure-injection Compose drill, synthetic async load baseline (`tests/load/load_benchmark.py`, `0.0%` error rate across all endpoints), TS SDK `vitest`/`tsc`, Next.js `lint`/`test`/`next build`, `pip-audit`, and `npm audit --omit=dev`.
 
 ---
 

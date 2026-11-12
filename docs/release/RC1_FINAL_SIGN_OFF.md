@@ -37,7 +37,7 @@ The P0 PostgreSQL concurrency deadlock on `POST /v1/guardian/proposals` has been
 | **Synthetic Load Benchmark (`load_benchmark.py`)** | `c=10` & `c=25`, `50` reqs/endpoint vs PG16 + Uvicorn | **PASS** | **`0.0%` error rate across all endpoints** (`POST /v1/guardian/proposals`: `50/50` `201`, `63.35 RPS` @ `c=10`, `60.96 RPS` @ `c=25`) |
 | **TypeScript SDK (`packages/sdk-typescript`)** | `npm run typecheck && npm test` | **PASS** | `tsc --noEmit` PASS; Vitest `4` files / `35` tests PASS (`35 passed`); Node test `tests/sdk.test.mjs` `3/3` PASS |
 | **Web Console (`apps/web`)** | `npm run typecheck && npm run lint && npm test` | **PASS** | `tsc --noEmit` PASS; `eslint .` `0` errors (`4` warnings); `node --test tests/format.test.mjs` `3/3` PASS |
-| **Full-Stack Compose Smoke (pre-deadlock-fix `integration/nexus`)** | `POSTGRES_PORT=55432 REDIS_PORT=56379 API_PORT=18000 WEB_PORT=13005 make compose-smoke` | **PASS** | Exit `0` on `integration/nexus` (`3211220`); not re-run on `fix/rc1-guardian-deadlock` |
+| **Full-Stack Compose Smoke (`fix/rc1-guardian-deadlock`)** | `POSTGRES_PORT=55432 REDIS_PORT=56379 API_PORT=18000 WEB_PORT=13005 make compose-smoke` | **PASS** | Exit `0` on `fix/rc1-guardian-deadlock`; built & started `postgres`, `redis`, `migrate`, `api`, `worker`, `web`, verified health/readiness, and tore down cleanly |
 
 ---
 
