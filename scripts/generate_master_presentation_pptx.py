@@ -1,27 +1,26 @@
-"""Generate AEGIS Master 11-Slide Executive Presentation (.pptx) with Real Embedded Mermaid Diagrams.
+"""Generate Perfectly Formatted AEGIS Master 11-Slide Executive Presentation (.pptx).
 
-- Widescreen 16:9 layout (13.333" x 7.5")
-- High-contrast obsidian fintech aesthetic (#0A0E17)
-- Embedded high-resolution rendered Mermaid diagrams for:
-  * Slide 4: Tri-Subsystem Topology
-  * Slide 5: Data Flow Architecture (DFD Level 0 & Level 1)
-  * Slide 6: End-to-End Sequence Diagram
-  * Slide 8: STRIDE Security Threat Model
-  * Slide 10: DisputeOS Automated Defense Pipeline
-- Formatted metrics grids, comparative tables, mathematical invariants, and live proof callouts.
+Ensures:
+- Exact 16:9 widescreen canvas (13.333" x 7.5")
+- Generous padding and margins (zero overlapping cards or cropped text)
+- Native styled visual cards with high-contrast borders and structured hierarchy
+- Clean placement of diagrams with exact aspect-ratio bounding boxes
+- Clean 7-row competitive comparison table with vertical cell centering
+- Obsidian fintech theme (#0A0E17, #111827, #1E293B, #38BDF8, #10B981, #F59E0B)
 """
 
 import os
+from PIL import Image
 from pptx import Presentation
 from pptx.util import Inches, Pt
-from pptx.enum.text import PP_ALIGN
+from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE
 
 BG_COLOR = RGBColor(10, 14, 23)        # #0A0E17
 CARD_BG = RGBColor(17, 24, 39)        # #111827
 CARD_BORDER = RGBColor(31, 41, 55)    # #1F2937
-CARD_INNER = RGBColor(30, 41, 59)     # #1E293B
+CARD_INNER = RGBColor(24, 33, 47)     # #18212F
 CYAN = RGBColor(56, 189, 248)         # #38BDF8
 BRIGHT_CYAN = RGBColor(0, 210, 255)   # #00D2FF
 GREEN = RGBColor(16, 185, 129)        # #10B981
@@ -31,7 +30,7 @@ WHITE = RGBColor(243, 244, 246)       # #F3F4F6
 MUTED = RGBColor(156, 163, 175)       # #9CA3AF
 
 
-def generate_deck():
+def create_deck():
     prs = Presentation()
     prs.slide_width = Inches(13.333)
     prs.slide_height = Inches(7.5)
@@ -46,9 +45,11 @@ def generate_deck():
         bg.fill.fore_color.rgb = BG_COLOR
         bg.line.fill.background()
 
-        # Header Pill / Tag
-        tag_box = slide.shapes.add_textbox(Inches(0.8), Inches(0.35), Inches(11.7), Inches(0.3))
+        # Header Pill
+        tag_box = slide.shapes.add_textbox(Inches(0.8), Inches(0.35), Inches(11.733), Inches(0.28))
         tf = tag_box.text_frame
+        tf.word_wrap = True
+        tf.margin_top = tf.margin_bottom = tf.margin_left = tf.margin_right = 0
         p = tf.paragraphs[0]
         p.text = header_tag.upper()
         p.font.size = Pt(10)
@@ -56,9 +57,10 @@ def generate_deck():
         p.font.color.rgb = CYAN
 
         # Title
-        title_box = slide.shapes.add_textbox(Inches(0.8), Inches(0.65), Inches(11.7), Inches(0.6))
+        title_box = slide.shapes.add_textbox(Inches(0.8), Inches(0.65), Inches(11.733), Inches(0.48))
         tf = title_box.text_frame
         tf.word_wrap = True
+        tf.margin_top = tf.margin_bottom = tf.margin_left = tf.margin_right = 0
         p = tf.paragraphs[0]
         p.text = title
         p.font.size = Pt(21)
@@ -66,20 +68,22 @@ def generate_deck():
         p.font.color.rgb = WHITE
 
         # Subtitle
-        sub_box = slide.shapes.add_textbox(Inches(0.8), Inches(1.25), Inches(11.7), Inches(0.4))
+        sub_box = slide.shapes.add_textbox(Inches(0.8), Inches(1.15), Inches(11.733), Inches(0.32))
         tf = sub_box.text_frame
         tf.word_wrap = True
+        tf.margin_top = tf.margin_bottom = tf.margin_left = tf.margin_right = 0
         p = tf.paragraphs[0]
         p.text = subtitle
-        p.font.size = Pt(11.5)
+        p.font.size = Pt(11)
         p.font.color.rgb = MUTED
 
         # Footer
-        foot_box = slide.shapes.add_textbox(Inches(0.8), Inches(7.05), Inches(11.7), Inches(0.3))
+        foot_box = slide.shapes.add_textbox(Inches(0.8), Inches(7.1), Inches(11.733), Inches(0.25))
         tf = foot_box.text_frame
+        tf.margin_top = tf.margin_bottom = tf.margin_left = tf.margin_right = 0
         p = tf.paragraphs[0]
         p.text = "AEGIS PLATFORM • The Financial Black Box for AI Agents • Public Beta Candidate v1.0.0-rc1"
-        p.font.size = Pt(9)
+        p.font.size = Pt(8.5)
         p.font.color.rgb = MUTED
 
         return slide
@@ -92,15 +96,39 @@ def generate_deck():
         card.line.width = Pt(1.2)
 
         if title:
-            tb = slide.shapes.add_textbox(left + Inches(0.2), top + Inches(0.12), width - Inches(0.4), Inches(0.4))
+            tb = slide.shapes.add_textbox(left + Inches(0.2), top + Inches(0.12), width - Inches(0.4), Inches(0.35))
             tf = tb.text_frame
             tf.word_wrap = True
+            tf.margin_top = tf.margin_bottom = tf.margin_left = tf.margin_right = 0
             p = tf.paragraphs[0]
             p.text = title
             p.font.size = Pt(12)
             p.font.bold = True
             p.font.color.rgb = CYAN
         return card
+
+    def add_fitted_image(slide, img_path, left, top, max_width, max_height):
+        if not os.path.exists(img_path):
+            return None
+        im = Image.open(img_path)
+        img_w, img_h = im.size
+        img_aspect = img_w / img_h
+        target_aspect = max_width / max_height
+
+        if img_aspect > target_aspect:
+            # Width constrained
+            w = max_width
+            h = max_width / img_aspect
+            y = top + (max_height - h) / 2
+            x = left
+        else:
+            # Height constrained
+            h = max_height
+            w = max_height * img_aspect
+            x = left + (max_width - w) / 2
+            y = top
+
+        return slide.shapes.add_picture(img_path, Inches(x), Inches(y), width=Inches(w), height=Inches(h))
 
     # =========================================================================
     # SLIDE 1: Title & Executive Positioning
@@ -111,15 +139,17 @@ def generate_deck():
         "Deterministic Spending Governance, Multi-Rail Execution & Cryptographic Audit Provenance",
     )
 
-    banner = s1.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.8), Inches(1.85), Inches(11.733), Inches(1.25))
+    # Hero Banner
+    banner = s1.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.8), Inches(1.6), Inches(11.733), Inches(1.3))
     banner.fill.solid()
     banner.fill.fore_color.rgb = RGBColor(14, 30, 56)
     banner.line.color.rgb = BRIGHT_CYAN
     banner.line.width = Pt(1.5)
 
-    tb = s1.shapes.add_textbox(Inches(1.1), Inches(2.0), Inches(11.133), Inches(0.95))
+    tb = s1.shapes.add_textbox(Inches(1.05), Inches(1.72), Inches(11.233), Inches(1.05))
     tf = tb.text_frame
     tf.word_wrap = True
+    tf.margin_top = tf.margin_bottom = tf.margin_left = tf.margin_right = 0
     p1 = tf.paragraphs[0]
     p1.text = "THE CORE AXIOM: \"NEVER ALLOW AN LLM TO APPROVE ITS OWN MONEY\""
     p1.font.size = Pt(13)
@@ -132,8 +162,9 @@ def generate_deck():
     p2.font.color.rgb = WHITE
     p2.space_before = Pt(4)
 
+    # 4 Metric Hero Cards
     metrics = [
-        ("100%", "DETERMINISTIC CONTROL", "Zero LLM Fund Approvals", GREEN),
+        ("100%", "DETERMINISTIC CONTROL", "Zero LLM Fund Authorizations", GREEN),
         ("SHA-256", "MERKLE PROVENANCE", "Tamper-Evident Hash Chains", BRIGHT_CYAN),
         ("Orders v2", "PAYPAL SANDBOX RAIL", "Live Multi-Rail REST Execution", AMBER),
         ("96.0 / 100", "AUDIT MATURITY SCORE", "354 Automated Suites Passing", GREEN),
@@ -141,13 +172,14 @@ def generate_deck():
 
     for i, (val, label, sub, col) in enumerate(metrics):
         x = Inches(0.8 + i * 3.0)
-        add_card(s1, x, Inches(3.35), Inches(2.733), Inches(1.7), bg_color=CARD_BG, border_color=col)
-        tb = s1.shapes.add_textbox(x + Inches(0.15), Inches(3.5), Inches(2.433), Inches(1.4))
+        add_card(s1, x, Inches(3.08), Inches(2.733), Inches(1.7), bg_color=CARD_BG, border_color=col)
+        tb = s1.shapes.add_textbox(x + Inches(0.15), Inches(3.22), Inches(2.433), Inches(1.4))
         tf = tb.text_frame
         tf.word_wrap = True
+        tf.margin_top = tf.margin_bottom = tf.margin_left = tf.margin_right = 0
         p = tf.paragraphs[0]
         p.text = val
-        p.font.size = Pt(24)
+        p.font.size = Pt(25)
         p.font.bold = True
         p.font.color.rgb = col
         p.alignment = PP_ALIGN.CENTER
@@ -165,11 +197,14 @@ def generate_deck():
         p_sub.font.color.rgb = MUTED
         p_sub.alignment = PP_ALIGN.CENTER
 
-    add_card(s1, Inches(0.8), Inches(5.3), Inches(11.733), Inches(1.5), "Verified Live Production Credentials (Worldwide Access)")
-    tb = s1.shapes.add_textbox(Inches(1.0), Inches(5.75), Inches(11.333), Inches(0.95))
+    # Production Credentials Box
+    add_card(s1, Inches(0.8), Inches(5.0), Inches(11.733), Inches(1.8), "Verified Live Production Credentials (Worldwide Access)")
+    tb = s1.shapes.add_textbox(Inches(1.05), Inches(5.42), Inches(11.233), Inches(1.25))
     tf = tb.text_frame
+    tf.word_wrap = True
+    tf.margin_top = tf.margin_bottom = tf.margin_left = tf.margin_right = 0
     p = tf.paragraphs[0]
-    p.text = "• Web Console (Next.js 16): https://aegis-staging.abhinavkumarsingh.tech/login   • REST API / Docs: https://api-staging.abhinavkumarsingh.tech/docs\n• Evaluator Login: chief-auditor-bf1ab00d@aegis-nexus.tech   • Password: SuperSecurePassword123!@#\n• Azure Ubuntu VM: 20.124.91.36 (Port 443 TLS)   • Tenant UUID: 829db6b0-6566-4d6d-84e7-6fae90633723"
+    p.text = "• Web Console (Next.js 16): https://aegis-staging.abhinavkumarsingh.tech/login   • REST API / Docs: https://api-staging.abhinavkumarsingh.tech/docs\n• Evaluator Login: chief-auditor-bf1ab00d@aegis-nexus.tech   • Password: SuperSecurePassword123!@#\n• Azure Ubuntu VM: 20.124.91.36 (Port 443 TLS)   • Tenant UUID: 829db6b0-6566-4d6d-84e7-6fae90633723\n• Managed Infrastructure: Neon Serverless PostgreSQL (Ohio v18.6) + Upstash Managed Redis (v8.4.0 TLS rediss://)"
     p.font.size = Pt(9.5)
     p.font.color.rgb = WHITE
 
@@ -191,19 +226,22 @@ def generate_deck():
 
     for i, (title, desc, col) in enumerate(threats):
         x = Inches(0.8 + (i % 2) * 6.0)
-        y = Inches(1.85 + (i // 2) * 2.4)
-        add_card(s2, x, y, Inches(5.733), Inches(2.2), title, border_color=col)
-        tb = s2.shapes.add_textbox(x + Inches(0.2), y + Inches(0.6), Inches(5.333), Inches(1.4))
+        y = Inches(1.6 + (i // 2) * 2.5)
+        add_card(s2, x, y, Inches(5.733), Inches(2.25), title, border_color=col)
+        tb = s2.shapes.add_textbox(x + Inches(0.2), y + Inches(0.55), Inches(5.333), Inches(1.5))
         tf = tb.text_frame
         tf.word_wrap = True
+        tf.margin_top = tf.margin_bottom = tf.margin_left = tf.margin_right = 0
         p = tf.paragraphs[0]
         p.text = desc
         p.font.size = Pt(11)
         p.font.color.rgb = WHITE
 
-    add_card(s2, Inches(0.8), Inches(6.05), Inches(11.733), Inches(0.8), bg_color=CARD_INNER)
-    tb = s2.shapes.add_textbox(Inches(1.0), Inches(6.15), Inches(11.333), Inches(0.6))
+    add_card(s2, Inches(0.8), Inches(6.0), Inches(11.733), Inches(0.85), bg_color=CARD_INNER)
+    tb = s2.shapes.add_textbox(Inches(1.05), Inches(6.12), Inches(11.233), Inches(0.6))
     tf = tb.text_frame
+    tf.word_wrap = True
+    tf.margin_top = tf.margin_bottom = tf.margin_left = tf.margin_right = 0
     p = tf.paragraphs[0]
     p.text = "5. Automatic Chargeback Losses: Payment processors hold merchants and enterprises strictly liable. Without cryptographic proof connecting agent intent to fulfillment, chargebacks are lost automatically."
     p.font.size = Pt(10)
@@ -220,16 +258,17 @@ def generate_deck():
     )
 
     rows, cols = 7, 4
-    table_shape = s3.shapes.add_table(rows, cols, Inches(0.8), Inches(1.85), Inches(11.733), Inches(4.85))
+    table_shape = s3.shapes.add_table(rows, cols, Inches(0.8), Inches(1.6), Inches(11.733), Inches(5.15))
     table = table_shape.table
-    table.columns[0].width = Inches(2.3)
+    table.columns[0].width = Inches(2.2)
     table.columns[1].width = Inches(3.1)
     table.columns[2].width = Inches(3.1)
-    table.columns[3].width = Inches(3.233)
+    table.columns[3].width = Inches(3.333)
 
     headers = ["Dimension", "Legacy Gateways (Stripe/PayPal)", "Virtual Cards (Brex/Ramp)", "AEGIS Platform"]
     for j, h in enumerate(headers):
         cell = table.cell(0, j)
+        cell.vertical_anchor = MSO_ANCHOR.MIDDLE
         cell.fill.solid()
         cell.fill.fore_color.rgb = RGBColor(14, 30, 56)
         p = cell.text_frame.paragraphs[0]
@@ -250,6 +289,7 @@ def generate_deck():
     for i, row in enumerate(data):
         for j, val in enumerate(row):
             cell = table.cell(i + 1, j)
+            cell.vertical_anchor = MSO_ANCHOR.MIDDLE
             cell.fill.solid()
             cell.fill.fore_color.rgb = CARD_BG if i % 2 == 0 else CARD_INNER
             p = cell.text_frame.paragraphs[0]
@@ -260,7 +300,7 @@ def generate_deck():
                 p.font.bold = True
 
     # =========================================================================
-    # SLIDE 4: Core Novelty & System Architecture (WITH MERMAID DIAGRAM)
+    # SLIDE 4: Core Novelty & System Architecture (Fitted Mermaid Diagram)
     # =========================================================================
     s4 = add_base_slide(
         "Slide 04 • System Topology & Decomposition",
@@ -268,36 +308,37 @@ def generate_deck():
         "Sovereign Subsystems Governing the Complete Autonomous Transaction Lifecycle",
     )
 
-    # Left: Text summary card
-    add_card(s4, Inches(0.8), Inches(1.85), Inches(4.5), Inches(4.9), "Tri-Subsystem Architectural Boundaries")
-    tb = s4.shapes.add_textbox(Inches(1.0), Inches(2.35), Inches(4.1), Inches(4.2))
-    tf = tb.text_frame
-    tf.word_wrap = True
-
-    subsystems_text = [
-        ("1. AgentPay Guardian", "Deterministic spending passports, velocity caps, atomic budget reservations, and multi-rail payment adapters (PayPal Orders v2)."),
-        ("2. GhostPay Forensics", "Cryptographic SHA-256 Merkle hash-chained audit ledger, deterministic replay simulator, counterfactual policy simulator, and Agent DNA profiling."),
-        ("3. DisputeOS Engine", "Automated dispute case ingestion, multimodal evidence graph (telemetry, receipts, carrier logs), contradiction matrix, and grounded AI defense briefs."),
+    # 3 Summary Cards at Top
+    subsystems_cards = [
+        ("1. AgentPay Guardian", "AUTONOMOUS GOVERNANCE", "Deterministic passports, velocity caps, atomic budget reservations & PayPal Orders v2.", BRIGHT_CYAN),
+        ("2. GhostPay Forensics", "IMMUTABLE AUDIT LEDGER", "SHA-256 Merkle hash chains, deterministic replay, counterfactual simulation & Agent DNA.", GREEN),
+        ("3. DisputeOS Engine", "CHARGEBACK DEFENSE", "Automated dispute case ingestion, evidence graphs, contradiction detection & grounded briefs.", AMBER),
     ]
-    for st, sd in subsystems_text:
-        p_t = tf.add_paragraph() if tf.paragraphs[0].text else tf.paragraphs[0]
-        p_t.text = st
-        p_t.font.size = Pt(11)
-        p_t.font.bold = True
-        p_t.font.color.rgb = BRIGHT_CYAN
-        p_t.space_before = Pt(8)
 
+    for i, (title, sub, desc, col) in enumerate(subsystems_cards):
+        x = Inches(0.8 + i * 4.0)
+        add_card(s4, x, Inches(1.6), Inches(3.733), Inches(1.75), title, border_color=col)
+        tb = s4.shapes.add_textbox(x + Inches(0.2), Inches(2.05), Inches(3.333), Inches(1.15))
+        tf = tb.text_frame
+        tf.word_wrap = True
+        tf.margin_top = tf.margin_bottom = tf.margin_left = tf.margin_right = 0
+        p_sub = tf.paragraphs[0]
+        p_sub.text = sub
+        p_sub.font.size = Pt(8.5)
+        p_sub.font.bold = True
+        p_sub.font.color.rgb = col
         p_d = tf.add_paragraph()
-        p_d.text = sd
+        p_d.text = desc
         p_d.font.size = Pt(9.5)
         p_d.font.color.rgb = WHITE
+        p_d.space_before = Pt(4)
 
-    # Right: Rendered Mermaid Diagram Image
-    if os.path.exists("/tmp/slide4_tri.png"):
-        s4.shapes.add_picture("/tmp/slide4_tri.png", Inches(5.5), Inches(1.85), width=Inches(7.033))
+    # Fitted Mermaid Diagram Box at Bottom
+    add_card(s4, Inches(0.8), Inches(3.55), Inches(11.733), Inches(3.3), "Tri-Subsystem Topological Interaction Diagram")
+    add_fitted_image(s4, "/tmp/slide4_tri_balanced.png", 1.0, 3.95, 11.333, 2.7)
 
     # =========================================================================
-    # SLIDE 5: Data Flow Diagrams (DFD Level 0 & Level 1) (WITH MERMAID DIAGRAM)
+    # SLIDE 5: Data Flow Architecture (DFD Level 0 & Level 1)
     # =========================================================================
     s5 = add_base_slide(
         "Slide 05 • Data Flow Architecture",
@@ -305,37 +346,38 @@ def generate_deck():
         "Complete Traceability from Agent Proposal Submission to Immutable Ledger Settlement",
     )
 
-    # Left: DFD Description & Invariants
-    add_card(s5, Inches(0.8), Inches(1.85), Inches(4.5), Inches(4.9), "Data Flow Pipeline & Invariants")
-    tb = s5.shapes.add_textbox(Inches(1.0), Inches(2.35), Inches(4.1), Inches(4.2))
+    # Left: Text Pipeline Explanation
+    add_card(s5, Inches(0.8), Inches(1.6), Inches(5.2), Inches(5.25), "Data Flow Pipeline & Invariants")
+    tb = s5.shapes.add_textbox(Inches(1.05), Inches(2.1), Inches(4.7), Inches(4.5))
     tf = tb.text_frame
     tf.word_wrap = True
+    tf.margin_top = tf.margin_bottom = tf.margin_left = tf.margin_right = 0
 
-    dfd_points = [
+    dfd_stages = [
         ("Level 0: External Context Flow", "Agent submits proposal -> AEGIS evaluates bounds -> Escalate high-value to human -> Authorize capture at PayPal -> Append Merkle audit proof."),
         ("Level 1: Subsystem Ingestion", "FastAPI router validates Pydantic v2 schemas and computes deterministic quote hash."),
         ("Level 1: Concurrency Isolation", "Advisory lock acquired on passport UUID (pg_advisory_xact_lock), preventing double-spending."),
         ("Level 1: Transactional Outbox", "Financial mutations and event dispatches commit in the same ACID transaction, guaranteeing exactly-once delivery."),
     ]
-    for dt, dd in dfd_points:
+    for dt, dd in dfd_stages:
         p_t = tf.add_paragraph() if tf.paragraphs[0].text else tf.paragraphs[0]
         p_t.text = dt
         p_t.font.size = Pt(10.5)
         p_t.font.bold = True
         p_t.font.color.rgb = GREEN
-        p_t.space_before = Pt(8)
+        p_t.space_before = Pt(6)
 
         p_d = tf.add_paragraph()
         p_d.text = dd
         p_d.font.size = Pt(9)
         p_d.font.color.rgb = WHITE
 
-    # Right: Rendered Mermaid Diagram Image
-    if os.path.exists("/tmp/slide5_dfd.png"):
-        s5.shapes.add_picture("/tmp/slide5_dfd.png", Inches(5.5), Inches(1.85), width=Inches(7.033))
+    # Right: Rendered Balanced DFD
+    add_card(s5, Inches(6.2), Inches(1.6), Inches(6.333), Inches(5.25), "Decomposed Data Flow Diagram (DFD)")
+    add_fitted_image(s5, "/tmp/slide5_dfd_balanced.png", 6.4, 2.05, 5.933, 4.6)
 
     # =========================================================================
-    # SLIDE 6: End-to-End Transaction Sequence (WITH MERMAID DIAGRAM)
+    # SLIDE 6: End-to-End Transaction Sequence
     # =========================================================================
     s6 = add_base_slide(
         "Slide 06 • Protocol Execution Sequence",
@@ -343,35 +385,20 @@ def generate_deck():
         "Proposal Validation, Advisory Locking, PayPal Order Creation, Premature Capture Guard & Settlement",
     )
 
-    # Left: Protocol Stages Summary
-    add_card(s6, Inches(0.8), Inches(1.85), Inches(4.3), Inches(4.9), "Transaction Sequence Protocol")
-    tb = s6.shapes.add_textbox(Inches(1.0), Inches(2.35), Inches(3.9), Inches(4.2))
+    # Top: Sequence Protocol Stages Banner
+    add_card(s6, Inches(0.8), Inches(1.6), Inches(11.733), Inches(1.15), "Protocol Sequence Overview")
+    tb = s6.shapes.add_textbox(Inches(1.05), Inches(1.95), Inches(11.233), Inches(0.7))
     tf = tb.text_frame
     tf.word_wrap = True
+    tf.margin_top = tf.margin_bottom = tf.margin_left = tf.margin_right = 0
+    p = tf.paragraphs[0]
+    p.text = "1. Proposal & Quote Normalization -> 2. Invariant & Policy Verification -> 3. Human Escalation Gate -> 4. Advisory Lock & Budget Hold -> 5. PayPal Orders v2 Dispatch (409 Capture Guard) -> 6. HMAC Webhook & Merkle Settlement."
+    p.font.size = Pt(10)
+    p.font.color.rgb = WHITE
 
-    seq_points = [
-        ("1. Proposal & Quote Normalization", "Deterministic SHA-256 quote normalization prevents post-submission price alteration."),
-        ("2. Invariant & Policy Verification", "Evaluates velocity, allowlists, and per-tx limits. If <= $25 -> auto-approved; if > $500 -> held in AWAITING_APPROVAL."),
-        ("3. Advisory Lock & Budget Hold", "Executes pg_advisory_xact_lock to commit balance reservation before API calls."),
-        ("4. PayPal Orders v2 Dispatch", "Creates live PayPal Sandbox order. Enforces capture state guard: premature capture strictly returns 409 Conflict."),
-        ("5. HMAC Webhook & Merkle Settle", "Inbound webhook verified via HMAC-SHA256 signature; settles ledger and appends event to GhostPay chain."),
-    ]
-    for st, sd in seq_points:
-        p_t = tf.add_paragraph() if tf.paragraphs[0].text else tf.paragraphs[0]
-        p_t.text = st
-        p_t.font.size = Pt(10)
-        p_t.font.bold = True
-        p_t.font.color.rgb = BRIGHT_CYAN
-        p_t.space_before = Pt(6)
-
-        p_d = tf.add_paragraph()
-        p_d.text = sd
-        p_d.font.size = Pt(8.5)
-        p_d.font.color.rgb = WHITE
-
-    # Right: Rendered Mermaid Diagram Image
-    if os.path.exists("/tmp/slide6_seq.png"):
-        s6.shapes.add_picture("/tmp/slide6_seq.png", Inches(5.3), Inches(1.85), width=Inches(7.233))
+    # Bottom: Sequence Diagram
+    add_card(s6, Inches(0.8), Inches(2.95), Inches(11.733), Inches(3.9), "Complete Protocol Sequence Diagram (Rendered)")
+    add_fitted_image(s6, "/tmp/slide6_seq_landscape.png", 1.0, 3.35, 11.333, 3.3)
 
     # =========================================================================
     # SLIDE 7: Technical Methodology & Financial Correctness Invariants
@@ -411,11 +438,12 @@ def generate_deck():
 
     for i, (title, pts, col) in enumerate(invariants):
         x = Inches(0.8 + (i % 2) * 6.0)
-        y = Inches(1.85 + (i // 2) * 2.45)
-        add_card(s7, x, y, Inches(5.733), Inches(2.25), title, border_color=col)
-        tb = s7.shapes.add_textbox(x + Inches(0.2), y + Inches(0.55), Inches(5.333), Inches(1.55))
+        y = Inches(1.6 + (i // 2) * 2.6)
+        add_card(s7, x, y, Inches(5.733), Inches(2.4), title, border_color=col)
+        tb = s7.shapes.add_textbox(x + Inches(0.2), y + Inches(0.55), Inches(5.333), Inches(1.7))
         tf = tb.text_frame
         tf.word_wrap = True
+        tf.margin_top = tf.margin_bottom = tf.margin_left = tf.margin_right = 0
         for pt in pts:
             p = tf.add_paragraph() if tf.paragraphs[0].text else tf.paragraphs[0]
             p.text = f"• {pt}"
@@ -424,7 +452,7 @@ def generate_deck():
             p.space_before = Pt(3)
 
     # =========================================================================
-    # SLIDE 8: Enterprise Security Architecture & Threat Model (STRIDE) (WITH MERMAID)
+    # SLIDE 8: Enterprise Security Architecture & Threat Model (STRIDE)
     # =========================================================================
     s8 = add_base_slide(
         "Slide 08 • Security Architecture & STRIDE Model",
@@ -433,10 +461,11 @@ def generate_deck():
     )
 
     # Left: Security Pillars & Prompt Injection Guard
-    add_card(s8, Inches(0.8), Inches(1.85), Inches(4.5), Inches(4.9), "Defense-in-Depth & Prompt Isolation")
-    tb = s8.shapes.add_textbox(Inches(1.0), Inches(2.35), Inches(4.1), Inches(4.2))
+    add_card(s8, Inches(0.8), Inches(1.6), Inches(5.2), Inches(5.25), "Defense-in-Depth & Prompt Isolation")
+    tb = s8.shapes.add_textbox(Inches(1.05), Inches(2.1), Inches(4.7), Inches(4.5))
     tf = tb.text_frame
     tf.word_wrap = True
+    tf.margin_top = tf.margin_bottom = tf.margin_left = tf.margin_right = 0
 
     sec_points = [
         ("Spoofing & Tampering Defense", "Asymmetric JWT / API Keys with tenant_id row isolation. SHA-256 Merkle hash-chaining prevents historical modification."),
@@ -458,9 +487,9 @@ def generate_deck():
         p_d.font.size = Pt(8.5)
         p_d.font.color.rgb = WHITE
 
-    # Right: Rendered Mermaid Diagram Image
-    if os.path.exists("/tmp/slide8_sec.png"):
-        s8.shapes.add_picture("/tmp/slide8_sec.png", Inches(5.5), Inches(1.85), width=Inches(7.033))
+    # Right: Rendered Landscape STRIDE Diagram
+    add_card(s8, Inches(6.2), Inches(1.6), Inches(6.333), Inches(5.25), "STRIDE Threat Model & Defense Perimeter")
+    add_fitted_image(s8, "/tmp/slide8_sec_landscape.png", 6.4, 2.05, 5.933, 4.6)
 
     # =========================================================================
     # SLIDE 9: GhostPay Forensic Replay & Merkle Ledger
@@ -480,19 +509,22 @@ def generate_deck():
 
     for i, (title, desc, col) in enumerate(gp_cards):
         x = Inches(0.8 + (i % 2) * 6.0)
-        y = Inches(1.85 + (i // 2) * 2.1)
-        add_card(s9, x, y, Inches(5.733), Inches(1.9), title, border_color=col)
-        tb = s9.shapes.add_textbox(x + Inches(0.2), y + Inches(0.55), Inches(5.333), Inches(1.25))
+        y = Inches(1.6 + (i // 2) * 2.2)
+        add_card(s9, x, y, Inches(5.733), Inches(2.05), title, border_color=col)
+        tb = s9.shapes.add_textbox(x + Inches(0.2), y + Inches(0.55), Inches(5.333), Inches(1.35))
         tf = tb.text_frame
         tf.word_wrap = True
+        tf.margin_top = tf.margin_bottom = tf.margin_left = tf.margin_right = 0
         p = tf.paragraphs[0]
         p.text = desc
         p.font.size = Pt(10.5)
         p.font.color.rgb = WHITE
 
-    add_card(s9, Inches(0.8), Inches(6.1), Inches(11.733), Inches(0.75), bg_color=CARD_INNER, border_color=GREEN)
-    tb = s9.shapes.add_textbox(Inches(1.0), Inches(6.2), Inches(11.333), Inches(0.55))
+    add_card(s9, Inches(0.8), Inches(6.05), Inches(11.733), Inches(0.8), bg_color=CARD_INNER, border_color=GREEN)
+    tb = s9.shapes.add_textbox(Inches(1.05), Inches(6.15), Inches(11.233), Inches(0.6))
     tf = tb.text_frame
+    tf.word_wrap = True
+    tf.margin_top = tf.margin_bottom = tf.margin_left = tf.margin_right = 0
     p = tf.paragraphs[0]
     p.text = "Verified Live Proof: Investigation 4cce42a3-881d-43d7-aae5-3f32537c97eb confirmed status VALID across 5 sequential event blocks (PROPOSAL_SUBMITTED -> POLICY_EVALUATED -> BUDGET_RESERVED -> PAYPAL_ORDER_CREATED -> CAPTURE_COMPLETED)."
     p.font.size = Pt(9.5)
@@ -500,7 +532,7 @@ def generate_deck():
     p.font.color.rgb = GREEN
 
     # =========================================================================
-    # SLIDE 10: DisputeOS Contradiction Matrix & Grounded Defense (WITH MERMAID)
+    # SLIDE 10: DisputeOS Contradiction Matrix & Grounded Defense
     # =========================================================================
     s10 = add_base_slide(
         "Slide 10 • Dispute Resolution & Chargeback Defense",
@@ -508,34 +540,20 @@ def generate_deck():
         "Eliminating Chargeback Losses via Multimodal Telemetry and Grounded Citations",
     )
 
-    # Left: Dispute Defense Workflow & Real Proof
-    add_card(s10, Inches(0.8), Inches(1.85), Inches(4.5), Inches(4.9), "Automated Evidence & Contradiction Engine")
-    tb = s10.shapes.add_textbox(Inches(1.0), Inches(2.35), Inches(4.1), Inches(4.2))
+    # Top: Live Case Contradiction Evidence Box
+    add_card(s10, Inches(0.8), Inches(1.6), Inches(11.733), Inches(1.75), "Live Dispute Case Verification (Case b4502263)")
+    tb = s10.shapes.add_textbox(Inches(1.05), Inches(2.0), Inches(11.233), Inches(1.2))
     tf = tb.text_frame
     tf.word_wrap = True
+    tf.margin_top = tf.margin_bottom = tf.margin_left = tf.margin_right = 0
+    p = tf.paragraphs[0]
+    p.text = "• Buyer Claim: 'OpenAI 2.5M Token Batch Capacity quota was not provisioned in the workspace.'\n• Ingested Evidence: openai_workspace_quota_telemetry.json (HTTP 200, allocated_tokens: 2,500,000, timestamp: 2026-11-12T10:14:22Z).\n• Matrix Finding: DIRECT CONTRADICTION — Workspace telemetry confirms active allocation and 42.8% token consumption within 14 minutes of order settlement. Defense brief generated with 100% citation confidence."
+    p.font.size = Pt(9.5)
+    p.font.color.rgb = WHITE
 
-    disp_points = [
-        ("1. Evidence Ingestion Graph", "Automatically ingests server access logs, API consumption telemetry, signed delivery receipts, and carrier tracking IDs upon dispute notification from PayPal."),
-        ("2. Contradiction Detection", "Cross-references buyer claims against technical telemetry. Flags direct logical contradictions with mathematical proof."),
-        ("3. Grounded AI Defense Brief", "Compiles structured chargeback defense packets with verified source citations, confidence scores, and strict hallucination rejection."),
-        ("Live Case Proof (Case b4502263)", "Buyer claimed 'Item Not Received' for 2.5M Token Batch Capacity. Contradiction Engine matched openai_workspace_quota_telemetry.json proving 42.8% token consumption within 14 mins."),
-    ]
-    for st, sd in disp_points:
-        p_t = tf.add_paragraph() if tf.paragraphs[0].text else tf.paragraphs[0]
-        p_t.text = st
-        p_t.font.size = Pt(10)
-        p_t.font.bold = True
-        p_t.font.color.rgb = AMBER if "Live" in st else GREEN
-        p_t.space_before = Pt(6)
-
-        p_d = tf.add_paragraph()
-        p_d.text = sd
-        p_d.font.size = Pt(8.5)
-        p_d.font.color.rgb = WHITE
-
-    # Right: Rendered Mermaid Diagram Image
-    if os.path.exists("/tmp/slide10_disp.png"):
-        s10.shapes.add_picture("/tmp/slide10_disp.png", Inches(5.5), Inches(2.2), width=Inches(7.033))
+    # Bottom: DisputeOS Pipeline Diagram
+    add_card(s10, Inches(0.8), Inches(3.55), Inches(11.733), Inches(3.3), "DisputeOS Automated Defense Pipeline (Rendered Diagram)")
+    add_fitted_image(s10, "/tmp/slide10_disp_landscape.png", 1.0, 3.95, 11.333, 2.7)
 
     # =========================================================================
     # SLIDE 11: Production Verification Evidence, Quality Scorecard & Roadmap
@@ -555,10 +573,11 @@ def generate_deck():
 
     for i, (val, label, sub, col) in enumerate(scorecard):
         x = Inches(0.8 + i * 3.0)
-        add_card(s11, x, Inches(1.85), Inches(2.733), Inches(1.4), bg_color=CARD_BG, border_color=col)
-        tb = s11.shapes.add_textbox(x + Inches(0.15), Inches(1.95), Inches(2.433), Inches(1.2))
+        add_card(s11, x, Inches(1.6), Inches(2.733), Inches(1.4), bg_color=CARD_BG, border_color=col)
+        tb = s11.shapes.add_textbox(x + Inches(0.15), Inches(1.72), Inches(2.433), Inches(1.2))
         tf = tb.text_frame
         tf.word_wrap = True
+        tf.margin_top = tf.margin_bottom = tf.margin_left = tf.margin_right = 0
         p = tf.paragraphs[0]
         p.text = val
         p.font.size = Pt(22)
@@ -579,15 +598,17 @@ def generate_deck():
         p_sub.font.color.rgb = MUTED
         p_sub.alignment = PP_ALIGN.CENTER
 
-    add_card(s11, Inches(0.8), Inches(3.45), Inches(11.733), Inches(1.4), "Live Staging Cloud Topology (Azure, Neon, Upstash, PayPal)")
-    tb = s11.shapes.add_textbox(Inches(1.0), Inches(3.9), Inches(11.333), Inches(0.85))
+    add_card(s11, Inches(0.8), Inches(3.2), Inches(11.733), Inches(1.5), "Live Staging Cloud Topology (Azure, Neon, Upstash, PayPal)")
+    tb = s11.shapes.add_textbox(Inches(1.05), Inches(3.62), Inches(11.233), Inches(0.95))
     tf = tb.text_frame
+    tf.word_wrap = True
+    tf.margin_top = tf.margin_bottom = tf.margin_left = tf.margin_right = 0
     p = tf.paragraphs[0]
     p.text = "• Azure Ubuntu Staging VM (20.124.91.36): Nginx SSL reverse proxy, Docker Compose container stack.\n• Neon Serverless PostgreSQL (Ohio v18.6): SSL connection pooler, SQLAlchemy 2.0 ORM, Alembic migrations.\n• Upstash Managed Redis (v8.4.0 TLS rediss://): Token-bucket rate limiting, distributed caching, worker queues.\n• PayPal Sandbox Orders v2: Real REST OAuth token rotation, order capture guards, fail-closed webhook security."
     p.font.size = Pt(9.5)
     p.font.color.rgb = WHITE
 
-    add_card(s11, Inches(0.8), Inches(5.05), Inches(11.733), Inches(1.75), "Strategic Commercial Roadmap (2027)")
+    add_card(s11, Inches(0.8), Inches(4.9), Inches(11.733), Inches(1.95), "Strategic Commercial Roadmap (2027)")
     roadmap_quarters = [
         ("Q1 2027: Multi-Rail Expansion", "Stripe Agentic & Virtual Card issuing integration; Adyen & Visa B2B connectors."),
         ("Q2 2027: Enterprise Compliance", "SOC 2 Type II certification; ISO 27001 audit; Splunk / Datadog audit apps."),
@@ -596,10 +617,11 @@ def generate_deck():
     ]
     for i, (q_title, q_desc) in enumerate(roadmap_quarters):
         bx = Inches(1.0 + i * 2.85)
-        add_card(s11, bx, Inches(5.55), Inches(2.7), Inches(1.1), bg_color=CARD_INNER, border_color=BRIGHT_CYAN)
-        tb = s11.shapes.add_textbox(bx + Inches(0.1), Inches(5.6), Inches(2.5), Inches(0.95))
+        add_card(s11, bx, Inches(5.38), Inches(2.7), Inches(1.3), bg_color=CARD_INNER, border_color=BRIGHT_CYAN)
+        tb = s11.shapes.add_textbox(bx + Inches(0.12), Inches(5.48), Inches(2.46), Inches(1.1))
         tf = tb.text_frame
         tf.word_wrap = True
+        tf.margin_top = tf.margin_bottom = tf.margin_left = tf.margin_right = 0
         p = tf.paragraphs[0]
         p.text = q_title
         p.font.size = Pt(8.5)
@@ -609,12 +631,13 @@ def generate_deck():
         p_d.text = q_desc
         p_d.font.size = Pt(8)
         p_d.font.color.rgb = WHITE
+        p_d.space_before = Pt(3)
 
     out_pptx = "/home/bigboyaks/Downloads/AEGIS_Master_Presentation.pptx"
     prs.save(out_pptx)
     prs.save("/home/bigboyaks/Projects/agentpay-nexus/AEGIS_Master_Presentation.pptx")
-    print(f"Master presentation with Mermaid diagrams successfully saved to {out_pptx} and workspace!")
+    print(f"Master presentation with properly fitted diagrams saved to {out_pptx} and workspace!")
 
 
 if __name__ == "__main__":
-    generate_deck()
+    create_deck()
