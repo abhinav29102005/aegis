@@ -11,10 +11,11 @@ import {
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { formatIsoDateTime, formatMinorCurrency, truncateId } from "@/lib/format";
+import { Clock } from "lucide-react";
 
 function renderSlaBadge(dueIso?: string | null) {
   if (!dueIso) {
-    return <span className="text-xs text-slate-500">No SLA</span>;
+    return <span className="font-mono text-[11px] text-aegis-text-faint">NO SLA</span>;
   }
   const due = new Date(dueIso).getTime();
   const now = Date.now();
@@ -22,9 +23,9 @@ function renderSlaBadge(dueIso?: string | null) {
   if (diffMs <= 0) {
     const overdueHrs = Math.floor(Math.abs(diffMs) / (1000 * 60 * 60));
     return (
-      <span className="inline-flex items-center gap-1 rounded-md border border-rose-500/40 bg-rose-500/10 px-2 py-0.5 text-xs font-semibold text-rose-300">
-        <span className="h-1.5 w-1.5 rounded-full bg-rose-400 animate-pulse" />
-        OVERDUE ({overdueHrs}h)
+      <span className="inline-flex items-center gap-1.5 border border-[#4A2828] bg-[#211212] px-2 py-0.5 font-mono text-[10px] font-bold text-[#EF5350] uppercase tracking-wider">
+        <span className="h-1.5 w-1.5 rounded-full bg-[#EF5350] animate-pulse" />
+        OVERDUE (+{overdueHrs}h)
       </span>
     );
   }
@@ -34,14 +35,15 @@ function renderSlaBadge(dueIso?: string | null) {
   const isUrgent = hours < 48;
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium ${
+      className={`inline-flex items-center gap-1 border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider ${
         isUrgent
-          ? "border-amber-500/40 bg-amber-500/10 text-amber-300"
-          : "border-sky-500/40 bg-sky-500/10 text-sky-300"
+          ? "border-[#4A3728] bg-[#211812] text-aegis-copper font-semibold"
+          : "border-aegis-border bg-aegis-card text-aegis-text-muted"
       }`}
       title={`Due: ${formatIsoDateTime(dueIso)}`}
     >
-      <span>⏱</span> {days > 0 ? `${days}d ${remainingHours}h` : `${hours}h`} left
+      <Clock className="h-2.5 w-2.5" />
+      <span>{days > 0 ? `${days}d ${remainingHours}h` : `${hours}h`} REMAINING</span>
     </span>
   );
 }
@@ -62,9 +64,9 @@ export default function DisputesPage() {
   const [creatingCase, setCreatingCase] = useState(false);
   const [newPaymentIntentId, setNewPaymentIntentId] = useState("");
   const [newCorrelationId, setNewCorrelationId] = useState("");
-  const [newReason, setNewReason] = useState("MERCHANDISE_OR_SERVICES_NOT_RECEIVED");
+  const [newReason, setNewReason] = useState("MERCHANDISE_OR_SERVICE_NOT_RECEIVED");
   const [newBuyerClaim, setNewBuyerClaim] = useState("");
-  const [newAmountUsd, setNewAmountUsd] = useState("50.00");
+  const [newAmountUsd, setNewAmountUsd] = useState("45.00");
   const [newCurrency, setNewCurrency] = useState("USD");
   const [newSourceType, setNewSourceType] = useState<"PAYPAL_SANDBOX" | "SYNTHETIC_DEMO" | "MANUAL">("PAYPAL_SANDBOX");
   const [newPaypalDisputeId, setNewPaypalDisputeId] = useState("");
@@ -75,34 +77,29 @@ export default function DisputesPage() {
     setError(null);
     try {
       const qs = new URLSearchParams();
-      if (statusFilter) qs.set("status_filter", statusFilter);
-      if (syntheticFilter === "REAL") qs.set("is_synthetic", "false");
+      if (statusFilter) qs.set("status", statusFilter);
       if (syntheticFilter === "SYNTHETIC") qs.set("is_synthetic", "true");
-      const query = qs.toString() ? `?${qs.toString()}` : "";
+      else if (syntheticFilter === "REAL") qs.set("is_synthetic", "false");
 
-      const [rows, payResp] = await Promise.all([
-        apiRequest<DisputeCaseRecord[]>(`/v1/disputeos/cases${query}`, {
+      const [casesRes, payRes] = await Promise.all([
+        apiRequest<DisputeCaseRecord[]>(`/v1/disputeos/cases?${qs.toString()}`, {
           token: session.access_token,
           orgId: session.active_tenant_id,
         }),
-        apiRequest<PaymentIntentRecord[]>("/v1/guardian/payments?limit=50", {
+        apiRequest<PaymentIntentRecord[]>("/v1/guardian/payments?limit=25", {
           token: session.access_token,
           orgId: session.active_tenant_id,
-        }).catch(() => [] as PaymentIntentRecord[]),
+        }),
       ]);
 
-      setCases(rows);
-      setPayments(payResp);
-      if (payResp.length > 0 && !newPaymentIntentId) {
-        setNewPaymentIntentId(payResp[0].id);
-        setNewCorrelationId(payResp[0].correlation_id);
-      }
+      setCases(casesRes);
+      setPayments(payRes);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load dispute cases");
     } finally {
       setLoading(false);
     }
-  }, [newPaymentIntentId, session, statusFilter, syntheticFilter]);
+  }, [session, statusFilter, syntheticFilter]);
 
   useEffect(() => {
     void loadCases();
@@ -114,39 +111,45 @@ export default function DisputesPage() {
     setError(null);
     setNotice(null);
     try {
-      const res = await apiRequest<{ case: DisputeCaseRecord }>("/v1/disputeos/cases/seed-demo", {
-        method: "POST",
-        token: session.access_token,
-        orgId: session.active_tenant_id,
-      });
+      const res = await apiRequest<{ case_id: string; evidence_records: number }>(
+        "/v1/disputeos/demo-seed",
+        {
+          method: "POST",
+          token: session.access_token,
+          orgId: session.active_tenant_id,
+        },
+      );
       setNotice(
-        `Seeded synthetic sandbox demo case ${truncateId(res.case.id, 12)} (marked SYNTHETIC_DEMO — non-submittable externally).`,
+        `Synthetic demo case created (${truncateId(res.case_id, 10)}) with ${res.evidence_records} evidence artifacts.`,
       );
       await loadCases();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to seed synthetic dispute demo");
+      setError(err instanceof Error ? err.message : "Failed to seed demo dispute case");
     } finally {
       setSeeding(false);
     }
   }
 
   function handleOpenCreateModal() {
-    setNewCorrelationId(crypto.randomUUID());
-    if (payments.length > 0) {
+    setError(null);
+    setNotice(null);
+    if (payments.length > 0 && !newPaymentIntentId) {
       setNewPaymentIntentId(payments[0].id);
+      setNewCorrelationId(payments[0].correlation_id);
+      setNewAmountUsd((payments[0].amount_minor / 100).toFixed(2));
+      setNewCurrency(payments[0].currency);
     }
-    setNewBuyerClaim("Buyer claims package did not arrive by the promised delivery date.");
     setShowCreateModal(true);
   }
 
   async function handleCreateCase(e: React.FormEvent) {
     e.preventDefault();
     if (!session) return;
-    if (!newPaymentIntentId.trim() || !newReason.trim() || !newBuyerClaim.trim()) {
-      setError("Payment Intent ID, Reason, and Buyer Claim are required.");
+    if (!newPaymentIntentId.trim()) {
+      setError("Payment Intent ID is required.");
       return;
     }
-    const amountMinor = Math.round(Number(newAmountUsd) * 100);
+    const amountMinor = Math.round(Number.parseFloat(newAmountUsd) * 100);
     if (!Number.isFinite(amountMinor) || amountMinor <= 0) {
       setError("Please specify a valid positive amount.");
       return;
@@ -184,56 +187,63 @@ export default function DisputesPage() {
 
   return (
     <AppShell
-      title="DisputeOS Case Center"
-      subtitle="Evidence provenance graphs, contradiction detection, grounded AI analysis, and human-approved response submission."
+      title="DisputeOS Evidence & Adjudication Workspace"
+      subtitle="Evidence provenance graphs, automated contradiction analysis, and human-signed dispute responses."
     >
       {error && (
-        <div role="alert" className="mb-4 rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+        <div role="alert" className="mb-4 border border-[#4A2828] bg-[#211212] p-3 font-mono text-xs text-[#EF5350]">
           {error}
         </div>
       )}
       {notice && (
-        <div role="status" className="mb-4 rounded-xl border border-sky-500/40 bg-sky-500/10 px-4 py-3 text-sm text-sky-200">
+        <div role="status" className="mb-4 border border-[#3A4A28] bg-[#162112] p-3 font-mono text-xs text-aegis-accent">
           {notice}
         </div>
       )}
 
       {/* Action and Filter Header */}
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-aegis-border bg-aegis-surface px-5 py-3">
-        <div className="flex flex-wrap items-center gap-3 text-xs">
-          <select
-            aria-label="Filter by case status"
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="rounded-lg border border-aegis-border bg-aegis-panel px-2.5 py-1.5 text-xs text-white"
-          >
-            <option value="">All Statuses</option>
-            <option value="OPEN">OPEN</option>
-            <option value="UNDER_INVESTIGATION">UNDER_INVESTIGATION</option>
-            <option value="DRAFT_READY">DRAFT_READY</option>
-            <option value="APPROVED_FOR_SUBMISSION">APPROVED_FOR_SUBMISSION</option>
-            <option value="SUBMITTED">SUBMITTED</option>
-            <option value="RESOLVED">RESOLVED</option>
-          </select>
-          <select
-            aria-label="Filter by data origin"
-            value={syntheticFilter}
-            onChange={(e) => setSyntheticFilter(e.target.value as "ALL" | "REAL" | "SYNTHETIC")}
-            className="rounded-lg border border-aegis-border bg-aegis-panel px-2.5 py-1.5 text-xs text-white"
-          >
-            <option value="ALL">All Origins</option>
-            <option value="REAL">Production / Live Cases</option>
-            <option value="SYNTHETIC">Synthetic Demo Only</option>
-          </select>
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border border-aegis-border bg-aegis-surface p-4 rounded-sm">
+        <div className="flex flex-wrap items-center gap-3 font-mono text-xs">
+          <div className="flex items-center gap-1.5 text-aegis-text-muted">
+            <span className="text-[10px] text-aegis-text-faint uppercase">STATUS:</span>
+            <select
+              aria-label="Filter by case status"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="border border-aegis-border bg-aegis-card px-2.5 py-1 text-xs text-aegis-text-primary focus:outline-none"
+            >
+              <option value="">ALL STATUSES</option>
+              <option value="OPEN">OPEN</option>
+              <option value="UNDER_INVESTIGATION">UNDER_INVESTIGATION</option>
+              <option value="DRAFT_READY">DRAFT_READY</option>
+              <option value="APPROVED_FOR_SUBMISSION">APPROVED_FOR_SUBMISSION</option>
+              <option value="SUBMITTED">SUBMITTED</option>
+              <option value="RESOLVED">RESOLVED</option>
+            </select>
+          </div>
+
+          <div className="flex items-center gap-1.5 text-aegis-text-muted">
+            <span className="text-[10px] text-aegis-text-faint uppercase">ORIGIN:</span>
+            <select
+              aria-label="Filter by data origin"
+              value={syntheticFilter}
+              onChange={(e) => setSyntheticFilter(e.target.value as "ALL" | "REAL" | "SYNTHETIC")}
+              className="border border-aegis-border bg-aegis-card px-2.5 py-1 text-xs text-aegis-text-primary focus:outline-none"
+            >
+              <option value="ALL">ALL ORIGINS</option>
+              <option value="REAL">PRODUCTION / LIVE CASES</option>
+              <option value="SYNTHETIC">SYNTHETIC DEMO ONLY</option>
+            </select>
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2.5 font-mono text-xs">
           {hasPermission("disputes:write") && (
             <>
               <button
                 type="button"
                 onClick={handleOpenCreateModal}
-                className="rounded-lg bg-sky-500 px-3.5 py-1.5 text-xs font-semibold text-slate-950 hover:bg-sky-400"
+                className="border border-aegis-accent bg-aegis-accent px-4 py-1.5 font-bold uppercase tracking-wider text-aegis-bg hover:bg-aegis-accent-hover transition-colors shadow-editorial"
               >
                 + New Dispute Case
               </button>
@@ -241,9 +251,9 @@ export default function DisputesPage() {
                 type="button"
                 disabled={seeding}
                 onClick={() => void handleSeedSyntheticDemo()}
-                className="rounded-lg border border-sky-500/40 bg-sky-500/15 px-3.5 py-1.5 text-xs font-semibold text-sky-200 hover:bg-sky-500/25 disabled:opacity-50"
+                className="border border-[#4A3728] bg-[#211812] px-3.5 py-1.5 font-semibold text-aegis-copper hover:bg-[#D58A62]/20 disabled:opacity-50 transition-colors uppercase"
               >
-                {seeding ? "Seeding Demo Case…" : "Seed Synthetic Demo Case"}
+                {seeding ? "Seeding…" : "Seed Synthetic Demo Case"}
               </button>
             </>
           )}
@@ -251,64 +261,78 @@ export default function DisputesPage() {
       </div>
 
       {/* Case Table */}
-      <section className="rounded-xl border border-aegis-border bg-aegis-surface">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
+      <section className="border border-aegis-border bg-aegis-surface p-5 rounded-sm">
+        <div className="border-b border-aegis-border pb-3 mb-4 flex items-center justify-between">
+          <div>
+            <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-text-faint">
+              CASE ADJUDICATION DOSSIERS
+            </span>
+            <h2 className="text-sm font-semibold text-aegis-text-primary">Active Cases ({cases.length})</h2>
+          </div>
+          <span className="font-mono text-[10px] text-aegis-text-faint">DUAL-SIGN SUBMISSION REQUIRED</span>
+        </div>
+
+        <div tabIndex={0} role="region" aria-label="Organization dispute cases" className="table-wrapper">
+          <table className="aegis-table">
             <caption className="sr-only">Organization dispute cases</caption>
-            <thead className="border-b border-aegis-border bg-aegis-panel/60 text-xs uppercase text-slate-400">
+            <thead>
               <tr>
-                <th scope="col" className="px-4 py-3">Case ID</th>
-                <th scope="col" className="px-4 py-3">Reason</th>
-                <th scope="col" className="px-4 py-3">Amount</th>
-                <th scope="col" className="px-4 py-3">Status</th>
-                <th scope="col" className="px-4 py-3">Origin</th>
-                <th scope="col" className="px-4 py-3">Response SLA</th>
-                <th scope="col" className="px-4 py-3">Evidence</th>
-                <th scope="col" className="px-4 py-3">Updated</th>
+                <th scope="col">CASE IDENTIFIER</th>
+                <th scope="col">DISPUTE REASON</th>
+                <th scope="col">CLAIM AMOUNT</th>
+                <th scope="col">CASE STATUS</th>
+                <th scope="col">DATA ORIGIN</th>
+                <th scope="col">RESPONSE SLA</th>
+                <th scope="col">EVIDENCE COUNT</th>
+                <th scope="col">CHRONO UPDATED</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-aegis-border">
+            <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-6 text-center text-slate-400">
-                    Loading dispute cases…
+                  <td colSpan={8} className="text-center font-mono text-xs text-aegis-text-muted py-6">
+                    RETRIEVING DISPUTE CASES…
                   </td>
                 </tr>
               ) : cases.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-6 text-center text-slate-400">
-                    No dispute cases recorded for this organization yet.
+                  <td colSpan={8} className="text-center font-mono text-xs text-aegis-text-muted py-6">
+                    NO DISPUTE CASES RECORDED FOR THIS TENANT.
                   </td>
                 </tr>
               ) : (
                 cases.map((c) => (
-                  <tr key={c.id} className="hover:bg-slate-800/30">
-                    <td className="px-4 py-3 font-mono text-xs text-sky-300">
+                  <tr key={c.id}>
+                    <td className="font-mono text-xs font-semibold text-aegis-accent">
                       <Link href={`/disputes/${c.id}`} className="hover:underline">
-                        {truncateId(c.id, 12)}
+                        {truncateId(c.id, 14)}
                       </Link>
                     </td>
-                    <td className="px-4 py-3 text-xs text-white">{c.reason}</td>
-                    <td className="px-4 py-3 text-xs font-medium text-white">
+                    <td className="font-sans text-xs text-aegis-text-primary max-w-xs truncate">{c.reason}</td>
+                    <td className="font-mono text-xs font-bold text-aegis-text-primary tabular-nums">
                       {formatMinorCurrency(c.amount_minor, c.currency)}
                     </td>
-                    <td className="px-4 py-3">
+                    <td>
                       <StatusBadge label={c.status} />
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="font-mono text-xs">
                       {c.is_synthetic ? (
-                        <StatusBadge label="SYNTHETIC_DEMO" />
+                        <span className="border border-[#4A3728] bg-[#211812] px-1.5 py-0.5 text-[10px] text-aegis-copper uppercase font-semibold">
+                          SYNTHETIC DEMO
+                        </span>
                       ) : (
-                        <span className="rounded bg-slate-800 px-2 py-0.5 text-xs text-slate-300">
+                        <span className="border border-aegis-border bg-aegis-card px-1.5 py-0.5 text-[10px] text-aegis-text-muted uppercase">
                           {c.source_type}
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-3">
-                      {renderSlaBadge(c.response_due_by)}
+                    <td>{renderSlaBadge(c.response_due_by)}</td>
+                    <td className="font-mono text-xs text-aegis-text-muted tabular-nums">
+                      {c.evidence_ids?.length || 0} ITEMS
                     </td>
-                    <td className="px-4 py-3 text-xs text-slate-300">{c.evidence_ids?.length || 0} items</td>
-                    <td className="px-4 py-3 text-xs text-slate-400">{formatIsoDateTime(c.updated_at)}</td>
+                    <td className="font-mono text-xs text-aegis-text-muted tabular-nums">
+                      {formatIsoDateTime(c.updated_at)}
+                    </td>
                   </tr>
                 ))
               )}
@@ -323,25 +347,30 @@ export default function DisputesPage() {
           role="dialog"
           aria-modal="true"
           aria-labelledby="create-dispute-modal-title"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
         >
-          <div className="w-full max-w-lg rounded-2xl border border-aegis-border bg-aegis-surface p-6 shadow-2xl">
+          <div className="w-full max-w-lg border border-aegis-border bg-aegis-surface p-6 shadow-panel rounded-sm">
             <div className="flex items-center justify-between border-b border-aegis-border pb-3">
-              <h2 id="create-dispute-modal-title" className="text-base font-semibold text-white">
-                Open New Dispute Case
-              </h2>
+              <div>
+                <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-accent font-semibold">
+                  DISPUTE INGESTION
+                </span>
+                <h2 id="create-dispute-modal-title" className="text-sm font-semibold text-aegis-text-primary mt-0.5">
+                  Open New Dispute Case
+                </h2>
+              </div>
               <button
                 type="button"
                 onClick={() => setShowCreateModal(false)}
-                className="text-slate-400 hover:text-white"
+                className="text-aegis-text-muted hover:text-aegis-text-primary font-mono text-sm"
               >
                 ✕
               </button>
             </div>
 
-            <form onSubmit={handleCreateCase} className="mt-4 space-y-4 text-xs">
+            <form onSubmit={handleCreateCase} className="mt-4 space-y-4 font-mono text-xs">
               <div>
-                <label htmlFor="case-source-type" className="block font-medium text-slate-300">
+                <label htmlFor="case-source-type" className="block uppercase text-aegis-text-muted">
                   Source Type
                 </label>
                 <select
@@ -350,7 +379,7 @@ export default function DisputesPage() {
                   onChange={(e) =>
                     setNewSourceType(e.target.value as "PAYPAL_SANDBOX" | "SYNTHETIC_DEMO" | "MANUAL")
                   }
-                  className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-panel px-3 py-2 text-white"
+                  className="mt-1.5 w-full border border-aegis-border bg-aegis-card px-3 py-2 text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
                 >
                   <option value="PAYPAL_SANDBOX">PAYPAL_SANDBOX (PayPal Dispute Ingestion)</option>
                   <option value="MANUAL">MANUAL (Direct Merchant / Support Dispute)</option>
@@ -359,17 +388,17 @@ export default function DisputesPage() {
               </div>
 
               <div>
-                <label htmlFor="case-payment-intent" className="block font-medium text-slate-300">
-                  Payment Intent ID
+                <label htmlFor="case-payment-intent" className="block uppercase text-aegis-text-muted">
+                  Payment Intent ID <span className="text-aegis-accent">*</span>
                 </label>
-                <div className="mt-1 flex gap-2">
+                <div className="mt-1.5 flex gap-2">
                   <input
                     id="case-payment-intent"
                     type="text"
                     value={newPaymentIntentId}
                     onChange={(e) => setNewPaymentIntentId(e.target.value)}
                     placeholder="Enter PaymentIntent UUID..."
-                    className="flex-1 rounded-lg border border-aegis-border bg-aegis-panel px-3 py-2 font-mono text-white"
+                    className="flex-1 border border-aegis-border bg-aegis-card px-3 py-2 text-aegis-text-primary placeholder:text-aegis-text-faint focus:border-aegis-accent focus:outline-none"
                   />
                   {payments.length > 0 && (
                     <select
@@ -384,12 +413,12 @@ export default function DisputesPage() {
                         }
                       }}
                       value=""
-                      className="rounded-lg border border-aegis-border bg-aegis-panel px-2 text-slate-300"
+                      className="border border-aegis-border bg-aegis-card px-2 text-aegis-text-muted focus:outline-none"
                     >
-                      <option value="">Pick intent...</option>
+                      <option value="">PICK INTENT…</option>
                       {payments.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {truncateId(p.id, 10)} (${(p.amount_minor / 100).toFixed(2)})
+                        <option key={p.id} value={p.id} className="bg-aegis-surface">
+                          {truncateId(p.id, 10)} [{p.state}]
                         </option>
                       ))}
                     </select>
@@ -397,97 +426,79 @@ export default function DisputesPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label htmlFor="case-reason" className="block uppercase text-aegis-text-muted">
+                  Dispute Reason Code
+                </label>
+                <input
+                  id="case-reason"
+                  type="text"
+                  required
+                  value={newReason}
+                  onChange={(e) => setNewReason(e.target.value)}
+                  className="mt-1.5 w-full border border-aegis-border bg-aegis-card px-3 py-2 text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
+                />
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
                 <div>
-                  <label htmlFor="case-amount" className="block font-medium text-slate-300">
-                    Disputed Amount
+                  <label htmlFor="case-amount" className="block uppercase text-aegis-text-muted">
+                    Claim Amount ({newCurrency})
                   </label>
                   <input
                     id="case-amount"
                     type="number"
                     step="0.01"
+                    min="0.01"
+                    required
                     value={newAmountUsd}
                     onChange={(e) => setNewAmountUsd(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-panel px-3 py-2 text-white"
+                    className="mt-1.5 w-full border border-aegis-border bg-aegis-card px-3 py-2 text-aegis-text-primary tabular-nums focus:border-aegis-accent focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label htmlFor="case-currency" className="block font-medium text-slate-300">
-                    Currency
-                  </label>
-                  <input
-                    id="case-currency"
-                    type="text"
-                    value={newCurrency}
-                    onChange={(e) => setNewCurrency(e.target.value.toUpperCase())}
-                    className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-panel px-3 py-2 font-mono text-white"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label htmlFor="case-reason" className="block font-medium text-slate-300">
-                  Dispute Reason
-                </label>
-                <select
-                  id="case-reason"
-                  value={newReason}
-                  onChange={(e) => setNewReason(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-panel px-3 py-2 text-white"
-                >
-                  <option value="MERCHANDISE_OR_SERVICES_NOT_RECEIVED">MERCHANDISE_OR_SERVICES_NOT_RECEIVED</option>
-                  <option value="MERCHANDISE_OR_SERVICES_NOT_AS_DESCRIBED">MERCHANDISE_OR_SERVICES_NOT_AS_DESCRIBED</option>
-                  <option value="UNAUTHORIZED_TRANSACTION">UNAUTHORIZED_TRANSACTION</option>
-                  <option value="CREDIT_NOT_PROCESSED">CREDIT_NOT_PROCESSED</option>
-                  <option value="DUPLICATE_TRANSACTION">DUPLICATE_TRANSACTION</option>
-                  <option value="INCORRECT_AMOUNT">INCORRECT_AMOUNT</option>
-                </select>
-              </div>
-
-              <div>
-                <label htmlFor="case-claim" className="block font-medium text-slate-300">
-                  Buyer Claim Description
-                </label>
-                <textarea
-                  id="case-claim"
-                  rows={3}
-                  value={newBuyerClaim}
-                  onChange={(e) => setNewBuyerClaim(e.target.value)}
-                  placeholder="Detail the buyer's claims and assertions..."
-                  className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-panel p-2.5 text-white"
-                />
-              </div>
-
-              {newSourceType === "PAYPAL_SANDBOX" && (
-                <div>
-                  <label htmlFor="case-paypal-dispute-id" className="block font-medium text-slate-300">
+                  <label htmlFor="case-paypal-id" className="block uppercase text-aegis-text-muted">
                     PayPal Dispute ID (optional)
                   </label>
                   <input
-                    id="case-paypal-dispute-id"
+                    id="case-paypal-id"
                     type="text"
-                    placeholder="PP-D-12345"
                     value={newPaypalDisputeId}
                     onChange={(e) => setNewPaypalDisputeId(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-panel px-3 py-2 font-mono text-white"
+                    placeholder="PP-D-XXXX"
+                    className="mt-1.5 w-full border border-aegis-border bg-aegis-card px-3 py-2 text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
                   />
                 </div>
-              )}
+              </div>
 
-              <div className="flex justify-end gap-2 pt-2">
+              <div>
+                <label htmlFor="case-buyer-claim" className="block uppercase text-aegis-text-muted">
+                  Buyer Narrative / Claim Details
+                </label>
+                <textarea
+                  id="case-buyer-claim"
+                  rows={3}
+                  value={newBuyerClaim}
+                  onChange={(e) => setNewBuyerClaim(e.target.value)}
+                  placeholder="Buyer alleges service was not delivered or quote tampered..."
+                  className="mt-1.5 w-full border border-aegis-border bg-aegis-card px-3 py-2 text-aegis-text-primary placeholder:text-aegis-text-faint focus:border-aegis-accent focus:outline-none"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2.5 pt-3 border-t border-aegis-border">
                 <button
                   type="button"
                   onClick={() => setShowCreateModal(false)}
-                  className="rounded-lg border border-aegis-border px-4 py-2 text-xs text-slate-300 hover:bg-slate-800"
+                  className="border border-aegis-border bg-aegis-card px-3.5 py-1.5 text-aegis-text-muted hover:border-aegis-border-active hover:text-aegis-text-primary"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={creatingCase}
-                  className="rounded-lg bg-sky-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50"
+                  className="border border-aegis-accent bg-aegis-accent px-4 py-1.5 font-bold uppercase tracking-wider text-aegis-bg hover:bg-aegis-accent-hover disabled:opacity-50"
                 >
-                  {creatingCase ? "Creating Case…" : "Create Dispute Case"}
+                  {creatingCase ? "Creating…" : "Create Dispute Case"}
                 </button>
               </div>
             </form>

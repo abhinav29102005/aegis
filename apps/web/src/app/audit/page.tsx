@@ -5,6 +5,7 @@ import { AppShell } from "@/components/AppShell";
 import { apiRequest, type FinancialEventRecord } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { formatIsoDateTime, truncateId } from "@/lib/format";
+import { CheckCircle2, AlertTriangle } from "lucide-react";
 
 interface AdminAuditItem {
   id: string;
@@ -109,23 +110,23 @@ export default function AuditLogPage() {
 
   return (
     <AppShell
-      title="Cryptographic Audit Log"
-      subtitle="Verify SHA-256 financial event hash chains per correlation ID and inspect administrative RBAC changes."
+      title="Tamper-Evident Audit Ledger"
+      subtitle="Verify SHA-256 financial event hash chains per correlation ID and inspect administrative RBAC operations."
     >
       {error && (
-        <div role="alert" className="mb-4 rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+        <div role="alert" className="mb-4 border border-[#4A2828] bg-[#211212] p-3 font-mono text-xs text-[#EF5350]">
           {error}
         </div>
       )}
 
       {/* Cryptographic Hash Chain Verification & Filters Banner */}
-      <section className="mb-6 rounded-xl border border-aegis-border bg-aegis-surface p-5">
-        <div className="flex flex-wrap items-center justify-between gap-4">
+      <section className="mb-6 border border-aegis-border bg-aegis-surface p-5 rounded-sm">
+        <div className="flex flex-wrap items-center justify-between gap-4 font-mono text-xs">
           <div className="flex flex-1 flex-wrap items-center gap-3">
             {/* Correlation ID Filter */}
             <div className="flex min-w-[280px] flex-1 items-center gap-2">
-              <label htmlFor="correlation-filter" className="text-xs font-medium text-slate-300">
-                Correlation ID:
+              <label htmlFor="correlation-filter" className="uppercase text-aegis-text-muted text-[10px]">
+                CORRELATION ID:
               </label>
               <input
                 id="correlation-filter"
@@ -135,8 +136,8 @@ export default function AuditLogPage() {
                   setCorrelationFilter(e.target.value);
                   setPage(1);
                 }}
-                placeholder="Paste or click any correlation UUID to verify hash chain..."
-                className="flex-1 rounded-lg border border-aegis-border bg-aegis-panel px-3 py-1.5 font-mono text-xs text-white placeholder-slate-500"
+                placeholder="Paste UUID to verify hash chain..."
+                className="flex-1 border border-aegis-border bg-aegis-card px-3 py-1.5 text-xs text-aegis-text-primary placeholder:text-aegis-text-faint focus:border-aegis-accent focus:outline-none"
               />
               {correlationFilter && (
                 <button
@@ -145,17 +146,17 @@ export default function AuditLogPage() {
                     setCorrelationFilter("");
                     setPage(1);
                   }}
-                  className="rounded-lg border border-aegis-border px-2.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
+                  className="border border-aegis-border bg-aegis-card px-2.5 py-1.5 text-xs text-aegis-text-muted hover:text-aegis-text-primary"
                 >
-                  Clear
+                  CLEAR
                 </button>
               )}
             </div>
 
             {/* Event Type Filter */}
-            <div className="flex items-center gap-2 text-xs">
-              <label htmlFor="event-type-filter" className="font-medium text-slate-300">
-                Event Type:
+            <div className="flex items-center gap-2">
+              <label htmlFor="event-type-filter" className="uppercase text-aegis-text-muted text-[10px]">
+                EVENT TYPE:
               </label>
               <select
                 id="event-type-filter"
@@ -165,11 +166,11 @@ export default function AuditLogPage() {
                   setEventTypeFilter(e.target.value);
                   setPage(1);
                 }}
-                className="rounded-lg border border-aegis-border bg-aegis-panel px-2.5 py-1.5 text-xs text-white"
+                className="border border-aegis-border bg-aegis-card px-2.5 py-1.5 text-xs text-aegis-text-primary focus:outline-none"
               >
-                <option value="">All Event Types</option>
+                <option value="">ALL EVENT TYPES</option>
                 {COMMON_EVENT_TYPES.map((et) => (
-                  <option key={et} value={et}>
+                  <option key={et} value={et} className="bg-aegis-surface">
                     {et}
                   </option>
                 ))}
@@ -180,28 +181,28 @@ export default function AuditLogPage() {
           {/* Verification Status Badge */}
           <div>
             {chainVerified === true && (
-              <div className="flex items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-1.5 text-xs font-semibold text-emerald-300">
-                <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                <span>SHA-256 Chain Verified (0 Tampering)</span>
+              <div className="flex items-center gap-2 border border-[#3A4A28] bg-[#162112] px-3 py-1.5 font-bold text-aegis-accent uppercase tracking-wider text-[11px]">
+                <CheckCircle2 className="h-4 w-4 text-aegis-accent" />
+                <span>HMAC-SHA256 CHAIN AUTHENTICATED (0 TAMPERING)</span>
               </div>
             )}
             {chainVerified === false && (
-              <div className="flex items-center gap-2 rounded-lg border border-rose-500/40 bg-rose-500/15 px-3 py-1.5 text-xs font-semibold text-rose-300">
-                <span className="h-2 w-2 rounded-full bg-rose-400 animate-pulse" />
-                <span>INTEGRITY FAILURE: Chain Broken</span>
+              <div className="flex items-center gap-2 border border-[#4A2828] bg-[#211212] px-3 py-1.5 font-bold text-[#EF5350] uppercase tracking-wider text-[11px]">
+                <AlertTriangle className="h-4 w-4 text-[#EF5350] animate-pulse" />
+                <span>INTEGRITY FAILURE: HASH-CHAIN BROKEN</span>
               </div>
             )}
             {chainVerified === null && (
-              <span className="text-xs text-slate-400">
-                Filter by Correlation ID to verify cryptographic chain integrity
+              <span className="text-[11px] text-aegis-text-faint">
+                FILTER BY CORRELATION ID TO VERIFY MONOTONIC SEQUENCE CHAIN
               </span>
             )}
           </div>
         </div>
 
         {chainErrors.length > 0 && (
-          <div className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-200">
-            <strong>Chain verification failures detected:</strong>
+          <div className="mt-3 border border-[#4A2828] bg-[#211212] p-3 font-mono text-xs text-[#EF5350]">
+            <strong className="uppercase tracking-wider">Chain verification anomalies detected:</strong>
             <ul className="mt-1 list-inside list-disc space-y-0.5">
               {chainErrors.map((errStr, idx) => (
                 <li key={idx}>{errStr}</li>
@@ -214,16 +215,16 @@ export default function AuditLogPage() {
       {/* Main Audit Tables Grid */}
       <div className="grid gap-6 xl:grid-cols-2">
         {/* Financial Ledger Events Table */}
-        <section className="rounded-xl border border-aegis-border bg-aegis-surface">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-aegis-border px-5 py-3">
-            <div className="flex items-center gap-2">
-              <h2 className="text-sm font-semibold text-white">Financial Ledger Events</h2>
-              <span className="rounded bg-slate-800 px-2 py-0.5 text-xs text-slate-400">
-                {eventCount} items
+        <section className="border border-aegis-border bg-aegis-surface p-5 rounded-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-aegis-border pb-3 mb-4">
+            <div>
+              <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-text-faint">
+                FINANCIAL EVENT LOG
               </span>
+              <h2 className="text-sm font-semibold text-aegis-text-primary">Financial Ledger Events ({eventCount})</h2>
             </div>
-            <div className="flex items-center gap-2 text-xs text-slate-400">
-              <span>Limit:</span>
+            <div className="flex items-center gap-2 font-mono text-xs text-aegis-text-muted">
+              <span>LIMIT:</span>
               <select
                 aria-label="Events per page limit"
                 value={pageSize}
@@ -231,7 +232,7 @@ export default function AuditLogPage() {
                   setPageSize(Number(e.target.value));
                   setPage(1);
                 }}
-                className="rounded border border-aegis-border bg-aegis-panel px-2 py-0.5 text-xs text-white"
+                className="border border-aegis-border bg-aegis-card px-2 py-0.5 text-xs text-aegis-text-primary focus:outline-none"
               >
                 <option value="25">25</option>
                 <option value="50">50</option>
@@ -240,39 +241,39 @@ export default function AuditLogPage() {
             </div>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
+          <div tabIndex={0} role="region" aria-label="Hash-chained financial events" className="table-wrapper">
+            <table className="aegis-table">
               <caption className="sr-only">Hash-chained financial events</caption>
-              <thead className="border-b border-aegis-border bg-aegis-panel/60 uppercase text-slate-400">
+              <thead>
                 <tr>
-                  <th scope="col" className="px-3 py-2.5">Seq</th>
-                  <th scope="col" className="px-3 py-2.5">Event</th>
-                  <th scope="col" className="px-3 py-2.5">Correlation</th>
-                  <th scope="col" className="px-3 py-2.5">Previous Hash</th>
-                  <th scope="col" className="px-3 py-2.5">Event Hash</th>
-                  <th scope="col" className="px-3 py-2.5">Chain</th>
-                  <th scope="col" className="px-3 py-2.5">Time</th>
+                  <th scope="col">SEQ</th>
+                  <th scope="col">EVENT</th>
+                  <th scope="col">CORRELATION</th>
+                  <th scope="col">PREVIOUS HASH</th>
+                  <th scope="col">EVENT HASH</th>
+                  <th scope="col">STATUS</th>
+                  <th scope="col">TIMESTAMP</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-aegis-border">
+              <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={7} className="px-4 py-6 text-center text-slate-400">
-                      Loading financial events…
+                    <td colSpan={7} className="text-center font-mono text-xs text-aegis-text-muted py-6">
+                      LOADING LEDGER STREAM…
                     </td>
                   </tr>
                 ) : events.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-4 py-6 text-center text-slate-400">
-                      No financial events matched the filter criteria.
+                    <td colSpan={7} className="text-center font-mono text-xs text-aegis-text-muted py-6">
+                      NO FINANCIAL EVENTS MATCH APPLIED CRITERIA.
                     </td>
                   </tr>
                 ) : (
                   events.map((ev) => (
-                    <tr key={ev.id} className="hover:bg-slate-800/30">
-                      <td className="px-3 py-2.5 font-mono text-slate-400">#{ev.sequence_number}</td>
-                      <td className="px-3 py-2.5 font-medium text-white">{ev.event_type}</td>
-                      <td className="px-3 py-2.5 font-mono">
+                    <tr key={ev.id}>
+                      <td className="font-mono text-xs text-aegis-text-muted tabular-nums">#{ev.sequence_number}</td>
+                      <td className="font-mono text-xs font-semibold text-aegis-text-primary">{ev.event_type}</td>
+                      <td className="font-mono text-xs">
                         <button
                           type="button"
                           onClick={() => {
@@ -280,39 +281,39 @@ export default function AuditLogPage() {
                             setPage(1);
                           }}
                           title="Click to verify this correlation hash chain"
-                          className="text-sky-300 hover:underline"
+                          className="text-aegis-accent hover:underline"
                         >
                           {truncateId(ev.correlation_id, 10)}
                         </button>
                       </td>
-                      <td className="px-3 py-2.5 font-mono">
+                      <td className="font-mono text-xs text-aegis-text-faint">
                         {ev.previous_event_hash ? (
-                          <span className="text-slate-400" title={ev.previous_event_hash}>
-                            {truncateId(ev.previous_event_hash, 10)}
-                          </span>
+                          truncateId(ev.previous_event_hash, 10)
                         ) : (
-                          <span className="rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-sky-300">
+                          <span className="border border-aegis-border px-1 py-0.5 text-[9px] text-aegis-copper uppercase">
                             GENESIS
                           </span>
                         )}
                       </td>
-                      <td className="px-3 py-2.5 font-mono text-sky-200" title={ev.event_hash}>
+                      <td className="font-mono text-xs text-aegis-accent font-semibold" title={ev.event_hash}>
                         {truncateId(ev.event_hash, 10)}
                       </td>
-                      <td className="px-3 py-2.5">
+                      <td>
                         {chainVerified === true ? (
-                          <span className="text-emerald-400 font-semibold text-[11px]" title="Chain hash authenticated">
+                          <span className="text-aegis-accent font-bold text-[11px]" title="Chain hash authenticated">
                             ✓
                           </span>
                         ) : chainVerified === false ? (
-                          <span className="text-rose-400 font-semibold text-[11px]" title="Chain integrity broken">
+                          <span className="text-[#EF5350] font-bold text-[11px]" title="Chain integrity broken">
                             ✗
                           </span>
                         ) : (
-                          <span className="text-slate-500 text-[11px]">⛓</span>
+                          <span className="text-aegis-text-faint text-[11px]">⛓</span>
                         )}
                       </td>
-                      <td className="px-3 py-2.5 text-slate-400">{formatIsoDateTime(ev.occurred_at)}</td>
+                      <td className="font-mono text-xs text-aegis-text-muted tabular-nums">
+                        {formatIsoDateTime(ev.occurred_at)}
+                      </td>
                     </tr>
                   ))
                 )}
@@ -321,65 +322,71 @@ export default function AuditLogPage() {
           </div>
 
           {/* Pagination controls for financial events */}
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-aegis-border px-5 py-3 text-xs text-slate-400">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-aegis-border pt-3 font-mono text-xs text-aegis-text-faint mt-4">
             <span>
-              Page {page} {eventCount > 0 ? `(${events.length} shown)` : ""}
+              PAGE {page} {eventCount > 0 ? `(${events.length} SHOWN)` : ""}
             </span>
             <div className="flex items-center gap-2">
               <button
                 type="button"
                 disabled={page <= 1}
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
-                className="rounded border border-aegis-border bg-aegis-panel px-2.5 py-1 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+                className="border border-aegis-border bg-aegis-card px-2.5 py-1 text-aegis-text-muted hover:border-aegis-border-active hover:text-aegis-text-primary disabled:opacity-40"
               >
-                Previous
+                PREV
               </button>
               <button
                 type="button"
                 disabled={!hasMore}
                 onClick={() => setPage((p) => p + 1)}
-                className="rounded border border-aegis-border bg-aegis-panel px-2.5 py-1 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+                className="border border-aegis-border bg-aegis-card px-2.5 py-1 text-aegis-text-muted hover:border-aegis-border-active hover:text-aegis-text-primary disabled:opacity-40"
               >
-                Next
+                NEXT
               </button>
             </div>
           </div>
         </section>
 
         {/* Administrative Security & Governance Logs Table */}
-        <section className="rounded-xl border border-aegis-border bg-aegis-surface">
-          <div className="border-b border-aegis-border px-5 py-3">
-            <h2 className="text-sm font-semibold text-white">
-              Administrative Security & Governance Logs ({adminAudits.length})
+        <section className="border border-aegis-border bg-aegis-surface p-5 rounded-sm">
+          <div className="border-b border-aegis-border pb-3 mb-4">
+            <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-text-faint">
+              RBAC & SECURITY AUDIT
+            </span>
+            <h2 className="text-sm font-semibold text-aegis-text-primary">
+              Administrative & Governance Logs ({adminAudits.length})
             </h2>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
+
+          <div tabIndex={0} role="region" aria-label="Organization administrative audit logs" className="table-wrapper">
+            <table className="aegis-table">
               <caption className="sr-only">Organization administrative audit logs</caption>
-              <thead className="border-b border-aegis-border bg-aegis-panel/60 uppercase text-slate-400">
+              <thead>
                 <tr>
-                  <th scope="col" className="px-4 py-2.5">Action</th>
-                  <th scope="col" className="px-4 py-2.5">Actor</th>
-                  <th scope="col" className="px-4 py-2.5">Resource</th>
-                  <th scope="col" className="px-4 py-2.5">Time</th>
+                  <th scope="col">ACTION</th>
+                  <th scope="col">ACTOR</th>
+                  <th scope="col">RESOURCE</th>
+                  <th scope="col">TIMESTAMP</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-aegis-border">
+              <tbody>
                 {adminAudits.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
-                      No admin audit logs recorded.
+                    <td colSpan={4} className="text-center font-mono text-xs text-aegis-text-muted py-6">
+                      NO ADMINISTRATIVE AUDIT LOGS RECORDED.
                     </td>
                   </tr>
                 ) : (
                   adminAudits.map((row) => (
-                    <tr key={row.id} className="hover:bg-slate-800/30">
-                      <td className="px-4 py-2.5 font-semibold text-white">{row.action}</td>
-                      <td className="px-4 py-2.5 text-slate-300">{row.actor_id}</td>
-                      <td className="px-4 py-2.5 font-mono text-slate-400">
+                    <tr key={row.id}>
+                      <td className="font-mono text-xs font-semibold text-aegis-text-primary">{row.action}</td>
+                      <td className="font-mono text-xs text-aegis-text-muted">{row.actor_id}</td>
+                      <td className="font-mono text-xs text-aegis-text-faint">
                         {row.resource_type}:{truncateId(row.resource_id, 8)}
                       </td>
-                      <td className="px-4 py-2.5 text-slate-400">{formatIsoDateTime(row.occurred_at)}</td>
+                      <td className="font-mono text-xs text-aegis-text-muted tabular-nums">
+                        {formatIsoDateTime(row.occurred_at)}
+                      </td>
                     </tr>
                   ))
                 )}

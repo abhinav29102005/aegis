@@ -44,8 +44,6 @@ export default function PassportsPage() {
   // Helper conversion
   const toMinor = (val: string) => Math.max(0, Math.round(Number.parseFloat(val || "0") * 100));
 
-  // FIX: Fixed useCallback dependency re-fetch loop by removing agentId and selectedMerchantIds.length
-  // from dependencies and using functional state updaters.
   const loadData = useCallback(async () => {
     if (!session) return;
     setError(null);
@@ -73,8 +71,8 @@ export default function PassportsPage() {
       setPassports(p);
       setAgents(a);
       setMerchants(m);
-      setAgentId((prev) => prev || a[0]?.id || "");
-      setSelectedMerchantIds((prev) => (prev.length === 0 && m.length > 0 ? [m[0].id] : prev));
+      setAgentId((curr) => curr || (a[0]?.id ?? ""));
+      setSelectedMerchantIds((curr) => (curr.length === 0 && m[0] ? [m[0].id] : curr));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load passports");
     }
@@ -84,21 +82,26 @@ export default function PassportsPage() {
     void loadData();
   }, [loadData]);
 
-  const agentNameById = useMemo(() => new Map(agents.map((a) => [a.id, a.name])), [agents]);
+  const agentNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const a of agents) {
+      map.set(a.id, a.name);
+    }
+    return map;
+  }, [agents]);
 
-  // Client-side search filtering and pagination
+  // Client-side filtering across fields
   const filteredPassports = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
+    const q = searchQuery.toLowerCase().trim();
     if (!q) return passports;
     return passports.filter((p) => {
       const agentName = (agentNameById.get(p.agent_id) ?? "").toLowerCase();
       return (
         p.id.toLowerCase().includes(q) ||
         p.agent_id.toLowerCase().includes(q) ||
-        agentName.includes(q) ||
-        p.currency.toLowerCase().includes(q) ||
         p.status.toLowerCase().includes(q) ||
-        p.allowed_categories.some((c) => c.toLowerCase().includes(q))
+        p.currency.toLowerCase().includes(q) ||
+        agentName.includes(q)
       );
     });
   }, [passports, searchQuery, agentNameById]);
@@ -106,6 +109,23 @@ export default function PassportsPage() {
   const pagedPassports = useMemo(() => {
     return filteredPassports.slice(offset, offset + limit);
   }, [filteredPassports, offset, limit]);
+
+  async function handleRevoke(passport: PassportRecord) {
+    if (!session) return;
+    try {
+      await apiRequest(`/v1/guardian/passports/${passport.id}/revoke`, {
+        method: "POST",
+        token: session.access_token,
+        orgId: session.active_tenant_id,
+      });
+      setNotice(`Revoked passport ${truncateId(passport.id)}.`);
+      await loadData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to revoke passport");
+    } finally {
+      setConfirmRevoke(null);
+    }
+  }
 
   async function handleCreatePassport(e: React.FormEvent) {
     e.preventDefault();
@@ -169,7 +189,6 @@ export default function PassportsPage() {
     };
 
     try {
-      // Inline PATCH policy limit editor modal (PATCH /v1/guardian/passports/{id}/policy with fallback to /passports/{id})
       try {
         await apiRequest(`/v1/guardian/passports/${editingPassport.id}/policy`, {
           method: "PATCH",
@@ -178,7 +197,6 @@ export default function PassportsPage() {
           body: patchBody,
         });
       } catch {
-        // Fallback to /passports/{id} if /policy route is not exposed directly
         await apiRequest(`/v1/guardian/passports/${editingPassport.id}`, {
           method: "PATCH",
           token: session.access_token,
@@ -186,7 +204,7 @@ export default function PassportsPage() {
           body: patchBody,
         });
       }
-      setNotice(`Updated policy guardrails for passport ${truncateId(editingPassport.id)}.`);
+      setNotice(`Updated policy limits for passport ${truncateId(editingPassport.id)}.`);
       setEditingPassport(null);
       await loadData();
     } catch (err) {
@@ -196,59 +214,56 @@ export default function PassportsPage() {
     }
   }
 
-  async function handleRevoke(p: PassportRecord) {
-    if (!session) return;
-    try {
-      await apiRequest(`/v1/guardian/passports/${p.id}/revoke`, {
-        method: "POST",
-        token: session.access_token,
-        orgId: session.active_tenant_id,
-      });
-      setConfirmRevoke(null);
-      setNotice(`Passport ${truncateId(p.id)} revoked.`);
-      await loadData();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to revoke passport");
-    }
-  }
-
   return (
-    <AppShell title="Spending Passports & Budgets" subtitle="Issue deterministic policy guardrails, spend caps, and approval thresholds">
+    <AppShell
+      title="Spending Passports & Policy Controls"
+      subtitle="Deterministic policy limits, per-transaction velocity ceilings, and row-locked budget reservations."
+    >
       {error && (
-        <div role="status" className="mb-6 rounded-xl border border-rose-500/40 bg-rose-500/10 p-4 text-sm text-rose-200">
+        <div role="alert" className="mb-4 border border-[#4A2828] bg-[#211212] p-3 font-mono text-xs text-[#EF5350]">
           {error}
         </div>
       )}
       {notice && (
-        <div role="status" className="mb-6 rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-4 text-sm text-emerald-200">
+        <div role="status" className="mb-4 border border-[#3A4A28] bg-[#162112] p-3 font-mono text-xs text-aegis-accent">
           {notice}
         </div>
       )}
 
+      {/* Issue Passport Panel */}
       {hasPermission("passports:write") && (
-        <form onSubmit={(e) => void handleCreatePassport(e)} className="rounded-xl border border-aegis-border bg-aegis-surface p-5">
-          <h2 className="text-base font-semibold text-white">Issue New Spending Passport</h2>
-          <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <form onSubmit={handleCreatePassport} className="mb-8 border border-aegis-border bg-aegis-surface p-5 rounded-sm">
+          <div className="flex items-center justify-between border-b border-aegis-border pb-3">
             <div>
-              <label htmlFor="pp-agent" className="block text-xs font-medium text-slate-300">
-                Target Agent *
+              <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-accent font-semibold">
+                POLICY DEFINITION
+              </span>
+              <h2 className="mt-0.5 text-sm font-semibold text-aegis-text-primary">Issue New Spending Passport</h2>
+            </div>
+            <span className="font-mono text-[10px] text-aegis-text-faint">ENGINE: DETERMINISTIC V1</span>
+          </div>
+
+          <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 font-mono">
+            <div>
+              <label htmlFor="pp-agent" className="block text-xs uppercase text-aegis-text-muted">
+                Target AI Agent <span className="text-aegis-accent">*</span>
               </label>
               <select
                 id="pp-agent"
                 required
                 value={agentId}
                 onChange={(e) => setAgentId(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-bg px-3 py-2 text-sm text-white"
+                className="mt-1.5 w-full border border-aegis-border bg-aegis-card px-3 py-2 text-xs text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
               >
                 {agents.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name} ({a.status})
+                  <option key={a.id} value={a.id} className="bg-aegis-surface">
+                    {a.name} [{a.status}]
                   </option>
                 ))}
               </select>
             </div>
             <div>
-              <label htmlFor="pp-total" className="block text-xs font-medium text-slate-300">
+              <label htmlFor="pp-total" className="block text-xs uppercase text-aegis-text-muted">
                 Total Budget (USD)
               </label>
               <input
@@ -259,11 +274,11 @@ export default function PassportsPage() {
                 required
                 value={totalDollars}
                 onChange={(e) => setTotalDollars(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-bg px-3 py-2 text-sm text-white"
+                className="mt-1.5 w-full border border-aegis-border bg-aegis-card px-3 py-2 text-xs text-aegis-text-primary tabular-nums focus:border-aegis-accent focus:outline-none"
               />
             </div>
             <div>
-              <label htmlFor="pp-pertx" className="block text-xs font-medium text-slate-300">
+              <label htmlFor="pp-pertx" className="block text-xs uppercase text-aegis-text-muted">
                 Per-Transaction Limit (USD)
               </label>
               <input
@@ -274,11 +289,11 @@ export default function PassportsPage() {
                 required
                 value={perTxDollars}
                 onChange={(e) => setPerTxDollars(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-bg px-3 py-2 text-sm text-white"
+                className="mt-1.5 w-full border border-aegis-border bg-aegis-card px-3 py-2 text-xs text-aegis-text-primary tabular-nums focus:border-aegis-accent focus:outline-none"
               />
             </div>
             <div>
-              <label htmlFor="pp-daily" className="block text-xs font-medium text-slate-300">
+              <label htmlFor="pp-daily" className="block text-xs uppercase text-aegis-text-muted">
                 Daily Limit (USD)
               </label>
               <input
@@ -289,11 +304,11 @@ export default function PassportsPage() {
                 required
                 value={dailyDollars}
                 onChange={(e) => setDailyDollars(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-bg px-3 py-2 text-sm text-white"
+                className="mt-1.5 w-full border border-aegis-border bg-aegis-card px-3 py-2 text-xs text-aegis-text-primary tabular-nums focus:border-aegis-accent focus:outline-none"
               />
             </div>
             <div>
-              <label htmlFor="pp-thresh" className="block text-xs font-medium text-slate-300">
+              <label htmlFor="pp-thresh" className="block text-xs uppercase text-aegis-text-muted">
                 Human Approval Threshold (USD)
               </label>
               <input
@@ -304,44 +319,50 @@ export default function PassportsPage() {
                 required
                 value={thresholdDollars}
                 onChange={(e) => setThresholdDollars(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-bg px-3 py-2 text-sm text-white"
+                className="mt-1.5 w-full border border-aegis-border bg-aegis-card px-3 py-2 text-xs text-aegis-text-primary tabular-nums focus:border-aegis-accent focus:outline-none"
               />
             </div>
             <div>
-              <label htmlFor="pp-cats" className="block text-xs font-medium text-slate-300">
-                Allowed Categories (comma-separated)
+              <label htmlFor="pp-cats" className="block text-xs uppercase text-aegis-text-muted">
+                Allowed Categories (CSV)
               </label>
               <input
                 id="pp-cats"
                 value={categories}
                 onChange={(e) => setCategories(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-bg px-3 py-2 text-sm text-white"
+                className="mt-1.5 w-full border border-aegis-border bg-aegis-card px-3 py-2 text-xs text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
               />
             </div>
           </div>
 
-          {/* allow_unknown_merchants toggle */}
-          <div className="mt-4 flex items-center gap-2">
+          <div className="mt-4 flex items-center gap-2 border-t border-aegis-border-subtle pt-3">
             <input
               id="pp-allow-unknown"
               type="checkbox"
               checked={allowUnknownMerchants}
               onChange={(e) => setAllowUnknownMerchants(e.target.checked)}
-              className="h-4 w-4 rounded border-aegis-border bg-aegis-bg text-sky-500 focus:ring-sky-400"
+              className="h-3.5 w-3.5 border border-aegis-border bg-aegis-card text-aegis-accent focus:ring-0"
             />
-            <label htmlFor="pp-allow-unknown" className="text-xs font-medium text-slate-200">
-              Allow Unknown Merchants (bypass allowlist check for unlisted vendors)
+            <label htmlFor="pp-allow-unknown" className="font-mono text-xs text-aegis-text-muted">
+              Allow Unknown Merchants (bypass vendor allowlist checking)
             </label>
           </div>
 
           {merchants.length > 0 && (
-            <fieldset className="mt-4">
-              <legend className="text-xs font-medium text-slate-300">Allowed Merchants</legend>
-              <div className="mt-2 flex flex-wrap gap-3">
+            <fieldset className="mt-4 border border-aegis-border-subtle p-3 bg-aegis-card">
+              <legend className="font-mono text-[10px] uppercase text-aegis-text-faint px-1">Allowlisted Vendors</legend>
+              <div className="flex flex-wrap gap-2">
                 {merchants.map((m) => {
                   const checked = selectedMerchantIds.includes(m.id);
                   return (
-                    <label key={m.id} className="inline-flex items-center gap-2 rounded-lg border border-aegis-border bg-aegis-bg px-3 py-1.5 text-xs text-slate-200">
+                    <label
+                      key={m.id}
+                      className={`inline-flex items-center gap-2 border px-2.5 py-1 font-mono text-xs cursor-pointer transition-colors ${
+                        checked
+                          ? "border-aegis-accent bg-aegis-secondary text-aegis-accent"
+                          : "border-aegis-border bg-aegis-surface text-aegis-text-muted"
+                      }`}
+                    >
                       <input
                         type="checkbox"
                         checked={checked}
@@ -350,6 +371,7 @@ export default function PassportsPage() {
                             checked ? prev.filter((id) => id !== m.id) : [...prev, m.id],
                           )
                         }
+                        className="sr-only"
                       />
                       <span>{m.name}</span>
                     </label>
@@ -359,49 +381,42 @@ export default function PassportsPage() {
             </fieldset>
           )}
 
-          <button
-            type="submit"
-            disabled={!agentId}
-            className="mt-4 rounded-lg bg-sky-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50"
-          >
-            Issue Spending Passport
-          </button>
+          <div className="mt-5 flex justify-end">
+            <button
+              type="submit"
+              disabled={!agentId}
+              className="border border-aegis-accent bg-aegis-accent px-5 py-2 font-mono text-xs font-bold uppercase tracking-wider text-aegis-bg hover:bg-aegis-accent-hover disabled:opacity-50 transition-colors shadow-editorial"
+            >
+              Issue Spending Passport
+            </button>
+          </div>
         </form>
       )}
 
-      {/* Passports Header with Search & Pagination */}
-      <section className="mt-8 rounded-xl border border-aegis-border bg-aegis-surface p-5">
+      {/* Passports List */}
+      <section className="border border-aegis-border bg-aegis-surface p-5 rounded-sm">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-aegis-border pb-4">
-          <h2 className="text-base font-semibold text-white">
-            Spending Passports ({filteredPassports.length})
-          </h2>
+          <div>
+            <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-text-faint">
+              ACTIVE ENFORCEMENT
+            </span>
+            <h2 className="text-sm font-semibold text-aegis-text-primary">
+              Spending Passports ({filteredPassports.length})
+            </h2>
+          </div>
           <div className="flex flex-wrap items-center gap-3">
-            <div className="relative">
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => {
-                  setSearchQuery(e.target.value);
-                  setOffset(0);
-                }}
-                placeholder="Search passports (agent, ID, status)..."
-                className="w-64 rounded-lg border border-aegis-border bg-aegis-bg px-3 py-1.5 text-xs text-white placeholder-slate-400"
-              />
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSearchQuery("");
-                    setOffset(0);
-                  }}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-white"
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-            <div className="flex items-center gap-1.5 text-xs text-slate-300">
-              <label htmlFor="pp-limit-select">Limit:</label>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setOffset(0);
+              }}
+              placeholder="Filter by agent, UUID, status..."
+              className="w-64 border border-aegis-border bg-aegis-card px-3 py-1.5 font-mono text-xs text-aegis-text-primary placeholder:text-aegis-text-faint focus:border-aegis-accent focus:outline-none"
+            />
+            <div className="flex items-center gap-1.5 font-mono text-xs text-aegis-text-muted">
+              <span>LIMIT:</span>
               <select
                 id="pp-limit-select"
                 value={limit}
@@ -409,7 +424,7 @@ export default function PassportsPage() {
                   setLimit(Number(e.target.value));
                   setOffset(0);
                 }}
-                className="rounded border border-aegis-border bg-aegis-bg px-2 py-1 text-xs text-white"
+                className="border border-aegis-border bg-aegis-card px-2 py-1 text-xs text-aegis-text-primary focus:outline-none"
               >
                 <option value={6}>6</option>
                 <option value={10}>10</option>
@@ -420,10 +435,10 @@ export default function PassportsPage() {
           </div>
         </div>
 
-        <div className="mt-6 grid gap-4 md:grid-cols-2">
+        <div className="mt-5 grid gap-4 md:grid-cols-2">
           {pagedPassports.length === 0 ? (
-            <div className="col-span-full rounded-xl border border-dashed border-aegis-border bg-aegis-panel p-8 text-center text-sm text-slate-400">
-              {searchQuery ? "No spending passports matching your search." : "No spending passports issued yet."}
+            <div className="col-span-full border border-dashed border-aegis-border bg-aegis-card p-8 text-center font-mono text-xs text-aegis-text-muted">
+              {searchQuery ? "No passports matching filter query." : "No passports registered."}
             </div>
           ) : (
             pagedPassports.map((p) => {
@@ -433,67 +448,69 @@ export default function PassportsPage() {
                   ? Math.min(100, Math.round(((p.spent_minor + p.reserved_minor) / p.total_budget_minor) * 100))
                   : 0;
               return (
-                <article key={p.id} className="rounded-xl border border-aegis-border bg-aegis-panel p-5 flex flex-col justify-between">
+                <article key={p.id} className="border border-aegis-border bg-aegis-card p-5 flex flex-col justify-between rounded-sm">
                   <div>
-                    <div className="flex items-start justify-between">
+                    <div className="flex items-start justify-between border-b border-aegis-border-subtle pb-3">
                       <div>
-                        <div className="text-sm font-semibold text-white">
+                        <div className="font-sans text-sm font-semibold text-aegis-text-primary">
                           {agentNameById.get(p.agent_id) ?? p.agent_id}
                         </div>
-                        <div className="font-mono text-xs text-slate-400">{p.id}</div>
+                        <div className="font-mono text-[10px] text-aegis-text-faint mt-0.5">
+                          ID: {p.id}
+                        </div>
                       </div>
                       <StatusBadge label={p.status} />
                     </div>
 
-                    <div className="mt-4">
-                      <div className="flex justify-between text-xs text-slate-300">
-                        <span>Available: {formatMinorCurrency(avail, p.currency)}</span>
-                        <span>Total: {formatMinorCurrency(p.total_budget_minor, p.currency)}</span>
+                    <div className="mt-4 font-mono">
+                      <div className="flex justify-between text-xs text-aegis-text-muted">
+                        <span>AVAILABLE: <span className="text-aegis-accent font-semibold">{formatMinorCurrency(avail, p.currency)}</span></span>
+                        <span>TOTAL: <span className="text-aegis-text-primary">{formatMinorCurrency(p.total_budget_minor, p.currency)}</span></span>
                       </div>
-                      <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-slate-800">
-                        <div className="h-full bg-sky-400" style={{ width: `${usedPct}%` }} />
+                      <div className="mt-2 h-1.5 w-full bg-aegis-surface border border-aegis-border">
+                        <div className="h-full bg-aegis-accent transition-all duration-300" style={{ width: `${usedPct}%` }} />
                       </div>
-                      <div className="mt-2 grid grid-cols-3 gap-2 text-xs text-slate-400">
-                        <div>Per Tx: {formatMinorCurrency(p.per_tx_limit_minor, p.currency)}</div>
-                        <div>Daily: {formatMinorCurrency(p.daily_limit_minor, p.currency)}</div>
-                        <div>Approval ≥ {formatMinorCurrency(p.human_approval_threshold_minor, p.currency)}</div>
+                      <div className="mt-3 grid grid-cols-3 gap-2 border-t border-aegis-border-subtle pt-2.5 text-[10px] text-aegis-text-faint">
+                        <div>PER TX: <span className="text-aegis-text-muted">{formatMinorCurrency(p.per_tx_limit_minor, p.currency)}</span></div>
+                        <div>DAILY: <span className="text-aegis-text-muted">{formatMinorCurrency(p.daily_limit_minor, p.currency)}</span></div>
+                        <div>ESCALATE ≥ <span className="text-aegis-copper">{formatMinorCurrency(p.human_approval_threshold_minor, p.currency)}</span></div>
                       </div>
                     </div>
 
-                    <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px]">
-                      <span className={`inline-flex items-center rounded px-2 py-0.5 font-medium ${
+                    <div className="mt-3 flex flex-wrap items-center gap-2 font-mono text-[10px]">
+                      <span className={`border px-1.5 py-0.5 uppercase ${
                         p.allow_unknown_merchants
-                          ? "bg-amber-500/15 text-amber-300 border border-amber-500/30"
-                          : "bg-slate-800 text-slate-300"
+                          ? "border-[#4A3728] bg-[#211812] text-aegis-copper"
+                          : "border-aegis-border bg-aegis-surface text-aegis-text-muted"
                       }`}>
-                        {p.allow_unknown_merchants ? "Unknown Merchants: Allowed" : "Strict Allowlist Only"}
+                        {p.allow_unknown_merchants ? "Unknown Vendors: ALLOWED" : "STRICT ALLOWLIST"}
                       </span>
                       {p.allowed_categories && p.allowed_categories.length > 0 && (
-                        <span className="rounded bg-slate-800 px-2 py-0.5 text-slate-300">
-                          Categories: {p.allowed_categories.join(", ")}
+                        <span className="border border-aegis-border bg-aegis-surface px-1.5 py-0.5 text-aegis-text-muted">
+                          CATS: {p.allowed_categories.join(", ")}
                         </span>
                       )}
                     </div>
                   </div>
 
-                  <div className="mt-4 flex items-center justify-between border-t border-aegis-border pt-3 text-xs text-slate-400">
-                    <span>Expires {formatIsoDateTime(p.expires_at)}</span>
+                  <div className="mt-4 flex items-center justify-between border-t border-aegis-border pt-3 font-mono text-[10px] text-aegis-text-faint">
+                    <span>EXPIRES: {formatIsoDateTime(p.expires_at)}</span>
                     <div className="flex items-center gap-2">
                       {hasPermission("passports:write") && p.status === "ACTIVE" && (
                         <>
                           <button
                             type="button"
                             onClick={() => openEditPolicyModal(p)}
-                            className="rounded border border-sky-500/40 px-2.5 py-1 text-xs text-sky-300 hover:bg-sky-500/15"
+                            className="border border-aegis-border bg-aegis-surface px-2.5 py-1 text-aegis-text-muted hover:border-aegis-border-active hover:text-aegis-text-primary transition-colors"
                           >
-                            Edit Policy
+                            EDIT
                           </button>
                           <button
                             type="button"
                             onClick={() => setConfirmRevoke(p)}
-                            className="rounded border border-rose-500/40 px-2.5 py-1 text-xs text-rose-300 hover:bg-rose-500/15"
+                            className="border border-[#4A2828] bg-[#211212] px-2.5 py-1 text-[#EF5350] hover:bg-[#ff6b6b]/20 transition-colors"
                           >
-                            Revoke
+                            REVOKE
                           </button>
                         </>
                       )}
@@ -507,29 +524,29 @@ export default function PassportsPage() {
 
         {/* Pagination Bar */}
         {filteredPassports.length > 0 && (
-          <div className="mt-6 flex flex-wrap items-center justify-between gap-2 border-t border-aegis-border pt-3 text-xs text-slate-400">
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-2 border-t border-aegis-border pt-3 font-mono text-xs text-aegis-text-faint">
             <div>
-              Showing {Math.min(filteredPassports.length, offset + 1)} to {Math.min(filteredPassports.length, offset + limit)} of {filteredPassports.length} passports
+              SHOWING {Math.min(filteredPassports.length, offset + 1)}–{Math.min(filteredPassports.length, offset + limit)} OF {filteredPassports.length} PASSPORTS
             </div>
             <div className="flex items-center gap-2">
               <button
                 type="button"
                 disabled={offset === 0}
                 onClick={() => setOffset((prev) => Math.max(0, prev - limit))}
-                className="rounded border border-aegis-border bg-aegis-bg px-2.5 py-1 text-xs text-slate-200 hover:bg-slate-800 disabled:opacity-40"
+                className="border border-aegis-border bg-aegis-card px-2.5 py-1 text-aegis-text-muted hover:border-aegis-border-active hover:text-aegis-text-primary disabled:opacity-40"
               >
-                Previous
+                PREV
               </button>
               <span>
-                Page {Math.floor(offset / limit) + 1} of {Math.max(1, Math.ceil(filteredPassports.length / limit))}
+                PAGE {Math.floor(offset / limit) + 1} OF {Math.max(1, Math.ceil(filteredPassports.length / limit))}
               </span>
               <button
                 type="button"
                 disabled={offset + limit >= filteredPassports.length}
                 onClick={() => setOffset((prev) => prev + limit)}
-                className="rounded border border-aegis-border bg-aegis-bg px-2.5 py-1 text-xs text-slate-200 hover:bg-slate-800 disabled:opacity-40"
+                className="border border-aegis-border bg-aegis-card px-2.5 py-1 text-aegis-text-muted hover:border-aegis-border-active hover:text-aegis-text-primary disabled:opacity-40"
               >
-                Next
+                NEXT
               </button>
             </div>
           </div>
@@ -538,30 +555,33 @@ export default function PassportsPage() {
 
       {/* Inline PATCH Policy Limit Editor Modal */}
       {editingPassport && (
-        <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+        <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
           <form
             onSubmit={(e) => void handleSavePolicy(e)}
-            className="w-full max-w-lg rounded-xl border border-aegis-border bg-aegis-surface p-6 shadow-2xl space-y-4"
+            className="w-full max-w-lg border border-aegis-border bg-aegis-surface p-6 shadow-panel space-y-4 rounded-sm"
           >
-            <div className="flex items-start justify-between">
+            <div className="flex items-start justify-between border-b border-aegis-border pb-3">
               <div>
-                <h3 className="text-base font-semibold text-white">Edit Policy Limits & Guardrails</h3>
-                <p className="text-xs text-slate-400">
-                  Passport {truncateId(editingPassport.id)} · Agent {agentNameById.get(editingPassport.agent_id) ?? editingPassport.agent_id}
+                <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-accent font-semibold">
+                  GUARDRAIL MUTATION
+                </span>
+                <h3 className="text-sm font-semibold text-aegis-text-primary mt-0.5">Edit Policy Limits</h3>
+                <p className="font-mono text-[10px] text-aegis-text-faint">
+                  PASSPORT: {truncateId(editingPassport.id)} • AGENT: {agentNameById.get(editingPassport.agent_id) ?? editingPassport.agent_id}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setEditingPassport(null)}
-                className="text-slate-400 hover:text-white text-sm"
+                className="text-aegis-text-muted hover:text-aegis-text-primary font-mono text-sm"
               >
                 ✕
               </button>
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 sm:grid-cols-2 font-mono">
               <div>
-                <label htmlFor="edit-pertx" className="block text-xs font-medium text-slate-300">
+                <label htmlFor="edit-pertx" className="block text-xs uppercase text-aegis-text-muted">
                   Per-Transaction Limit (USD)
                 </label>
                 <input
@@ -572,12 +592,12 @@ export default function PassportsPage() {
                   required
                   value={editPerTxDollars}
                   onChange={(e) => setEditPerTxDollars(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-bg px-3 py-2 text-sm text-white"
+                  className="mt-1.5 w-full border border-aegis-border bg-aegis-card px-3 py-2 text-xs text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
                 />
               </div>
 
               <div>
-                <label htmlFor="edit-daily" className="block text-xs font-medium text-slate-300">
+                <label htmlFor="edit-daily" className="block text-xs uppercase text-aegis-text-muted">
                   Daily Limit (USD)
                 </label>
                 <input
@@ -588,12 +608,12 @@ export default function PassportsPage() {
                   required
                   value={editDailyDollars}
                   onChange={(e) => setEditDailyDollars(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-bg px-3 py-2 text-sm text-white"
+                  className="mt-1.5 w-full border border-aegis-border bg-aegis-card px-3 py-2 text-xs text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
                 />
               </div>
 
               <div className="sm:col-span-2">
-                <label htmlFor="edit-threshold" className="block text-xs font-medium text-slate-300">
+                <label htmlFor="edit-threshold" className="block text-xs uppercase text-aegis-text-muted">
                   Human Approval Threshold (USD)
                 </label>
                 <input
@@ -604,51 +624,50 @@ export default function PassportsPage() {
                   required
                   value={editThresholdDollars}
                   onChange={(e) => setEditThresholdDollars(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-bg px-3 py-2 text-sm text-white"
+                  className="mt-1.5 w-full border border-aegis-border bg-aegis-card px-3 py-2 text-xs text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
                 />
               </div>
 
               <div className="sm:col-span-2">
-                <label htmlFor="edit-cats" className="block text-xs font-medium text-slate-300">
-                  Allowed Categories (comma-separated)
+                <label htmlFor="edit-cats" className="block text-xs uppercase text-aegis-text-muted">
+                  Allowed Categories (CSV)
                 </label>
                 <input
                   id="edit-cats"
                   type="text"
                   value={editCategories}
                   onChange={(e) => setEditCategories(e.target.value)}
-                  placeholder="SOFTWARE, COMPUTE, API"
-                  className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-bg px-3 py-2 text-sm text-white"
+                  className="mt-1.5 w-full border border-aegis-border bg-aegis-card px-3 py-2 text-xs text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
                 />
               </div>
 
               <div className="sm:col-span-2">
-                <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-200">
+                <label className="inline-flex items-center gap-2 text-xs font-mono text-aegis-text-muted">
                   <input
                     type="checkbox"
                     checked={editAllowUnknown}
                     onChange={(e) => setEditAllowUnknown(e.target.checked)}
-                    className="h-4 w-4 rounded border-aegis-border bg-aegis-bg text-sky-500 focus:ring-sky-400"
+                    className="h-3.5 w-3.5 border border-aegis-border bg-aegis-card text-aegis-accent focus:ring-0"
                   />
-                  <span>Allow Unknown Merchants (bypass allowlist verification)</span>
+                  <span>Allow Unknown Vendors (bypass allowlist verification)</span>
                 </label>
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-3 pt-4 border-t border-aegis-border">
+            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-aegis-border font-mono">
               <button
                 type="button"
                 onClick={() => setEditingPassport(null)}
-                className="rounded-lg border border-aegis-border px-3.5 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800"
+                className="border border-aegis-border bg-aegis-card px-3.5 py-1.5 text-xs text-aegis-text-muted hover:border-aegis-border-active hover:text-aegis-text-primary"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={savingPolicy}
-                className="rounded-lg bg-sky-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50"
+                className="border border-aegis-accent bg-aegis-accent px-4 py-1.5 text-xs font-bold uppercase tracking-wider text-aegis-bg hover:bg-aegis-accent-hover disabled:opacity-50"
               >
-                {savingPolicy ? "Saving Policy…" : "Save Policy"}
+                {savingPolicy ? "Saving…" : "Save Policy"}
               </button>
             </div>
           </form>

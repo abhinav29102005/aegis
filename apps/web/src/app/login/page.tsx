@@ -2,7 +2,7 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import React, { Suspense, useEffect, useState } from "react";
-import { Eye, EyeOff, Mail, ShieldCheck, UserCheck } from "lucide-react";
+import { Eye, EyeOff, Mail, ShieldCheck, UserCheck, ArrowRight } from "lucide-react";
 import { apiRequest, ApiClientError } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 
@@ -68,16 +68,10 @@ function LoginForm() {
             email: details.email || "",
             role: details.role || "OPERATOR",
           });
-          if (details.email) setEmail(details.email);
         }
       } catch {
-        // Fallback gracefully if backend inspect route is unavailable
         if (!isCancelled) {
-          setInvitation({
-            token: inviteParam,
-            organization_name: "AgentPay Nexus Workspace",
-            role: "MEMBER",
-          });
+          setErrorMsg("Invitation invalid or expired.");
         }
       } finally {
         if (!isCancelled) setInvitationLoading(false);
@@ -104,12 +98,11 @@ function LoginForm() {
           full_name: fullName.trim() || undefined,
         },
       });
-      // If user had credentials, log them in or redirect
       if (email && password) {
         try {
           await login(email.trim(), password);
         } catch {
-          // If already session authenticated or requires manual login
+          // fallback if already authenticated
         }
       }
       router.push("/dashboard");
@@ -145,7 +138,7 @@ function LoginForm() {
       setErrorMsg(
         err instanceof ApiClientError
           ? err.message
-          : "Authentication failed. Verify API connectivity.",
+          : "Authentication failed. Verify API connectivity and credentials.",
       );
     } finally {
       setSubmitting(false);
@@ -153,14 +146,25 @@ function LoginForm() {
   }
 
   return (
-    <div className="w-full max-w-md rounded-2xl border border-aegis-border bg-aegis-surface p-8 shadow-2xl">
-      <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-sky-500/15 text-sky-400 ring-1 ring-sky-400/30">
-          <ShieldCheck className="h-6 w-6" />
+    <div className="w-full max-w-md border border-aegis-border bg-aegis-surface p-8 shadow-panel rounded-sm">
+      {/* Brand Header */}
+      <div className="flex items-center justify-between border-b border-aegis-border pb-4">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center border border-aegis-accent/40 bg-aegis-accent/10 text-aegis-accent">
+            <ShieldCheck className="h-5 w-5" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-base font-bold tracking-wider text-aegis-text-primary">AEGIS</span>
+              <span className="border border-aegis-border bg-aegis-card px-1.5 py-0.2 font-mono text-[9px] uppercase text-aegis-text-muted">
+                CONSOLE
+              </span>
+            </div>
+            <p className="font-mono text-[10px] text-aegis-text-faint tracking-tight">OPERATOR ACCESS CONTROL</p>
+          </div>
         </div>
-        <div>
-          <h1 className="text-xl font-bold text-white">AEGIS Control Plane</h1>
-          <p className="text-xs text-slate-400">Multi-tenant financial governance</p>
+        <div className="font-mono text-[10px] text-aegis-accent uppercase tracking-widest font-semibold">
+          SECURE GATEWAY
         </div>
       </div>
 
@@ -168,15 +172,15 @@ function LoginForm() {
         <div
           role="status"
           aria-live="polite"
-          className="mt-4 flex items-start gap-2.5 rounded-lg border border-sky-500/30 bg-sky-500/10 px-4 py-3 text-xs text-sky-200"
+          className="mt-4 flex items-start gap-2.5 border border-aegis-border bg-aegis-card p-3 font-mono text-xs text-aegis-text-muted"
         >
-          <Mail className="mt-0.5 h-4 w-4 shrink-0 text-sky-400" />
+          <Mail className="mt-0.5 h-3.5 w-3.5 shrink-0 text-aegis-accent" />
           <div className="flex-1">
             <span>{infoMsg}</span>
             <button
               type="button"
               onClick={() => setInfoMsg(null)}
-              className="ml-2 font-medium underline hover:text-white"
+              className="ml-2 font-semibold text-aegis-accent underline hover:text-white"
             >
               Dismiss
             </button>
@@ -188,7 +192,7 @@ function LoginForm() {
         <div
           role="alert"
           aria-live="assertive"
-          className="mt-4 rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200"
+          className="mt-4 border border-[#4A2828] bg-[#211212] p-3 font-mono text-xs text-[#EF5350]"
         >
           {errorMsg}
         </div>
@@ -196,24 +200,21 @@ function LoginForm() {
 
       {mode === "invitation" ? (
         <div className="mt-6">
-          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4">
-            <div className="flex items-center gap-2 text-emerald-300">
-              <UserCheck className="h-5 w-5" />
-              <span className="text-sm font-semibold">Organization Invitation</span>
+          <div className="border border-[#3A4A28] bg-[#162112] p-3.5 font-mono text-xs text-aegis-text-muted">
+            <div className="flex items-center gap-2 text-aegis-accent font-semibold uppercase tracking-wider text-[11px]">
+              <UserCheck className="h-4 w-4" />
+              <span>ORGANIZATION INVITATION DETECTED</span>
             </div>
-            <p className="mt-1 text-xs text-slate-300">
-              You have been invited to join{" "}
-              <strong className="text-white">
-                {invitation?.organization_name || "the organization"}
-              </strong>
-              {invitation?.role ? ` as ${invitation.role}` : ""}.
+            <p className="mt-1.5 text-xs text-aegis-text-primary">
+              Invited to join <strong className="text-white">{invitation?.organization_name || "the organization"}</strong>
+              {invitation?.role ? ` as [${invitation.role}]` : ""}.
             </p>
           </div>
 
           <form onSubmit={(e) => void handleAcceptInvitation(e)} method="post" className="mt-5 space-y-4">
             <div>
-              <label htmlFor="invite-email" className="block text-sm font-medium text-slate-200">
-                Email Address <span aria-hidden="true">*</span>
+              <label htmlFor="invite-email" className="block font-mono text-xs uppercase tracking-wider text-aegis-text-muted">
+                Email Address <span aria-hidden="true" className="text-aegis-accent">*</span>
               </label>
               <input
                 id="invite-email"
@@ -222,14 +223,14 @@ function LoginForm() {
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@company.com"
-                className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-bg px-3.5 py-2.5 text-sm text-white"
+                placeholder="operator@institution.com"
+                className="mt-1.5 w-full border border-aegis-border bg-aegis-card px-3 py-2 font-mono text-xs text-aegis-text-primary placeholder:text-aegis-text-faint focus:border-aegis-accent focus:outline-none"
               />
             </div>
 
             <div>
-              <label htmlFor="invite-full-name" className="block text-sm font-medium text-slate-200">
-                Full Name
+              <label htmlFor="invite-full-name" className="block font-mono text-xs uppercase tracking-wider text-aegis-text-muted">
+                Operator Full Name
               </label>
               <input
                 id="invite-full-name"
@@ -237,24 +238,24 @@ function LoginForm() {
                 type="text"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
-                placeholder="Jane Doe"
-                className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-bg px-3.5 py-2.5 text-sm text-white"
+                placeholder="Alex Morgan"
+                className="mt-1.5 w-full border border-aegis-border bg-aegis-card px-3 py-2 font-mono text-xs text-aegis-text-primary placeholder:text-aegis-text-faint focus:border-aegis-accent focus:outline-none"
               />
             </div>
 
             <div>
               <div className="flex items-center justify-between">
-                <label htmlFor="invite-password" className="block text-sm font-medium text-slate-200">
-                  Password <span aria-hidden="true">*</span>
+                <label htmlFor="invite-password" className="block font-mono text-xs uppercase tracking-wider text-aegis-text-muted">
+                  Account Password <span aria-hidden="true" className="text-aegis-accent">*</span>
                 </label>
                 <button
                   type="button"
                   aria-pressed={showPassword}
                   aria-label={showPassword ? "Hide password" : "Show password"}
                   onClick={() => setShowPassword((prev) => !prev)}
-                  className="inline-flex items-center gap-1 text-xs text-sky-400 hover:text-sky-300"
+                  className="inline-flex items-center gap-1 font-mono text-[10px] uppercase text-aegis-text-muted hover:text-aegis-accent"
                 >
-                  {showPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                  {showPassword ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
                   <span>{showPassword ? "Hide" : "Show"}</span>
                 </button>
               </div>
@@ -266,27 +267,27 @@ function LoginForm() {
                 minLength={8}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Set or verify account password"
-                className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-bg px-3.5 py-2.5 text-sm text-white"
+                placeholder="Minimum 8 characters"
+                className="mt-1.5 w-full border border-aegis-border bg-aegis-card px-3 py-2 font-mono text-xs text-aegis-text-primary placeholder:text-aegis-text-faint focus:border-aegis-accent focus:outline-none"
               />
             </div>
 
             <button
               type="submit"
               disabled={submitting || invitationLoading}
-              className="mt-2 w-full rounded-lg bg-emerald-500 py-2.5 text-sm font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-50"
+              className="mt-2 w-full border border-aegis-accent bg-aegis-accent py-2.5 font-mono text-xs font-bold uppercase tracking-wider text-aegis-bg hover:bg-aegis-accent-hover disabled:opacity-50 transition-colors"
             >
-              {submitting ? "Joining Organization…" : "Accept Invitation & Join"}
+              {submitting ? "Accepting Credentials…" : "Accept Invitation & Enter"}
             </button>
 
-            <div className="text-center">
+            <div className="text-center pt-2">
               <button
                 type="button"
                 onClick={() => {
                   setMode("login");
                   setErrorMsg(null);
                 }}
-                className="text-xs text-slate-400 hover:text-white"
+                className="font-mono text-xs text-aegis-text-muted hover:text-aegis-text-primary underline"
               >
                 Return to standard sign in
               </button>
@@ -295,8 +296,9 @@ function LoginForm() {
         </div>
       ) : (
         <>
+          {/* Authentication Mode Switcher */}
           <div
-            className="mt-6 grid grid-cols-2 gap-2 rounded-lg bg-aegis-bg p-1"
+            className="mt-6 grid grid-cols-2 gap-1 border border-aegis-border bg-aegis-card p-1"
             role="tablist"
             aria-label="Authentication mode"
           >
@@ -308,10 +310,10 @@ function LoginForm() {
                 setMode("login");
                 setErrorMsg(null);
               }}
-              className={`rounded-md py-2 text-sm font-medium ${
+              className={`py-1.5 font-mono text-xs uppercase tracking-wider transition-colors ${
                 mode === "login"
-                  ? "bg-aegis-panel text-white shadow"
-                  : "text-slate-400 hover:text-white"
+                  ? "border border-aegis-accent bg-aegis-secondary font-bold text-aegis-accent"
+                  : "text-aegis-text-muted hover:text-aegis-text-primary"
               }`}
             >
               Sign In
@@ -324,13 +326,13 @@ function LoginForm() {
                 setMode("register");
                 setErrorMsg(null);
               }}
-              className={`rounded-md py-2 text-sm font-medium ${
+              className={`py-1.5 font-mono text-xs uppercase tracking-wider transition-colors ${
                 mode === "register"
-                  ? "bg-aegis-panel text-white shadow"
-                  : "text-slate-400 hover:text-white"
+                  ? "border border-aegis-accent bg-aegis-secondary font-bold text-aegis-accent"
+                  : "text-aegis-text-muted hover:text-aegis-text-primary"
               }`}
             >
-              Create Organization
+              New Tenant
             </button>
           </div>
 
@@ -338,8 +340,8 @@ function LoginForm() {
             {mode === "register" && (
               <>
                 <div>
-                  <label htmlFor="full-name" className="block text-sm font-medium text-slate-200">
-                    Full Name <span aria-hidden="true">*</span>
+                  <label htmlFor="full-name" className="block font-mono text-xs uppercase tracking-wider text-aegis-text-muted">
+                    Operator Full Name <span aria-hidden="true" className="text-aegis-accent">*</span>
                   </label>
                   <input
                     id="full-name"
@@ -349,13 +351,14 @@ function LoginForm() {
                     autoComplete="name"
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-bg px-3.5 py-2.5 text-sm text-white"
+                    placeholder="Alex Morgan"
+                    className="mt-1.5 w-full border border-aegis-border bg-aegis-card px-3 py-2 font-mono text-xs text-aegis-text-primary placeholder:text-aegis-text-faint focus:border-aegis-accent focus:outline-none"
                   />
                 </div>
 
                 <div>
-                  <label htmlFor="org-name" className="block text-sm font-medium text-slate-200">
-                    Organization Name <span aria-hidden="true">*</span>
+                  <label htmlFor="org-name" className="block font-mono text-xs uppercase tracking-wider text-aegis-text-muted">
+                    Organization Name <span aria-hidden="true" className="text-aegis-accent">*</span>
                   </label>
                   <input
                     id="org-name"
@@ -376,13 +379,14 @@ function LoginForm() {
                         );
                       }
                     }}
-                    className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-bg px-3.5 py-2.5 text-sm text-white"
+                    placeholder="Acme Financial Technologies"
+                    className="mt-1.5 w-full border border-aegis-border bg-aegis-card px-3 py-2 font-mono text-xs text-aegis-text-primary placeholder:text-aegis-text-faint focus:border-aegis-accent focus:outline-none"
                   />
                 </div>
 
                 <div>
-                  <label htmlFor="org-slug" className="block text-sm font-medium text-slate-200">
-                    Organization Slug <span aria-hidden="true">*</span>
+                  <label htmlFor="org-slug" className="block font-mono text-xs uppercase tracking-wider text-aegis-text-muted">
+                    Organization Slug <span aria-hidden="true" className="text-aegis-accent">*</span>
                   </label>
                   <input
                     id="org-slug"
@@ -395,18 +399,16 @@ function LoginForm() {
                     spellCheck={false}
                     value={orgSlug}
                     onChange={(e) => setOrgSlug(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-bg px-3.5 py-2.5 text-sm text-white"
+                    placeholder="acme-fintech"
+                    className="mt-1.5 w-full border border-aegis-border bg-aegis-card px-3 py-2 font-mono text-xs text-aegis-text-primary placeholder:text-aegis-text-faint focus:border-aegis-accent focus:outline-none"
                   />
-                  <span className="mt-1 block text-xs text-slate-400">
-                    Lowercase letters, numbers, and hyphens only.
-                  </span>
                 </div>
               </>
             )}
 
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-slate-200">
-                Email <span aria-hidden="true">*</span>
+              <label htmlFor="email" className="block font-mono text-xs uppercase tracking-wider text-aegis-text-muted">
+                Operator Email <span aria-hidden="true" className="text-aegis-accent">*</span>
               </label>
               <input
                 id="email"
@@ -419,23 +421,24 @@ function LoginForm() {
                 spellCheck={false}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-bg px-3.5 py-2.5 text-sm text-white"
+                placeholder="operator@institution.com"
+                className="mt-1.5 w-full border border-aegis-border bg-aegis-card px-3 py-2 font-mono text-xs text-aegis-text-primary placeholder:text-aegis-text-faint focus:border-aegis-accent focus:outline-none"
               />
             </div>
 
             <div>
               <div className="flex items-center justify-between">
-                <label htmlFor="password" className="block text-sm font-medium text-slate-200">
-                  Password <span aria-hidden="true">*</span>
+                <label htmlFor="password" className="block font-mono text-xs uppercase tracking-wider text-aegis-text-muted">
+                  Password <span aria-hidden="true" className="text-aegis-accent">*</span>
                 </label>
                 <button
                   type="button"
                   aria-pressed={showPassword}
                   aria-label={showPassword ? "Hide password" : "Show password"}
                   onClick={() => setShowPassword((prev) => !prev)}
-                  className="inline-flex items-center gap-1 text-xs text-sky-400 hover:text-sky-300"
+                  className="inline-flex items-center gap-1 font-mono text-[10px] uppercase text-aegis-text-muted hover:text-aegis-accent"
                 >
-                  {showPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                  {showPassword ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
                   <span>{showPassword ? "Hide" : "Show"}</span>
                 </button>
               </div>
@@ -448,43 +451,38 @@ function LoginForm() {
                 autoComplete={mode === "register" ? "new-password" : "current-password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-bg px-3.5 py-2.5 text-sm text-white"
+                placeholder="Enter password"
+                className="mt-1.5 w-full border border-aegis-border bg-aegis-card px-3 py-2 font-mono text-xs text-aegis-text-primary placeholder:text-aegis-text-faint focus:border-aegis-accent focus:outline-none"
               />
-              {mode === "register" && (
-                <span className="mt-1 block text-xs text-slate-400">Minimum 8 characters.</span>
-              )}
             </div>
 
             <button
               type="submit"
               disabled={submitting}
-              className="mt-2 w-full rounded-lg bg-sky-500 py-2.5 text-sm font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50"
+              className="mt-3 w-full border border-aegis-accent bg-aegis-accent py-2.5 font-mono text-xs font-bold uppercase tracking-wider text-aegis-bg hover:bg-aegis-accent-hover disabled:opacity-50 transition-colors shadow-editorial flex items-center justify-center gap-2"
             >
-              {submitting
-                ? "Authenticating…"
-                : mode === "login"
-                  ? "Sign In to Organization"
-                  : "Create Organization & Continue"}
+              <span>{submitting ? "Authenticating…" : mode === "login" ? "Enter Control Console" : "Provision Organization & Enter"}</span>
+              <ArrowRight className="h-3.5 w-3.5" />
             </button>
           </form>
         </>
       )}
 
-      {/* Public links */}
-      <div className="mt-6 border-t border-aegis-border pt-4 text-center text-[11px] text-slate-400">
-        <a href="/status" className="hover:text-sky-300 hover:underline">
-          System Status
+      {/* Public footer links */}
+      <div className="mt-8 border-t border-aegis-border pt-4 text-center font-mono text-[10px] text-aegis-text-faint flex items-center justify-center gap-4">
+        <a href="/status" className="hover:text-aegis-accent transition-colors">
+          STATUS
         </a>
-        <span className="mx-2">·</span>
-        <a href="/legal/terms" className="hover:text-sky-300 hover:underline">
-          Terms
+        <span>•</span>
+        <a href="/legal/terms" className="hover:text-aegis-text-primary transition-colors">
+          TERMS
         </a>
-        <span className="mx-2">·</span>
-        <a href="/legal/privacy" className="hover:text-sky-300 hover:underline">
-          Privacy
+        <span>•</span>
+        <a href="/legal/privacy" className="hover:text-aegis-text-primary transition-colors">
+          PRIVACY
         </a>
-        <span className="mx-2">·</span>
-        <a href="/legal/dpa" className="hover:text-sky-300 hover:underline">
+        <span>•</span>
+        <a href="/legal/dpa" className="hover:text-aegis-text-primary transition-colors">
           DPA
         </a>
       </div>
@@ -494,12 +492,12 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-aegis-bg px-4 py-12 text-slate-100">
+    <div className="flex min-h-screen items-center justify-center bg-aegis-bg px-4 py-12 text-aegis-text-primary bg-financial-grid bg-financial-radial selection:bg-aegis-accent selection:text-aegis-bg">
       <Suspense
         fallback={
-          <div className="w-full max-w-md rounded-2xl border border-aegis-border bg-aegis-surface p-8 text-center text-slate-300">
-            <ShieldCheck className="mx-auto h-8 w-8 text-sky-400" />
-            <p className="mt-3 text-sm">Loading authentication…</p>
+          <div className="w-full max-w-md border border-aegis-border bg-aegis-surface p-8 text-center font-mono text-xs text-aegis-text-muted shadow-panel">
+            <ShieldCheck className="mx-auto h-6 w-6 text-aegis-accent animate-pulse" />
+            <p className="mt-3">VERIFYING OPERATOR CREDENTIALS…</p>
           </div>
         }
       >

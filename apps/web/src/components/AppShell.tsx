@@ -20,21 +20,52 @@ import {
   Wallet,
   X,
   AlertCircle,
+  ExternalLink,
 } from "lucide-react";
 import { apiRequest } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 
-const NAV_ITEMS = [
-  { href: "/dashboard", label: "Overview", icon: Activity },
-  { href: "/onboarding", label: "Setup Wizard", icon: Compass },
-  { href: "/agents", label: "Agents & Merchants", icon: Bot },
-  { href: "/passports", label: "Passports & Budgets", icon: Wallet },
-  { href: "/payments", label: "Payments & Approvals", icon: CreditCard },
-  { href: "/ghostpay", label: "GhostPay Replay", icon: FileSearch },
-  { href: "/disputes", label: "DisputeOS", icon: Scale },
-  { href: "/audit", label: "Audit Log", icon: History },
-  { href: "/developer", label: "Developer Portal", icon: Code2 },
-  { href: "/settings", label: "Settings", icon: Settings },
+interface NavGroup {
+  label: string;
+  items: {
+    href: string;
+    label: string;
+    icon: React.ComponentType<{ className?: string }>;
+    code?: string;
+  }[];
+}
+
+const NAV_GROUPS: NavGroup[] = [
+  {
+    label: "PLATFORM CORE",
+    items: [
+      { href: "/dashboard", label: "Overview", icon: Activity, code: "00" },
+      { href: "/onboarding", label: "Setup Wizard", icon: Compass, code: "WIZ" },
+    ],
+  },
+  {
+    label: "GUARDIAN CONTROLS",
+    items: [
+      { href: "/agents", label: "Agents & Merchants", icon: Bot, code: "AGT" },
+      { href: "/passports", label: "Passports & Budgets", icon: Wallet, code: "PAS" },
+      { href: "/payments", label: "Payments & Approvals", icon: CreditCard, code: "PAY" },
+    ],
+  },
+  {
+    label: "FORENSICS & EVIDENCE",
+    items: [
+      { href: "/ghostpay", label: "GhostPay Replay", icon: FileSearch, code: "GHO" },
+      { href: "/disputes", label: "DisputeOS Workspace", icon: Scale, code: "DSP" },
+      { href: "/audit", label: "Chained Audit Log", icon: History, code: "AUD" },
+    ],
+  },
+  {
+    label: "CONFIGURATION",
+    items: [
+      { href: "/developer", label: "Developer Portal", icon: Code2, code: "DEV" },
+      { href: "/settings", label: "Settings & Access", icon: Settings, code: "SET" },
+    ],
+  },
 ];
 
 export function AppShell({
@@ -69,10 +100,10 @@ export function AppShell({
 
   if (loading || !session) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-aegis-bg text-slate-300">
-        <div className="flex items-center gap-3 rounded-xl border border-aegis-border bg-aegis-surface px-5 py-4 text-sm">
-          <ShieldCheck className="h-5 w-5 text-sky-400" />
-          <span>Verifying AEGIS session…</span>
+      <div className="flex min-h-screen items-center justify-center bg-aegis-bg text-aegis-text-muted">
+        <div className="flex items-center gap-3 border border-aegis-border bg-aegis-surface px-5 py-4 font-mono text-xs shadow-editorial">
+          <ShieldCheck className="h-4 w-4 text-aegis-accent animate-pulse" />
+          <span>AUTHENTICATING OPERATOR SESSION…</span>
         </div>
       </div>
     );
@@ -89,7 +120,6 @@ export function AppShell({
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to switch organization";
       setSwitcherError(msg);
-      // Auto-clear after 6 seconds
       setTimeout(() => setSwitcherError(null), 6000);
     }
   }
@@ -106,7 +136,6 @@ export function AppShell({
       setShowCreateOrgModal(false);
       setNewOrgName("");
       setNewOrgSlug("");
-      // Switch to newly created organization
       await switchOrganization(created.id);
     } catch (err) {
       setCreateOrgError(err instanceof Error ? err.message : "Failed to create organization");
@@ -116,10 +145,10 @@ export function AppShell({
   }
 
   return (
-    <div className="min-h-screen bg-aegis-bg text-slate-100">
+    <div className="min-h-screen bg-aegis-bg text-aegis-text-primary selection:bg-aegis-accent selection:text-aegis-bg">
       <a
         href="#main-content"
-        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-sky-500 focus:px-4 focus:py-2 focus:font-semibold focus:text-slate-950"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:border focus:border-aegis-accent focus:bg-aegis-accent focus:px-4 focus:py-2 focus:font-mono focus:text-xs focus:font-semibold focus:text-aegis-bg"
       >
         Skip to main content
       </a>
@@ -129,14 +158,14 @@ export function AppShell({
         <div
           role="alert"
           aria-live="assertive"
-          className="fixed bottom-4 right-4 z-50 flex items-center gap-2.5 rounded-xl border border-rose-500/50 bg-rose-950/90 px-4 py-3 text-xs text-rose-200 shadow-xl backdrop-blur"
+          className="fixed bottom-4 right-4 z-50 flex items-center gap-2.5 border border-[#4A2828] bg-[#211212] px-4 py-3 font-mono text-xs text-[#EF5350] shadow-panel backdrop-blur"
         >
-          <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
+          <AlertCircle className="h-4 w-4 shrink-0 text-[#EF5350]" />
           <span>{switcherError}</span>
           <button
             type="button"
             onClick={() => setSwitcherError(null)}
-            className="ml-2 text-rose-400 hover:text-white"
+            className="ml-2 text-[#EF5350] hover:text-white"
           >
             <X className="h-3.5 w-3.5" />
           </button>
@@ -146,63 +175,91 @@ export function AppShell({
       <div className="flex min-h-screen">
         {/* Desktop Sidebar */}
         <aside className="hidden w-64 shrink-0 flex-col border-r border-aegis-border bg-aegis-surface lg:flex">
-          <div className="flex items-center gap-2.5 border-b border-aegis-border px-5 py-4">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-sky-500/15 text-sky-400 ring-1 ring-sky-400/30">
-              <ShieldCheck className="h-5 w-5" />
+          {/* Brand header */}
+          <div className="flex items-center gap-3 border-b border-aegis-border px-5 py-4">
+            <div className="flex h-8 w-8 items-center justify-center border border-aegis-accent/40 bg-aegis-accent/10 text-aegis-accent">
+              <ShieldCheck className="h-4 w-4" />
             </div>
             <div>
-              <div className="text-sm font-bold tracking-wide text-white">AEGIS</div>
-              <div className="text-[11px] text-slate-400">Financial Black Box</div>
+              <div className="flex items-center gap-1.5">
+                <span className="font-mono text-sm font-bold tracking-wider text-aegis-text-primary">AEGIS</span>
+                <span className="border border-aegis-border-active bg-aegis-card px-1 py-0.2 font-mono text-[9px] text-aegis-text-muted">
+                  OS
+                </span>
+              </div>
+              <div className="font-mono text-[10px] text-aegis-text-faint tracking-tight">FINANCIAL CONTROL</div>
             </div>
           </div>
 
-          <nav aria-label="Primary navigation" className="flex-1 space-y-1 p-3">
-            {NAV_ITEMS.map((item) => {
-              const Icon = item.icon;
-              const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  aria-current={active ? "page" : undefined}
-                  className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition ${
-                    active
-                      ? "bg-sky-500/15 text-sky-300 ring-1 ring-sky-400/30"
-                      : "text-slate-300 hover:bg-slate-800/70 hover:text-white"
-                  }`}
-                >
-                  <Icon className="h-4 w-4 shrink-0" />
-                  <span>{item.label}</span>
-                </Link>
-              );
-            })}
+          {/* Navigation Groups */}
+          <nav aria-label="Primary navigation" className="flex-1 space-y-6 overflow-y-auto px-3 py-4">
+            {NAV_GROUPS.map((group) => (
+              <div key={group.label}>
+                <div className="px-2.5 pb-1.5 font-mono text-[9px] font-semibold uppercase tracking-widest text-aegis-text-faint">
+                  {group.label}
+                </div>
+                <div className="space-y-0.5">
+                  {group.items.map((item) => {
+                    const Icon = item.icon;
+                    const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        aria-current={active ? "page" : undefined}
+                        className={`group flex items-center justify-between rounded-[2px] px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                          active
+                            ? "border-l-2 border-aegis-accent bg-aegis-secondary text-aegis-text-primary pl-2 font-semibold"
+                            : "text-aegis-text-muted hover:bg-aegis-card hover:text-aegis-text-primary"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <Icon
+                            className={`h-3.5 w-3.5 shrink-0 transition-colors ${
+                              active ? "text-aegis-accent" : "text-aegis-text-muted group-hover:text-aegis-text-primary"
+                            }`}
+                          />
+                          <span>{item.label}</span>
+                        </div>
+                        {item.code && (
+                          <span className="font-mono text-[9px] text-aegis-text-faint group-hover:text-aegis-text-muted">
+                            {item.code}
+                          </span>
+                        )}
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </nav>
 
-          {/* Quick links & user panel */}
-          <div className="border-t border-aegis-border p-3 text-[11px] text-slate-400">
-            <div className="flex items-center justify-between px-2 py-1">
-              <Link href="/status" className="hover:text-sky-300">
-                System Status
-              </Link>
-              <Link href="/legal/terms" className="hover:text-sky-300">
-                Legal & DPA
-              </Link>
-            </div>
+          {/* Subsystem & Status Bar */}
+          <div className="border-t border-aegis-border px-4 py-2.5 font-mono text-[10px] text-aegis-text-faint flex items-center justify-between">
+            <Link href="/status" className="flex items-center gap-1.5 hover:text-aegis-accent transition-colors">
+              <span className="h-1.5 w-1.5 rounded-full bg-aegis-accent animate-pulse" />
+              <span>CORE ACTIVE</span>
+            </Link>
+            <Link href="/legal/terms" className="hover:text-aegis-text-primary transition-colors flex items-center gap-1">
+              <span>LEGAL</span>
+              <ExternalLink className="h-2.5 w-2.5" />
+            </Link>
           </div>
 
-          <div className="border-t border-aegis-border p-4 text-xs text-slate-400">
-            <div className="truncate font-medium text-slate-200">{session.email}</div>
-            <div className="mt-1 flex items-center justify-between">
-              <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[11px] text-sky-300">
+          {/* Operator Profile */}
+          <div className="border-t border-aegis-border bg-aegis-card/80 p-3.5">
+            <div className="truncate font-mono text-xs font-medium text-aegis-text-primary">{session.email}</div>
+            <div className="mt-2 flex items-center justify-between">
+              <span className="border border-[#3A4A28] bg-[#162112] px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-aegis-accent">
                 {session.active_role}
               </span>
               <button
                 type="button"
                 onClick={logout}
-                className="inline-flex items-center gap-1 text-slate-300 hover:text-rose-300"
+                className="inline-flex items-center gap-1 font-mono text-[11px] text-aegis-text-muted hover:text-[#EF5350] transition-colors"
               >
-                <LogOut className="h-3.5 w-3.5" />
-                Sign out
+                <LogOut className="h-3 w-3" />
+                <span>EXIT</span>
               </button>
             </div>
           </div>
@@ -210,59 +267,66 @@ export function AppShell({
 
         {/* Main Column */}
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-3 border-b border-aegis-border bg-aegis-bg/90 px-4 py-3 backdrop-blur lg:px-8">
+          {/* Top Bar */}
+          <header className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-3 border-b border-aegis-border bg-aegis-bg/95 px-4 py-3 backdrop-blur-md lg:px-8">
             <div className="flex items-center gap-3">
               <button
                 type="button"
                 aria-label="Open navigation menu"
                 aria-expanded={mobileNavOpen}
                 onClick={() => setMobileNavOpen((prev) => !prev)}
-                className="rounded-lg border border-aegis-border bg-aegis-surface p-2 text-slate-200 lg:hidden"
+                className="border border-aegis-border bg-aegis-surface p-1.5 text-aegis-text-muted hover:text-aegis-text-primary lg:hidden"
               >
-                {mobileNavOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+                {mobileNavOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
               </button>
               <div>
-                <h1 className="text-lg font-semibold text-white">{title}</h1>
-                {subtitle && <p className="text-xs text-slate-400">{subtitle}</p>}
+                <h1 className="text-base font-semibold tracking-tight text-aegis-text-primary sm:text-lg">{title}</h1>
+                {subtitle && <p className="font-mono text-xs text-aegis-text-muted">{subtitle}</p>}
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <label htmlFor="org-switcher" className="sr-only">
-                Active Organization
-              </label>
-              <select
-                id="org-switcher"
-                value={session.active_tenant_id}
-                onChange={(e) => void handleSwitch(e.target.value)}
-                className="rounded-lg border border-aegis-border bg-aegis-surface px-3 py-1.5 text-xs text-slate-100"
-              >
-                {session.organizations.map((org) => (
-                  <option key={org.id} value={org.id}>
-                    {org.name} ({org.role})
-                  </option>
-                ))}
-              </select>
+            <div className="flex items-center gap-2.5">
+              <div className="flex items-center border border-aegis-border bg-aegis-surface px-2 py-1">
+                <span className="font-mono text-[10px] uppercase tracking-wider text-aegis-text-faint mr-2 hidden sm:inline">
+                  TENANT:
+                </span>
+                <label htmlFor="org-switcher" className="sr-only">
+                  Active Organization
+                </label>
+                <select
+                  id="org-switcher"
+                  value={session.active_tenant_id}
+                  onChange={(e) => void handleSwitch(e.target.value)}
+                  className="bg-transparent font-mono text-xs text-aegis-text-primary focus:outline-none cursor-pointer"
+                >
+                  {session.organizations.map((org) => (
+                    <option key={org.id} value={org.id} className="bg-aegis-surface text-aegis-text-primary">
+                      {org.name} [{org.role}]
+                    </option>
+                  ))}
+                </select>
+              </div>
 
               <button
                 type="button"
                 title="Create New Organization"
                 onClick={() => setShowCreateOrgModal(true)}
-                className="inline-flex items-center gap-1 rounded-lg border border-aegis-border bg-aegis-surface px-2.5 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-800 hover:text-sky-300"
+                className="inline-flex items-center gap-1.5 border border-aegis-border bg-aegis-surface px-2.5 py-1.5 font-mono text-xs text-aegis-text-muted hover:border-aegis-border-active hover:text-aegis-accent transition-colors"
               >
                 <PlusCircle className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">New Org</span>
+                <span className="hidden sm:inline">NEW TENANT</span>
               </button>
             </div>
           </header>
 
+          {/* Mobile Navigation Drawer */}
           {mobileNavOpen && (
             <nav
               aria-label="Mobile navigation"
-              className="border-b border-aegis-border bg-aegis-surface p-3 lg:hidden"
+              className="border-b border-aegis-border bg-aegis-surface p-4 lg:hidden"
             >
-              <div className="grid grid-cols-2 gap-1.5">
-                {NAV_ITEMS.map((item) => {
+              <div className="grid grid-cols-2 gap-2">
+                {NAV_GROUPS.flatMap((g) => g.items).map((item) => {
                   const Icon = item.icon;
                   const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
                   return (
@@ -270,11 +334,13 @@ export function AppShell({
                       key={item.href}
                       href={item.href}
                       onClick={() => setMobileNavOpen(false)}
-                      className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm ${
-                        active ? "bg-sky-500/15 text-sky-300" : "text-slate-300 hover:bg-slate-800"
+                      className={`flex items-center gap-2 border px-2.5 py-2 text-xs font-mono transition-colors ${
+                        active
+                          ? "border-aegis-accent bg-aegis-secondary text-aegis-accent font-semibold"
+                          : "border-aegis-border bg-aegis-card text-aegis-text-muted hover:text-aegis-text-primary"
                       }`}
                     >
-                      <Icon className="h-4 w-4" />
+                      <Icon className="h-3.5 w-3.5" />
                       <span>{item.label}</span>
                     </Link>
                   );
@@ -283,32 +349,38 @@ export function AppShell({
             </nav>
           )}
 
+          {/* Main Content Body */}
           <main id="main-content" className="flex-1 p-4 lg:p-8">
             {children}
           </main>
         </div>
       </div>
 
-      {/* Organization Creation Modal (GAP-022) */}
+      {/* Organization Creation Modal */}
       {showCreateOrgModal && (
         <div
           role="dialog"
           aria-modal="true"
           aria-labelledby="create-org-modal-title"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
         >
-          <div className="w-full max-w-md rounded-2xl border border-aegis-border bg-aegis-panel p-6 text-slate-100 shadow-2xl">
+          <div className="w-full max-w-md border border-aegis-border bg-aegis-surface p-6 text-aegis-text-primary shadow-panel rounded-sm">
             <div className="flex items-center justify-between border-b border-aegis-border pb-3">
-              <h2 id="create-org-modal-title" className="text-base font-semibold text-white">
-                Create Organization
-              </h2>
+              <div>
+                <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-accent font-semibold">
+                  TENANT PROVISIONING
+                </span>
+                <h2 id="create-org-modal-title" className="mt-1 text-base font-semibold text-aegis-text-primary">
+                  Create Isolated Organization
+                </h2>
+              </div>
               <button
                 type="button"
                 onClick={() => {
                   setShowCreateOrgModal(false);
                   setCreateOrgError(null);
                 }}
-                className="text-slate-400 hover:text-white"
+                className="text-aegis-text-muted hover:text-aegis-text-primary"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -318,7 +390,7 @@ export function AppShell({
               <div
                 role="alert"
                 aria-live="assertive"
-                className="mt-4 rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-xs text-rose-200"
+                className="mt-4 border border-[#4A2828] bg-[#211212] px-4 py-3 font-mono text-xs text-[#EF5350]"
               >
                 {createOrgError}
               </div>
@@ -326,8 +398,8 @@ export function AppShell({
 
             <form onSubmit={(e) => void handleCreateOrg(e)} className="mt-4 space-y-4">
               <div>
-                <label htmlFor="modal-org-name" className="block text-xs font-medium text-slate-300">
-                  Organization Name <span aria-hidden="true">*</span>
+                <label htmlFor="modal-org-name" className="block font-mono text-xs uppercase tracking-wider text-aegis-text-muted">
+                  Organization Legal Name <span aria-hidden="true" className="text-aegis-accent">*</span>
                 </label>
                 <input
                   id="modal-org-name"
@@ -347,14 +419,14 @@ export function AppShell({
                       );
                     }
                   }}
-                  placeholder="Acme Financial Technologies"
-                  className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-surface px-3 py-2 text-xs text-white"
+                  placeholder="Acme Financial Infrastructure"
+                  className="mt-1.5 w-full border border-aegis-border bg-aegis-card px-3 py-2 font-mono text-xs text-aegis-text-primary placeholder:text-aegis-text-faint focus:border-aegis-accent focus:outline-none"
                 />
               </div>
 
               <div>
-                <label htmlFor="modal-org-slug" className="block text-xs font-medium text-slate-300">
-                  Organization Slug <span aria-hidden="true">*</span>
+                <label htmlFor="modal-org-slug" className="block font-mono text-xs uppercase tracking-wider text-aegis-text-muted">
+                  Tenant Identifier Slug <span aria-hidden="true" className="text-aegis-accent">*</span>
                 </label>
                 <input
                   id="modal-org-slug"
@@ -363,15 +435,15 @@ export function AppShell({
                   pattern={"^[a-z0-9\\-]+$"}
                   value={newOrgSlug}
                   onChange={(e) => setNewOrgSlug(e.target.value)}
-                  placeholder="acme-fintech"
-                  className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-surface px-3 py-2 text-xs text-white"
+                  placeholder="acme-infra"
+                  className="mt-1.5 w-full border border-aegis-border bg-aegis-card px-3 py-2 font-mono text-xs text-aegis-text-primary placeholder:text-aegis-text-faint focus:border-aegis-accent focus:outline-none"
                 />
-                <span className="mt-1 block text-[11px] text-slate-400">
-                  Unique subdomain / identifier for this workspace.
+                <span className="mt-1.5 block font-mono text-[10px] text-aegis-text-faint">
+                  Immutable namespace for budget isolation & ledger partitioning.
                 </span>
               </div>
 
-              <div className="flex justify-end gap-2 pt-2">
+              <div className="flex justify-end gap-2.5 pt-3 border-t border-aegis-border-subtle">
                 <button
                   type="button"
                   disabled={createOrgBusy}
@@ -379,16 +451,16 @@ export function AppShell({
                     setShowCreateOrgModal(false);
                     setCreateOrgError(null);
                   }}
-                  className="rounded-lg border border-aegis-border px-3.5 py-2 text-xs text-slate-300 hover:bg-slate-800"
+                  className="border border-aegis-border bg-aegis-card px-4 py-2 font-mono text-xs uppercase tracking-wider text-aegis-text-muted hover:text-aegis-text-primary hover:border-aegis-border-active"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={createOrgBusy}
-                  className="rounded-lg bg-sky-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50"
+                  className="border border-aegis-accent bg-aegis-accent px-4 py-2 font-mono text-xs font-bold uppercase tracking-wider text-aegis-bg hover:bg-aegis-accent-hover disabled:opacity-50"
                 >
-                  {createOrgBusy ? "Creating…" : "Create & Switch"}
+                  {createOrgBusy ? "Provisioning…" : "Provision & Switch"}
                 </button>
               </div>
             </form>

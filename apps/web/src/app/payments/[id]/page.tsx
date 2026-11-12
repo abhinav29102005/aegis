@@ -43,7 +43,7 @@ interface PaymentDetailPayload {
     id: string;
     status: string;
     approver_id: string | null;
-    decided_at: string | null; // Fixed from approved_at to decided_at
+    decided_at: string | null;
     comment: string | null;
   } | null;
   reservation: {
@@ -55,11 +55,11 @@ interface PaymentDetailPayload {
   attempts: Array<{
     id: string;
     attempt_number: number;
-    state: PaymentState; // Fixed from status: string to state: PaymentState
+    state: PaymentState;
     provider?: string;
     paypal_order_id: string | null;
     paypal_approval_url: string | null;
-    verified_capture: VerifiedPayPalCapture | null; // Fixed to verified_capture
+    verified_capture: VerifiedPayPalCapture | null;
     failure_code?: string | null;
     failure_reason?: string | null;
     created_at: string;
@@ -155,7 +155,6 @@ export default function PaymentDetailPage() {
         });
         setNotice("Buyer decline recorded. Payment attempt cancelled.");
       } else if (action === "capture") {
-        // Runs ONLY in CAPTURE_PENDING
         await apiRequest(`/v1/guardian/payments/${detail.payment_intent.id}/capture`, {
           method: "POST",
           token: session.access_token,
@@ -173,7 +172,7 @@ export default function PaymentDetailPage() {
           });
           setNotice("Refund initiated successfully.");
         } catch {
-          setNotice("Refund request recorded. If capture has settled, refund / dispute lifecycle will track settlement.");
+          setNotice("Refund request recorded. If capture has settled, refund lifecycle will track settlement.");
         }
       } else if (action === "reconcile") {
         await apiRequest(`/v1/guardian/payments/${detail.payment_intent.id}/reconcile`, {
@@ -197,14 +196,14 @@ export default function PaymentDetailPage() {
 
   return (
     <AppShell title="Payment Lifecycle & Evidence" subtitle={intent ? `Intent ${intent.id}` : "Loading payment intent..."}>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <Link href="/payments" className="text-xs font-medium text-sky-400 hover:underline">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2 font-mono text-xs">
+        <Link href="/payments" className="text-aegis-accent hover:underline">
           ← Back to Payments
         </Link>
         {intent && (
           <Link
             href={`/ghostpay/replay/${intent.id}`}
-            className="rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-1.5 text-xs font-semibold text-sky-300 hover:bg-sky-500/20"
+            className="rounded border border-aegis-accent/40 bg-aegis-accent/10 px-3 py-1.5 text-aegis-accent hover:bg-aegis-accent/20 transition"
           >
             Open in GhostPay Replay →
           </Link>
@@ -212,18 +211,18 @@ export default function PaymentDetailPage() {
       </div>
 
       {error && (
-        <div role="alert" className="mb-4 rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
-          {error}
+        <div role="alert" className="mb-4 rounded border border-aegis-rose/40 bg-aegis-rose/10 px-4 py-3 font-mono text-xs text-aegis-rose">
+          [FAULT] {error}
         </div>
       )}
       {notice && (
-        <div role="status" className="mb-4 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
-          {notice}
+        <div role="status" className="mb-4 rounded border border-aegis-accent/40 bg-aegis-accent/10 px-4 py-3 font-mono text-xs text-aegis-accent">
+          [OK] {notice}
         </div>
       )}
 
       {loading || !detail || !intent ? (
-        <div className="rounded-xl border border-aegis-border bg-aegis-surface p-6 text-sm text-slate-400">
+        <div className="rounded-xl border border-aegis-border bg-aegis-surface p-6 font-mono text-xs text-aegis-text-muted">
           Loading payment lifecycle…
         </div>
       ) : (
@@ -234,29 +233,29 @@ export default function PaymentDetailPage() {
               <div>
                 <div className="flex items-center gap-3">
                   <StatusBadge label={intent.state} />
-                  <span className="text-2xl font-bold text-white">
+                  <span className="font-mono text-2xl font-bold text-aegis-text-primary">
                     {formatMinorCurrency(intent.amount_minor, intent.currency)}
                   </span>
                 </div>
-                <p className="mt-1 text-xs text-slate-400">
-                  Correlation: <span className="font-mono text-slate-300">{intent.correlation_id}</span>
+                <p className="mt-1 font-mono text-xs text-aegis-text-muted">
+                  Correlation ID: <span className="text-aegis-text-primary">{intent.correlation_id}</span>
                 </p>
                 {activeAttempt && (
-                  <p className="mt-0.5 text-xs text-slate-400">
-                    Active Attempt #{activeAttempt.attempt_number}: <span className="font-semibold text-sky-300">{activeAttempt.state}</span>
+                  <p className="mt-0.5 font-mono text-xs text-aegis-text-muted">
+                    Active Attempt #{activeAttempt.attempt_number}: <span className="text-aegis-accent font-semibold">{activeAttempt.state}</span>
                   </p>
                 )}
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
-                {/* 1. Decline / Reject (approved: false) and Approve & Reserve Controls */}
+              <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
+                {/* 1. Decline / Reject and Approve & Reserve Controls */}
                 {intent.state === "AWAITING_APPROVAL" && hasPermission("approvals:decide") && (
                   <>
                     <button
                       type="button"
                       disabled={busyAction !== null}
                       onClick={() => setConfirmAction("approve")}
-                      className="rounded-lg bg-amber-400 px-3.5 py-2 text-xs font-semibold text-slate-950 hover:bg-amber-300 disabled:opacity-50"
+                      className="rounded bg-aegis-accent px-3.5 py-2 font-semibold uppercase tracking-wider text-[#111513] hover:bg-[#c8e562] transition disabled:opacity-50"
                     >
                       Approve & Reserve
                     </button>
@@ -264,9 +263,9 @@ export default function PaymentDetailPage() {
                       type="button"
                       disabled={busyAction !== null}
                       onClick={() => setConfirmAction("reject")}
-                      className="rounded-lg border border-rose-500/50 bg-rose-500/15 px-3.5 py-2 text-xs font-semibold text-rose-200 hover:bg-rose-500/25 disabled:opacity-50"
+                      className="rounded border border-aegis-rose/40 bg-aegis-rose/10 px-3.5 py-2 font-semibold uppercase tracking-wider text-aegis-rose hover:bg-aegis-rose/20 transition disabled:opacity-50"
                     >
-                      Decline / Reject
+                      Decline Proposal
                     </button>
                   </>
                 )}
@@ -277,7 +276,7 @@ export default function PaymentDetailPage() {
                     type="button"
                     disabled={busyAction !== null}
                     onClick={() => void runAction("checkout")}
-                    className="rounded-lg bg-sky-500 px-3.5 py-2 text-xs font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50"
+                    className="rounded bg-aegis-accent px-3.5 py-2 font-semibold uppercase tracking-wider text-[#111513] hover:bg-[#c8e562] transition disabled:opacity-50"
                   >
                     {busyAction === "checkout" ? "Initiating…" : "Initiate Checkout"}
                   </button>
@@ -289,7 +288,7 @@ export default function PaymentDetailPage() {
                     href={activeAttempt.paypal_approval_url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-sky-400/50 bg-sky-500/20 px-3.5 py-2 text-xs font-semibold text-sky-200 hover:bg-sky-500/30"
+                    className="inline-flex items-center gap-1.5 rounded border border-aegis-copper/50 bg-aegis-copper/15 px-3.5 py-2 font-semibold uppercase tracking-wider text-aegis-copper hover:bg-aegis-copper/25 transition"
                   >
                     <span>Proceed to PayPal Checkout</span>
                     <span aria-hidden="true">↗</span>
@@ -304,7 +303,7 @@ export default function PaymentDetailPage() {
                         type="button"
                         disabled={busyAction !== null}
                         onClick={() => void runAction("buyer-approved")}
-                        className="rounded-lg border border-sky-400/50 bg-sky-500/15 px-3.5 py-2 text-xs font-semibold text-sky-200 hover:bg-sky-500/25 disabled:opacity-50"
+                        className="rounded border border-aegis-accent/40 bg-aegis-accent/15 px-3.5 py-2 font-semibold uppercase tracking-wider text-aegis-accent hover:bg-aegis-accent/25 transition disabled:opacity-50"
                       >
                         {busyAction === "buyer-approved" ? "Recording…" : "Mark Buyer Approved"}
                       </button>
@@ -312,12 +311,12 @@ export default function PaymentDetailPage() {
                         type="button"
                         disabled={busyAction !== null}
                         onClick={() => setConfirmAction("buyer-declined")}
-                        className="rounded-lg border border-rose-500/50 bg-rose-500/15 px-3.5 py-2 text-xs font-semibold text-rose-200 hover:bg-rose-500/25 disabled:opacity-50"
+                        className="rounded border border-aegis-rose/40 bg-aegis-rose/10 px-3.5 py-2 font-semibold uppercase tracking-wider text-aegis-rose hover:bg-aegis-rose/20 transition disabled:opacity-50"
                       >
                         Buyer Declined
                       </button>
                     </>
-                )}
+                  )}
 
                 {/* 5. Render Capture button ONLY when attempt.state === "CAPTURE_PENDING" */}
                 {activeAttempt?.state === "CAPTURE_PENDING" && hasPermission("payments:capture") && (
@@ -325,7 +324,7 @@ export default function PaymentDetailPage() {
                     type="button"
                     disabled={busyAction !== null}
                     onClick={() => setConfirmAction("capture")}
-                    className="rounded-lg bg-emerald-500 px-3.5 py-2 text-xs font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-50"
+                    className="rounded bg-aegis-accent px-3.5 py-2 font-semibold uppercase tracking-wider text-[#111513] hover:bg-[#c8e562] transition disabled:opacity-50"
                   >
                     Capture Payment
                   </button>
@@ -338,11 +337,11 @@ export default function PaymentDetailPage() {
                       type="button"
                       disabled={busyAction !== null}
                       onClick={() => setConfirmAction("refund")}
-                      className="rounded-lg border border-purple-500/50 bg-purple-500/15 px-3.5 py-2 text-xs font-semibold text-purple-200 hover:bg-purple-500/25 disabled:opacity-50"
+                      className="rounded border border-aegis-rose/40 bg-aegis-rose/10 px-3.5 py-2 font-semibold uppercase tracking-wider text-aegis-rose hover:bg-aegis-rose/20 transition disabled:opacity-50"
                     >
                       Refund Payment
                     </button>
-                )}
+                  )}
 
                 {/* 7. Reconcile Pending */}
                 {(intent.state === "PENDING_PROVIDER" || activeAttempt?.state === "PENDING_PROVIDER") &&
@@ -351,11 +350,11 @@ export default function PaymentDetailPage() {
                       type="button"
                       disabled={busyAction !== null}
                       onClick={() => void runAction("reconcile")}
-                      className="rounded-lg border border-amber-400/50 bg-amber-500/15 px-3.5 py-2 text-xs font-semibold text-amber-200 hover:bg-amber-500/25 disabled:opacity-50"
+                      className="rounded border border-aegis-copper/40 bg-aegis-copper/10 px-3.5 py-2 font-semibold uppercase tracking-wider text-aegis-copper hover:bg-aegis-copper/20 transition disabled:opacity-50"
                     >
                       Reconcile Pending
                     </button>
-                )}
+                  )}
               </div>
             </div>
           </section>
@@ -363,47 +362,53 @@ export default function PaymentDetailPage() {
           {/* Evidence & Governance Grid */}
           <div className="grid gap-6 lg:grid-cols-2">
             <section className="rounded-xl border border-aegis-border bg-aegis-surface p-5">
-              <h2 className="text-sm font-semibold text-white">Proposal & Immutable Quote</h2>
+              <div className="border-b border-aegis-border pb-3">
+                <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-accent">[PROPOSAL SNAPSHOT // QUOTE]</span>
+                <h2 className="text-sm font-semibold tracking-wide text-aegis-text-primary">Proposal & Deterministic Quote</h2>
+              </div>
               {detail.proposal ? (
-                <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
+                <dl className="mt-4 grid grid-cols-2 gap-3 text-xs">
                   <div>
-                    <dt className="text-slate-400">Merchant</dt>
-                    <dd className="mt-0.5 font-medium text-white">{detail.proposal.merchant_name}</dd>
+                    <dt className="font-mono text-[11px] uppercase tracking-wider text-aegis-text-muted">Merchant</dt>
+                    <dd className="mt-0.5 font-medium text-aegis-text-primary">{detail.proposal.merchant_name}</dd>
                   </div>
                   <div>
-                    <dt className="text-slate-400">Category</dt>
-                    <dd className="mt-0.5 font-medium text-white">{detail.proposal.merchant_category}</dd>
+                    <dt className="font-mono text-[11px] uppercase tracking-wider text-aegis-text-muted">Category</dt>
+                    <dd className="mt-0.5 font-mono text-aegis-text-primary">{detail.proposal.merchant_category}</dd>
                   </div>
                   <div className="col-span-2">
-                    <dt className="text-slate-400">Item Summary</dt>
-                    <dd className="mt-0.5 text-slate-200">{detail.proposal.item_summary}</dd>
+                    <dt className="font-mono text-[11px] uppercase tracking-wider text-aegis-text-muted">Item Summary</dt>
+                    <dd className="mt-0.5 text-aegis-text-primary">{detail.proposal.item_summary}</dd>
                   </div>
                   <div className="col-span-2">
-                    <dt className="text-slate-400">Rationale</dt>
-                    <dd className="mt-0.5 text-slate-300">{detail.proposal.rationale}</dd>
+                    <dt className="font-mono text-[11px] uppercase tracking-wider text-aegis-text-muted">Rationale</dt>
+                    <dd className="mt-0.5 text-aegis-text-muted">{detail.proposal.rationale}</dd>
                   </div>
                   <div className="col-span-2">
-                    <dt className="text-slate-400">Quote SHA-256</dt>
-                    <dd className="mt-0.5 break-all font-mono text-[11px] text-slate-300">{intent.quote_hash}</dd>
+                    <dt className="font-mono text-[11px] uppercase tracking-wider text-aegis-text-muted">Quote SHA-256</dt>
+                    <dd className="mt-0.5 break-all font-mono text-[11px] text-aegis-accent">{intent.quote_hash}</dd>
                   </div>
                 </dl>
               ) : (
-                <p className="mt-2 text-xs text-slate-400">Proposal snapshot unavailable.</p>
+                <p className="mt-3 font-mono text-xs text-aegis-text-muted">Proposal snapshot unavailable.</p>
               )}
             </section>
 
             <section className="rounded-xl border border-aegis-border bg-aegis-surface p-5">
-              <h2 className="text-sm font-semibold text-white">Policy Decision, Approval & Reservation</h2>
-              <div className="mt-3 space-y-3 text-xs">
+              <div className="border-b border-aegis-border pb-3">
+                <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-copper">[POLICY ENGINE // VERDICT]</span>
+                <h2 className="text-sm font-semibold tracking-wide text-aegis-text-primary">Decision, Approval & Reservation</h2>
+              </div>
+              <div className="mt-4 space-y-3 text-xs">
                 {detail.decision && (
-                  <div className="rounded-lg border border-aegis-border bg-aegis-panel p-3">
+                  <div className="rounded border border-aegis-border bg-aegis-card p-3">
                     <div className="flex items-center justify-between">
-                      <span className="font-medium text-slate-200">Policy Outcome ({detail.decision.policy_version})</span>
+                      <span className="font-mono font-medium text-aegis-text-primary">Policy Verdict ({detail.decision.policy_version})</span>
                       <StatusBadge label={detail.decision.outcome} />
                     </div>
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {detail.decision.reason_codes.map((rc) => (
-                        <span key={rc} className="rounded bg-slate-800 px-2 py-0.5 font-mono text-[11px] text-slate-300">
+                        <span key={rc} className="rounded border border-aegis-border bg-aegis-surface px-2 py-0.5 font-mono text-[11px] text-aegis-text-muted">
                           {rc}
                         </span>
                       ))}
@@ -411,28 +416,28 @@ export default function PaymentDetailPage() {
                   </div>
                 )}
                 {detail.approval && (
-                  <div className="rounded-lg border border-aegis-border bg-aegis-panel p-3">
+                  <div className="rounded border border-aegis-border bg-aegis-card p-3">
                     <div className="flex items-center justify-between">
-                      <span className="font-medium text-slate-200">Human Approval</span>
+                      <span className="font-mono font-medium text-aegis-text-primary">Human Approval Record</span>
                       <StatusBadge label={detail.approval.status} />
                     </div>
-                    <p className="mt-1 text-slate-400">
+                    <p className="mt-1 font-mono text-xs text-aegis-text-muted">
                       Approver: {detail.approval.approver_id ?? "Pending"} · {formatIsoDateTime(detail.approval.decided_at)}
                     </p>
                     {detail.approval.comment && (
-                      <p className="mt-1 text-xs text-slate-300 italic">
+                      <p className="mt-1 text-xs italic text-aegis-text-primary">
                         &ldquo;{detail.approval.comment}&rdquo;
                       </p>
                     )}
                   </div>
                 )}
                 {detail.reservation && (
-                  <div className="rounded-lg border border-aegis-border bg-aegis-panel p-3">
+                  <div className="rounded border border-aegis-border bg-aegis-card p-3">
                     <div className="flex items-center justify-between">
-                      <span className="font-medium text-slate-200">Budget Reservation</span>
+                      <span className="font-mono font-medium text-aegis-text-primary">Budget Reservation</span>
                       <StatusBadge label={detail.reservation.status} />
                     </div>
-                    <p className="mt-1 text-slate-300">
+                    <p className="mt-1 font-mono text-xs text-aegis-accent font-semibold">
                       {formatMinorCurrency(detail.reservation.amount_minor, detail.reservation.currency)}
                     </p>
                   </div>
@@ -444,48 +449,49 @@ export default function PaymentDetailPage() {
           {/* Accessible PayPal Checkout Attempts Table */}
           <section className="rounded-xl border border-aegis-border bg-aegis-surface">
             <div className="border-b border-aegis-border px-5 py-3">
-              <h2 id="attempts-table-caption" className="text-sm font-semibold text-white">
-                PayPal Checkout Attempts ({detail.attempts.length})
+              <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-accent">[EXECUTION ATTEMPTS // PAYPAL]</span>
+              <h2 id="attempts-table-caption" className="text-sm font-semibold tracking-wide text-aegis-text-primary">
+                Checkout Attempts ({detail.attempts.length})
               </h2>
             </div>
             <div tabIndex={0} role="region" aria-labelledby="attempts-table-caption" className="table-wrapper">
-              <table className="aegis-table w-full text-left text-sm">
+              <table className="aegis-table w-full text-left text-xs">
                 <caption id="attempts-table-caption" className="sr-only">Payment checkout attempts</caption>
-                <thead className="border-b border-aegis-border bg-aegis-panel/60 text-xs uppercase text-slate-400">
+                <thead>
                   <tr>
-                    <th scope="col" className="px-4 py-2.5">#</th>
-                    <th scope="col" className="px-4 py-2.5">State</th>
-                    <th scope="col" className="px-4 py-2.5">PayPal Order</th>
-                    <th scope="col" className="px-4 py-2.5">Capture ID</th>
-                    <th scope="col" className="px-4 py-2.5">Approval Link</th>
-                    <th scope="col" className="px-4 py-2.5">Created</th>
+                    <th scope="col">#</th>
+                    <th scope="col">State</th>
+                    <th scope="col">PayPal Order</th>
+                    <th scope="col">Capture ID</th>
+                    <th scope="col">Approval Link</th>
+                    <th scope="col">Created</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-aegis-border">
+                <tbody>
                   {detail.attempts.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="px-4 py-4 text-center text-xs text-slate-400">
+                      <td colSpan={6} className="py-4 text-center font-mono text-aegis-text-muted">
                         No checkout attempts initiated yet.
                       </td>
                     </tr>
                   ) : (
                     detail.attempts.map((a) => (
                       <tr key={a.id}>
-                        <td className="px-4 py-2.5 font-mono text-xs text-slate-300">{a.attempt_number}</td>
-                        <td className="px-4 py-2.5">
+                        <td className="font-mono text-aegis-text-muted">{a.attempt_number}</td>
+                        <td>
                           <StatusBadge label={a.state} />
                         </td>
-                        <td className="px-4 py-2.5 font-mono text-xs text-slate-300">{a.paypal_order_id ?? "—"}</td>
-                        <td className="px-4 py-2.5 font-mono text-xs text-slate-300">
+                        <td className="font-mono text-aegis-text-primary">{a.paypal_order_id ?? "—"}</td>
+                        <td className="font-mono text-aegis-accent font-semibold">
                           {a.verified_capture?.paypal_capture_id ?? "—"}
                         </td>
-                        <td className="px-4 py-2.5 text-xs text-sky-400">
+                        <td className="font-mono text-xs">
                           {a.paypal_approval_url ? (
                             <a
                               href={a.paypal_approval_url}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 hover:underline text-sky-300"
+                              className="inline-flex items-center gap-1 text-aegis-copper hover:underline"
                             >
                               <span>Checkout ↗</span>
                             </a>
@@ -493,7 +499,7 @@ export default function PaymentDetailPage() {
                             "—"
                           )}
                         </td>
-                        <td className="px-4 py-2.5 text-xs text-slate-400">{formatIsoDateTime(a.created_at)}</td>
+                        <td className="font-mono text-aegis-text-faint">{formatIsoDateTime(a.created_at)}</td>
                       </tr>
                     ))
                   )}
@@ -505,18 +511,24 @@ export default function PaymentDetailPage() {
           {/* Financial Event Timeline */}
           <section className="rounded-xl border border-aegis-border bg-aegis-surface">
             <div className="border-b border-aegis-border px-5 py-3">
-              <h2 className="text-sm font-semibold text-white">Hash-Chained Financial Events ({detail.events.length})</h2>
+              <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-accent">[TAMPER-EVIDENT // HASH CHAIN]</span>
+              <h2 className="text-sm font-semibold tracking-wide text-aegis-text-primary">
+                Chained Financial Events ({detail.events.length})
+              </h2>
             </div>
             <div className="divide-y divide-aegis-border">
               {detail.events.map((ev) => (
-                <div key={ev.id} className="flex flex-wrap items-center justify-between gap-2 px-5 py-3 text-xs">
+                <div key={ev.id} className="flex flex-wrap items-center justify-between gap-2 px-5 py-3 font-mono text-xs">
                   <div>
-                    <span className="font-mono text-slate-400">#{ev.sequence_number}</span>{" "}
-                    <span className="font-semibold text-white">{ev.event_type}</span>{" "}
-                    <span className="text-slate-400">by {ev.actor_id}</span>
+                    <span className="rounded bg-aegis-card border border-aegis-border px-1.5 py-0.5 text-aegis-accent font-bold">
+                      #{ev.sequence_number}
+                    </span>{" "}
+                    <span className="font-semibold text-aegis-text-primary ml-1.5">{ev.event_type}</span>{" "}
+                    <span className="text-aegis-text-muted">by {ev.actor_id}</span>
                   </div>
-                  <div className="font-mono text-[11px] text-slate-400">
-                    hash: {truncateId(ev.event_hash, 16)} · {formatIsoDateTime(ev.occurred_at)}
+                  <div className="text-[11px] text-aegis-text-muted">
+                    hash: <span className="text-aegis-accent">{truncateId(ev.event_hash, 16)}</span> ·{" "}
+                    <span className="text-aegis-text-faint">{formatIsoDateTime(ev.occurred_at)}</span>
                   </div>
                 </div>
               ))}

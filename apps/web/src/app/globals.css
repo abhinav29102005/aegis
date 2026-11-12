@@ -4,18 +4,48 @@
 
 :root {
   color-scheme: dark;
+  --aegis-bg: #111513;
+  --aegis-surface: #1B211D;
+  --aegis-secondary: #222A24;
+  --aegis-card: #161C18;
+  --aegis-border: #28332B;
+  --aegis-border-subtle: #1E2620;
+  --aegis-accent: #D7F17B;
+  --aegis-copper: #D58A62;
+  --aegis-text-primary: #F2F1E9;
+  --aegis-text-muted: #A8B1A9;
 }
 
 body {
-  background-color: #090d16;
-  color: #e5edf7;
-  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background-color: var(--aegis-bg);
+  color: var(--aegis-text-primary);
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   line-height: 1.5;
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* Visible keyboard focus ring across interactive controls */
+::selection {
+  background-color: #D7F17B;
+  color: #111513;
+}
+
+/* Precision Grid lines & subtle technical background */
+.bg-financial-grid {
+  background-image:
+    linear-gradient(to right, rgba(40, 51, 43, 0.4) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(40, 51, 43, 0.4) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+.bg-financial-radial {
+  background-image: radial-gradient(circle at 50% 0%, rgba(215, 241, 123, 0.04) 0%, transparent 70%);
+}
+
+/* Visible keyboard focus ring across interactive controls with Acid Lime accent */
 :is(a, button, input, select, textarea, [tabindex]):focus-visible {
-  outline: 2px solid #38bdf8;
+  outline: 2px solid #D7F17B;
   outline-offset: 2px;
 }
 
@@ -27,8 +57,8 @@ dialog:modal {
 }
 
 dialog::backdrop {
-  background: rgb(4 7 15 / 72%);
-  backdrop-filter: blur(4px);
+  background: rgba(8, 11, 9, 0.82);
+  backdrop-filter: blur(6px);
   overflow: hidden;
   overscroll-behavior: contain;
 }
@@ -37,59 +67,88 @@ dialog::backdrop {
 input:user-invalid,
 textarea:user-invalid,
 select:user-invalid {
-  border-color: #f43f5e;
+  border-color: #EF5350;
 }
 
 /* Responsive accessible table wrapper with sticky header */
 .table-wrapper {
   overflow: auto;
   max-inline-size: 100%;
-  max-block-size: min(560px, 75vh);
+  max-block-size: min(580px, 75vh);
   container-type: inline-size;
-  border: 1px solid #253149;
-  border-radius: 0.75rem;
-  background-color: #111827;
+  border: 1px solid #28332B;
+  border-radius: 0.375rem;
+  background-color: #1B211D;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.4);
 }
 
 .aegis-table {
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
 }
 
 .aegis-table thead {
   position: sticky;
   inset-block-start: 0;
   z-index: 2;
-  background-color: #161f31;
+  background-color: #161C18;
 }
 
 .aegis-table th {
   text-align: start;
   font-weight: 600;
-  color: #94a3b8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #A8B1A9;
   padding: 0.75rem 1rem;
-  border-bottom: 1px solid #253149;
+  border-bottom: 1px solid #28332B;
   white-space: nowrap;
 }
 
 .aegis-table td {
   padding: 0.75rem 1rem;
-  border-bottom: 1px solid #1e293b;
-  vertical-align: top;
+  border-bottom: 1px solid #1E2620;
+  color: #F2F1E9;
+  vertical-align: middle;
+}
+
+.aegis-table tbody tr {
+  transition: background-color 0.1s ease;
 }
 
 .aegis-table tbody tr:hover {
-  background-color: rgb(30 41 59 / 45%);
+  background-color: #222A24;
 }
 
 @container (width < 640px) {
   .aegis-table th,
   .aegis-table td {
-    padding: 0.55rem 0.65rem;
-    font-size: 0.8125rem;
+    padding: 0.5rem 0.625rem;
+    font-size: 0.75rem;
   }
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #111513;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #28332B;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #3B483E;
 }
 
 .visually-hidden {
@@ -102,4 +161,15 @@ select:user-invalid {
   padding: 0;
   border: 0;
   white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

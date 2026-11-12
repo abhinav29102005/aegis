@@ -318,34 +318,34 @@ export default function DeveloperPortalPage() {
   return (
     <AppShell
       title="Developer & Worker Portal"
-      subtitle="Issue scoped API keys with canonical RBAC roles, manage Service Accounts, configure HMAC webhooks & delivery logs, and inspect the Worker Dead-Letter Queue (DLQ)."
+      subtitle="Issue scoped API keys with canonical RBAC roles, manage Service Accounts, configure HMAC webhooks, and inspect the Transactional Outbox DLQ"
     >
       {error && (
         <div
           role="alert"
           aria-live="assertive"
-          className="mb-4 flex items-center gap-2.5 rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200"
+          className="mb-4 flex items-center gap-2.5 rounded border border-aegis-rose/40 bg-aegis-rose/10 px-4 py-3 font-mono text-xs text-aegis-rose"
         >
-          <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
-          <span>{error}</span>
+          <AlertCircle className="h-4 w-4 shrink-0 text-aegis-rose" />
+          <span>[FAULT] {error}</span>
         </div>
       )}
 
       {revealedSecret && (
-        <div role="status" className="mb-6 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4">
+        <div role="status" className="mb-6 rounded border border-aegis-copper/50 bg-aegis-card p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-xs font-semibold text-amber-200">
-              One-Time Secret — {revealedSecret.label} (copy now, it will never be revealed again)
+            <span className="font-mono text-xs font-semibold uppercase tracking-wider text-aegis-copper">
+              [SECRET REVEAL] {revealedSecret.label} — Copy now, value will never be displayed again
             </span>
             <button
               type="button"
               onClick={() => setRevealedSecret(null)}
-              className="text-xs text-amber-200 underline"
+              className="font-mono text-xs text-aegis-copper hover:underline"
             >
               Dismiss
             </button>
           </div>
-          <code className="mt-2 block break-all rounded-lg border border-amber-500/30 bg-slate-950/70 px-3 py-2 font-mono text-xs text-amber-100">
+          <code className="mt-2 block break-all rounded border border-aegis-copper/30 bg-[#111513] px-3 py-2 font-mono text-xs text-aegis-copper">
             {revealedSecret.value}
           </code>
         </div>
@@ -357,10 +357,10 @@ export default function DeveloperPortalPage() {
           <button
             type="button"
             onClick={() => setActiveTab("keys")}
-            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+            className={`inline-flex items-center gap-1.5 rounded px-3 py-1.5 font-mono text-xs transition ${
               activeTab === "keys"
-                ? "bg-sky-500/15 text-sky-300 ring-1 ring-sky-400/30"
-                : "text-slate-400 hover:bg-slate-800 hover:text-white"
+                ? "border border-aegis-accent/40 bg-aegis-accent/15 text-aegis-accent font-semibold"
+                : "border border-transparent text-aegis-text-muted hover:border-aegis-border hover:bg-aegis-card hover:text-aegis-text-primary"
             }`}
           >
             <Key className="h-3.5 w-3.5" />
@@ -369,10 +369,10 @@ export default function DeveloperPortalPage() {
           <button
             type="button"
             onClick={() => setActiveTab("service_accounts")}
-            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+            className={`inline-flex items-center gap-1.5 rounded px-3 py-1.5 font-mono text-xs transition ${
               activeTab === "service_accounts"
-                ? "bg-sky-500/15 text-sky-300 ring-1 ring-sky-400/30"
-                : "text-slate-400 hover:bg-slate-800 hover:text-white"
+                ? "border border-aegis-accent/40 bg-aegis-accent/15 text-aegis-accent font-semibold"
+                : "border border-transparent text-aegis-text-muted hover:border-aegis-border hover:bg-aegis-card hover:text-aegis-text-primary"
             }`}
           >
             <Bot className="h-3.5 w-3.5" />
@@ -381,28 +381,28 @@ export default function DeveloperPortalPage() {
           <button
             type="button"
             onClick={() => setActiveTab("webhooks")}
-            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+            className={`inline-flex items-center gap-1.5 rounded px-3 py-1.5 font-mono text-xs transition ${
               activeTab === "webhooks"
-                ? "bg-sky-500/15 text-sky-300 ring-1 ring-sky-400/30"
-                : "text-slate-400 hover:bg-slate-800 hover:text-white"
+                ? "border border-aegis-accent/40 bg-aegis-accent/15 text-aegis-accent font-semibold"
+                : "border border-transparent text-aegis-text-muted hover:border-aegis-border hover:bg-aegis-card hover:text-aegis-text-primary"
             }`}
           >
             <Radio className="h-3.5 w-3.5" />
-            <span>Webhooks & Logs ({endpoints.length})</span>
+            <span>Webhooks ({endpoints.length})</span>
           </button>
           <button
             type="button"
             onClick={() => setActiveTab("outbox")}
-            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+            className={`inline-flex items-center gap-1.5 rounded px-3 py-1.5 font-mono text-xs transition ${
               activeTab === "outbox"
-                ? "bg-sky-500/15 text-sky-300 ring-1 ring-sky-400/30"
-                : "text-slate-400 hover:bg-slate-800 hover:text-white"
+                ? "border border-aegis-accent/40 bg-aegis-accent/15 text-aegis-accent font-semibold"
+                : "border border-transparent text-aegis-text-muted hover:border-aegis-border hover:bg-aegis-card hover:text-aegis-text-primary"
             }`}
           >
             <Layers className="h-3.5 w-3.5" />
             <span>Worker Outbox / DLQ</span>
             {deadLetterCount > 0 && (
-              <span className="rounded bg-rose-500/20 px-1.5 py-0.2 text-[10px] font-semibold text-rose-300">
+              <span className="rounded border border-aegis-rose/40 bg-aegis-rose/20 px-1.5 py-0.2 text-[10px] font-bold text-aegis-rose">
                 {deadLetterCount} DLQ
               </span>
             )}
@@ -412,7 +412,7 @@ export default function DeveloperPortalPage() {
         <button
           type="button"
           onClick={() => void loadData()}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-aegis-border bg-aegis-surface px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800"
+          className="inline-flex items-center gap-1.5 rounded border border-aegis-border bg-aegis-card px-3 py-1.5 font-mono text-xs text-aegis-text-primary hover:bg-aegis-secondary transition"
         >
           <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
           <span>Refresh</span>
@@ -424,13 +424,16 @@ export default function DeveloperPortalPage() {
         <div className="grid gap-6 lg:grid-cols-3">
           {hasPermission("keys:manage") && (
             <div className="rounded-xl border border-aegis-border bg-aegis-surface p-5 lg:col-span-1">
-              <h2 className="text-sm font-semibold text-white">Issue Scoped API Key</h2>
-              <p className="mt-1 text-xs text-slate-400">
-                API keys authenticate agents or automated services. Canonical roles are strictly enforced.
+              <div className="border-b border-aegis-border pb-3">
+                <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-accent">[CREDENTIALS // PROVISION]</span>
+                <h2 className="text-sm font-semibold tracking-wide text-aegis-text-primary">Issue Scoped API Key</h2>
+              </div>
+              <p className="mt-2 text-xs text-aegis-text-muted">
+                API keys authenticate autonomous agents or microservices with strict RBAC enforcement.
               </p>
               <form onSubmit={(e) => void handleCreateApiKey(e)} className="mt-4 space-y-3">
                 <div>
-                  <label htmlFor="key-name-input" className="block text-xs font-medium text-slate-300">
+                  <label htmlFor="key-name-input" className="block font-mono text-[11px] uppercase tracking-wider text-aegis-text-muted">
                     Key Identifier / Name
                   </label>
                   <input
@@ -440,18 +443,18 @@ export default function DeveloperPortalPage() {
                     value={keyName}
                     onChange={(e) => setKeyName(e.target.value)}
                     placeholder="e.g. procurement-agent-runtime"
-                    className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-panel px-3 py-1.5 text-xs text-white"
+                    className="mt-1 w-full rounded border border-aegis-border bg-aegis-card px-3 py-1.5 font-mono text-xs text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label htmlFor="key-role-select" className="block text-xs font-medium text-slate-300">
-                    Canonical Role (GAP-004)
+                  <label htmlFor="key-role-select" className="block font-mono text-[11px] uppercase tracking-wider text-aegis-text-muted">
+                    Canonical Role
                   </label>
                   <select
                     id="key-role-select"
                     value={keyRole}
                     onChange={(e) => setKeyRole(e.target.value as Role)}
-                    className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-panel px-2.5 py-1.5 text-xs text-white"
+                    className="mt-1 w-full rounded border border-aegis-border bg-aegis-card px-2.5 py-1.5 font-mono text-xs text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
                   >
                     {CANONICAL_ROLES.map((r) => (
                       <option key={r} value={r}>
@@ -459,14 +462,14 @@ export default function DeveloperPortalPage() {
                       </option>
                     ))}
                   </select>
-                  <span className="mt-1 block text-[11px] text-slate-400">
+                  <span className="mt-1 block font-mono text-[10px] text-aegis-text-faint">
                     Recommended: <code>AGENT_SERVICE</code> for autonomous agent runtimes.
                   </span>
                 </div>
                 <button
                   type="submit"
                   disabled={busy}
-                  className="w-full rounded-lg bg-sky-500 py-2 text-xs font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50"
+                  className="w-full rounded bg-aegis-accent py-2 font-mono text-xs font-semibold uppercase tracking-wider text-[#111513] hover:bg-[#c8e562] transition disabled:opacity-50"
                 >
                   {busy ? "Issuing Key…" : "Generate API Key"}
                 </button>
@@ -476,22 +479,25 @@ export default function DeveloperPortalPage() {
 
           <div className={hasPermission("keys:manage") ? "lg:col-span-2" : "lg:col-span-3"}>
             <div className="rounded-xl border border-aegis-border bg-aegis-surface p-5">
-              <h2 className="text-sm font-semibold text-white">Active API Keys ({keys.length})</h2>
+              <div className="border-b border-aegis-border pb-3">
+                <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-accent">[ACTIVE SECRETS // DIRECTORY]</span>
+                <h2 className="text-sm font-semibold tracking-wide text-aegis-text-primary">Active API Keys ({keys.length})</h2>
+              </div>
               <div className="mt-4 space-y-2.5 text-xs">
                 {keys.length === 0 ? (
-                  <p className="py-4 text-center text-slate-400">No API keys generated yet.</p>
+                  <p className="py-4 text-center font-mono text-aegis-text-muted">No API keys generated yet.</p>
                 ) : (
                   keys.map((k) => (
                     <div
                       key={k.id}
-                      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-aegis-border bg-aegis-panel p-3"
+                      className="flex flex-wrap items-center justify-between gap-3 rounded border border-aegis-border bg-aegis-card p-3"
                     >
                       <div>
-                        <div className="font-semibold text-white">{k.name}</div>
-                        <div className="mt-0.5 font-mono text-[11px] text-slate-400">
-                          <span className="text-sky-300">{k.key_prefix}…</span> · Role:{" "}
-                          <span className="font-semibold text-slate-200">{k.role}</span> · Created:{" "}
-                          {formatIsoDateTime(k.created_at)}
+                        <div className="font-semibold text-aegis-text-primary">{k.name}</div>
+                        <div className="mt-0.5 font-mono text-[11px] text-aegis-text-muted">
+                          <span className="text-aegis-accent">{k.key_prefix}…</span> · Role:{" "}
+                          <span className="text-aegis-text-primary font-semibold">{k.role}</span> · Created:{" "}
+                          <span className="text-aegis-text-faint">{formatIsoDateTime(k.created_at)}</span>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
@@ -501,14 +507,14 @@ export default function DeveloperPortalPage() {
                             <button
                               type="button"
                               onClick={() => setConfirmKeyAction({ type: "rotate", key: k })}
-                              className="rounded border border-aegis-border px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-800"
+                              className="rounded border border-aegis-border bg-aegis-surface px-2 py-1 font-mono text-[11px] text-aegis-text-primary hover:bg-aegis-secondary transition"
                             >
                               Rotate
                             </button>
                             <button
                               type="button"
                               onClick={() => setConfirmKeyAction({ type: "revoke", key: k })}
-                              className="rounded border border-rose-500/40 px-2 py-1 text-[11px] text-rose-300 hover:bg-rose-500/10"
+                              className="rounded border border-aegis-rose/40 bg-aegis-rose/10 px-2 py-1 font-mono text-[11px] text-aegis-rose hover:bg-aegis-rose/20 transition"
                             >
                               Revoke
                             </button>
@@ -529,14 +535,17 @@ export default function DeveloperPortalPage() {
         <div className="grid gap-6 lg:grid-cols-3">
           {hasPermission("keys:manage") && (
             <div className="rounded-xl border border-aegis-border bg-aegis-surface p-5 lg:col-span-1">
-              <h2 className="text-sm font-semibold text-white">Register Service Account</h2>
-              <p className="mt-1 text-xs text-slate-400">
-                Create a non-human identity for microservices, background workers, or copilot daemons.
+              <div className="border-b border-aegis-border pb-3">
+                <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-accent">[MICROSERVICES // ACCOUNTS]</span>
+                <h2 className="text-sm font-semibold tracking-wide text-aegis-text-primary">Register Service Account</h2>
+              </div>
+              <p className="mt-2 text-xs text-aegis-text-muted">
+                Create a non-human identity for background daemons and webhook processors.
               </p>
               <form onSubmit={(e) => void handleCreateServiceAccount(e)} className="mt-4 space-y-3">
                 <div>
-                  <label htmlFor="sa-name-input" className="block text-xs font-medium text-slate-300">
-                    Service Account Name
+                  <label htmlFor="sa-name-input" className="block font-mono text-[11px] uppercase tracking-wider text-aegis-text-muted">
+                    Account Name
                   </label>
                   <input
                     id="sa-name-input"
@@ -545,11 +554,11 @@ export default function DeveloperPortalPage() {
                     value={saName}
                     onChange={(e) => setSaName(e.target.value)}
                     placeholder="order-processor-sa"
-                    className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-panel px-3 py-1.5 text-xs text-white"
+                    className="mt-1 w-full rounded border border-aegis-border bg-aegis-card px-3 py-1.5 font-mono text-xs text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label htmlFor="sa-desc-input" className="block text-xs font-medium text-slate-300">
+                  <label htmlFor="sa-desc-input" className="block font-mono text-[11px] uppercase tracking-wider text-aegis-text-muted">
                     Description
                   </label>
                   <input
@@ -557,19 +566,19 @@ export default function DeveloperPortalPage() {
                     type="text"
                     value={saDescription}
                     onChange={(e) => setSaDescription(e.target.value)}
-                    placeholder="Worker process for PayPal sandbox polling"
-                    className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-panel px-3 py-1.5 text-xs text-white"
+                    placeholder="Worker daemon for payment captures"
+                    className="mt-1 w-full rounded border border-aegis-border bg-aegis-card px-3 py-1.5 text-xs text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label htmlFor="sa-role-select" className="block text-xs font-medium text-slate-300">
-                    Assigned Canonical Role
+                  <label htmlFor="sa-role-select" className="block font-mono text-[11px] uppercase tracking-wider text-aegis-text-muted">
+                    Assigned Role
                   </label>
                   <select
                     id="sa-role-select"
                     value={saRole}
                     onChange={(e) => setSaRole(e.target.value as Role)}
-                    className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-panel px-2.5 py-1.5 text-xs text-white"
+                    className="mt-1 w-full rounded border border-aegis-border bg-aegis-card px-2.5 py-1.5 font-mono text-xs text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
                   >
                     {CANONICAL_ROLES.map((r) => (
                       <option key={r} value={r}>
@@ -581,7 +590,7 @@ export default function DeveloperPortalPage() {
                 <button
                   type="submit"
                   disabled={busy}
-                  className="w-full rounded-lg bg-sky-500 py-2 text-xs font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50"
+                  className="w-full rounded bg-aegis-accent py-2 font-mono text-xs font-semibold uppercase tracking-wider text-[#111513] hover:bg-[#c8e562] transition disabled:opacity-50"
                 >
                   {busy ? "Creating…" : "Create Service Account"}
                 </button>
@@ -591,25 +600,28 @@ export default function DeveloperPortalPage() {
 
           <div className={hasPermission("keys:manage") ? "lg:col-span-2" : "lg:col-span-3"}>
             <div className="rounded-xl border border-aegis-border bg-aegis-surface p-5">
-              <h2 className="text-sm font-semibold text-white">Service Accounts ({serviceAccounts.length})</h2>
+              <div className="border-b border-aegis-border pb-3">
+                <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-accent">[SERVICE DIRECTORY]</span>
+                <h2 className="text-sm font-semibold tracking-wide text-aegis-text-primary">Configured Service Accounts ({serviceAccounts.length})</h2>
+              </div>
               <div className="mt-4 space-y-2.5 text-xs">
                 {serviceAccounts.length === 0 ? (
-                  <p className="py-4 text-center text-slate-400">No service accounts registered.</p>
+                  <p className="py-4 text-center font-mono text-aegis-text-muted">No service accounts registered.</p>
                 ) : (
                   serviceAccounts.map((sa) => (
                     <div
                       key={sa.id}
-                      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-aegis-border bg-aegis-panel p-3"
+                      className="flex flex-wrap items-center justify-between gap-3 rounded border border-aegis-border bg-aegis-card p-3"
                     >
                       <div>
                         <div className="flex items-center gap-2">
-                          <span className="font-semibold text-white">{sa.name}</span>
-                          <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-sky-300">
+                          <span className="font-semibold text-aegis-text-primary">{sa.name}</span>
+                          <span className="rounded bg-aegis-surface border border-aegis-border px-1.5 py-0.5 font-mono text-[10px] text-aegis-accent">
                             {sa.role}
                           </span>
                         </div>
-                        <p className="mt-1 text-slate-300">{sa.description || "No description provided."}</p>
-                        <div className="mt-1 font-mono text-[10px] text-slate-400">
+                        <p className="mt-1 text-aegis-text-muted">{sa.description || "No description provided."}</p>
+                        <div className="mt-1 font-mono text-[10px] text-aegis-text-faint">
                           ID: {truncateId(sa.id, 12)} · Created: {formatIsoDateTime(sa.created_at)}
                         </div>
                       </div>
@@ -629,13 +641,16 @@ export default function DeveloperPortalPage() {
           <div className="grid gap-6 lg:grid-cols-3">
             {hasPermission("webhooks:manage") && (
               <div className="rounded-xl border border-aegis-border bg-aegis-surface p-5 lg:col-span-1">
-                <h2 className="text-sm font-semibold text-white">Register Webhook Endpoint</h2>
-                <p className="mt-1 text-xs text-slate-400">
-                  Outbound events are cryptographically signed using an HMAC secret.
+                <div className="border-b border-aegis-border pb-3">
+                  <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-accent">[DISPATCH // HMAC WEBHOOK]</span>
+                  <h2 className="text-sm font-semibold tracking-wide text-aegis-text-primary">Register Webhook Endpoint</h2>
+                </div>
+                <p className="mt-2 text-xs text-aegis-text-muted">
+                  Outbound events are cryptographically signed using an HMAC-SHA256 signature header.
                 </p>
                 <form onSubmit={(e) => void handleCreateWebhook(e)} className="mt-4 space-y-3">
                   <div>
-                    <label htmlFor="webhook-url-input" className="block text-xs font-medium text-slate-300">
+                    <label htmlFor="webhook-url-input" className="block font-mono text-[11px] uppercase tracking-wider text-aegis-text-muted">
                       Destination HTTPS URL
                     </label>
                     <input
@@ -645,11 +660,11 @@ export default function DeveloperPortalPage() {
                       value={webhookUrl}
                       onChange={(e) => setWebhookUrl(e.target.value)}
                       placeholder="https://api.yourdomain.com/webhooks/aegis"
-                      className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-panel px-3 py-1.5 text-xs text-white"
+                      className="mt-1 w-full rounded border border-aegis-border bg-aegis-card px-3 py-1.5 font-mono text-xs text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
                     />
                   </div>
                   <div>
-                    <label htmlFor="webhook-desc-input" className="block text-xs font-medium text-slate-300">
+                    <label htmlFor="webhook-desc-input" className="block font-mono text-[11px] uppercase tracking-wider text-aegis-text-muted">
                       Description
                     </label>
                     <input
@@ -658,13 +673,13 @@ export default function DeveloperPortalPage() {
                       value={webhookDesc}
                       onChange={(e) => setWebhookDesc(e.target.value)}
                       placeholder="Production Payment Event Listener"
-                      className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-panel px-3 py-1.5 text-xs text-white"
+                      className="mt-1 w-full rounded border border-aegis-border bg-aegis-card px-3 py-1.5 text-xs text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
                     />
                   </div>
                   <button
                     type="submit"
                     disabled={busy}
-                    className="w-full rounded-lg bg-sky-500 py-2 text-xs font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50"
+                    className="w-full rounded bg-aegis-accent py-2 font-mono text-xs font-semibold uppercase tracking-wider text-[#111513] hover:bg-[#c8e562] transition disabled:opacity-50"
                   >
                     {busy ? "Registering…" : "Add Webhook Endpoint"}
                   </button>
@@ -674,29 +689,32 @@ export default function DeveloperPortalPage() {
 
             <div className={hasPermission("webhooks:manage") ? "lg:col-span-2" : "lg:col-span-3"}>
               <div className="rounded-xl border border-aegis-border bg-aegis-surface p-5">
-                <h2 className="text-sm font-semibold text-white">Configured Endpoints ({endpoints.length})</h2>
+                <div className="border-b border-aegis-border pb-3">
+                  <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-accent">[LISTENER DIRECTORY]</span>
+                  <h2 className="text-sm font-semibold tracking-wide text-aegis-text-primary">Configured Endpoints ({endpoints.length})</h2>
+                </div>
                 <div className="mt-4 space-y-2.5 text-xs">
                   {endpoints.length === 0 ? (
-                    <p className="py-4 text-center text-slate-400">No outbound webhook endpoints configured.</p>
+                    <p className="py-4 text-center font-mono text-aegis-text-muted">No outbound webhook endpoints configured.</p>
                   ) : (
                     endpoints.map((ep) => (
                       <div
                         key={ep.id}
-                        className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-aegis-border bg-aegis-panel p-3"
+                        className="flex flex-wrap items-center justify-between gap-3 rounded border border-aegis-border bg-aegis-card p-3"
                       >
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
-                            <span className="break-all font-mono text-sky-300">{ep.url}</span>
+                            <span className="break-all font-mono text-aegis-accent">{ep.url}</span>
                             <StatusBadge label={ep.status} />
                           </div>
-                          <p className="mt-1 text-slate-400">{ep.description || "Subscribed to all events"}</p>
+                          <p className="mt-1 text-aegis-text-muted">{ep.description || "Subscribed to all events"}</p>
                         </div>
                         {hasPermission("webhooks:manage") && ep.status !== "REVOKED" && (
                           <button
                             type="button"
                             onClick={() => setConfirmDeleteWebhook(ep)}
                             title="Disable Webhook Endpoint"
-                            className="inline-flex items-center gap-1 rounded border border-rose-500/40 px-2.5 py-1 text-[11px] text-rose-300 hover:bg-rose-500/10"
+                            className="inline-flex items-center gap-1 rounded border border-aegis-rose/40 bg-aegis-rose/10 px-2.5 py-1 font-mono text-[11px] text-aegis-rose hover:bg-aegis-rose/20 transition"
                           >
                             <Trash2 className="h-3 w-3" />
                             <span>Disable</span>
@@ -713,58 +731,61 @@ export default function DeveloperPortalPage() {
           {/* Webhook Delivery Logs */}
           <section className="rounded-xl border border-aegis-border bg-aegis-surface">
             <div className="flex items-center justify-between border-b border-aegis-border px-5 py-3">
-              <h2 className="text-sm font-semibold text-white">Recent Webhook Deliveries ({deliveries.length})</h2>
-              <span className="text-xs text-slate-400">Past 50 delivery attempts</span>
+              <div>
+                <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-accent">[AUDIT // ATTEMPTS]</span>
+                <h2 className="text-sm font-semibold tracking-wide text-aegis-text-primary">Recent Webhook Deliveries ({deliveries.length})</h2>
+              </div>
+              <span className="font-mono text-xs text-aegis-text-muted">Past 50 delivery attempts</span>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
+              <table className="aegis-table w-full text-left text-xs">
                 <caption className="sr-only">Webhook delivery log history</caption>
-                <thead className="border-b border-aegis-border bg-aegis-panel/60 uppercase text-slate-400">
+                <thead>
                   <tr>
-                    <th className="px-4 py-2.5">Delivery ID</th>
-                    <th className="px-4 py-2.5">Event Type</th>
-                    <th className="px-4 py-2.5">Status</th>
-                    <th className="px-4 py-2.5">HTTP Code</th>
-                    <th className="px-4 py-2.5">Attempts</th>
-                    <th className="px-4 py-2.5">Delivered At</th>
-                    <th className="px-4 py-2.5">Error Detail</th>
+                    <th>Delivery ID</th>
+                    <th>Event Type</th>
+                    <th>Status</th>
+                    <th>HTTP Code</th>
+                    <th>Attempts</th>
+                    <th>Delivered At</th>
+                    <th>Error Detail</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-aegis-border">
+                <tbody>
                   {deliveries.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="px-4 py-5 text-center text-slate-400">
+                      <td colSpan={7} className="px-4 py-5 text-center font-mono text-aegis-text-muted">
                         No webhook deliveries logged yet.
                       </td>
                     </tr>
                   ) : (
                     deliveries.map((del) => (
                       <tr key={del.id}>
-                        <td className="px-4 py-2.5 font-mono text-slate-300">{truncateId(del.id, 8)}</td>
-                        <td className="px-4 py-2.5 font-medium text-white">{del.event_type}</td>
-                        <td className="px-4 py-2.5">
+                        <td className="font-mono text-aegis-text-muted">{truncateId(del.id, 8)}</td>
+                        <td className="font-mono font-medium text-aegis-text-primary">{del.event_type}</td>
+                        <td>
                           <StatusBadge label={del.status} />
                         </td>
-                        <td className="px-4 py-2.5 font-mono">
+                        <td className="font-mono">
                           {del.response_status ? (
                             <span
                               className={
                                 del.response_status < 400
-                                  ? "text-emerald-400"
-                                  : "font-semibold text-rose-400"
+                                  ? "text-aegis-accent"
+                                  : "font-semibold text-aegis-rose"
                               }
                             >
                               {del.response_status}
                             </span>
                           ) : (
-                            <span className="text-slate-500">—</span>
+                            <span className="text-aegis-text-faint">—</span>
                           )}
                         </td>
-                        <td className="px-4 py-2.5 text-slate-300">{del.attempts}</td>
-                        <td className="px-4 py-2.5 text-slate-400">
+                        <td className="font-mono text-aegis-text-muted">{del.attempts}</td>
+                        <td className="font-mono text-aegis-text-faint">
                           {del.delivered_at ? formatIsoDateTime(del.delivered_at) : "Pending"}
                         </td>
-                        <td className="max-w-[200px] truncate px-4 py-2.5 text-slate-400">
+                        <td className="max-w-[200px] truncate font-mono text-[11px] text-aegis-text-muted">
                           {del.last_error ?? "None"}
                         </td>
                       </tr>
@@ -782,20 +803,18 @@ export default function DeveloperPortalPage() {
         <section className="rounded-xl border border-aegis-border bg-aegis-surface">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-aegis-border px-5 py-3">
             <div>
-              <h2 className="text-sm font-semibold text-white">Worker Transactional Outbox</h2>
-              <p className="text-xs text-slate-400">
-                Guaranteed at-least-once asynchronous event delivery with automatic exponential backoff and dead-letter queuing.
-              </p>
+              <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-accent">[TRANSACTIONAL OUTBOX // AT-LEAST-ONCE]</span>
+              <h2 className="text-sm font-semibold tracking-wide text-aegis-text-primary">Worker Outbox Pipeline</h2>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-400">Filter:</span>
+            <div className="flex items-center gap-2 font-mono text-xs">
+              <span className="text-aegis-text-muted">Filter:</span>
               <button
                 type="button"
                 onClick={() => setOutboxFilter("ALL")}
-                className={`rounded-lg px-2.5 py-1 text-xs font-medium ${
+                className={`rounded px-2.5 py-1 text-xs transition ${
                   outboxFilter === "ALL"
-                    ? "bg-sky-500/20 text-sky-300 ring-1 ring-sky-400/40"
-                    : "text-slate-400 hover:text-white"
+                    ? "border border-aegis-accent/40 bg-aegis-accent/15 text-aegis-accent font-semibold"
+                    : "text-aegis-text-muted hover:text-aegis-text-primary"
                 }`}
               >
                 All Events
@@ -803,15 +822,15 @@ export default function DeveloperPortalPage() {
               <button
                 type="button"
                 onClick={() => setOutboxFilter("DEAD_LETTER")}
-                className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium ${
+                className={`inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs transition ${
                   outboxFilter === "DEAD_LETTER"
-                    ? "bg-rose-500/20 text-rose-300 ring-1 ring-rose-400/40"
-                    : "text-slate-400 hover:text-rose-300"
+                    ? "border border-aegis-rose/40 bg-aegis-rose/15 text-aegis-rose font-semibold"
+                    : "text-aegis-text-muted hover:text-aegis-rose"
                 }`}
               >
                 <span>Dead-Letter Queue (DLQ)</span>
                 {deadLetterCount > 0 && (
-                  <span className="rounded bg-rose-500/30 px-1 text-[10px] font-bold text-rose-200">
+                  <span className="rounded bg-aegis-rose px-1 text-[10px] font-bold text-[#111513]">
                     {deadLetterCount}
                   </span>
                 )}
@@ -820,47 +839,47 @@ export default function DeveloperPortalPage() {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
+            <table className="aegis-table w-full text-left text-xs">
               <caption className="sr-only">Worker transactional outbox queue</caption>
-              <thead className="border-b border-aegis-border bg-aegis-panel/60 uppercase text-slate-400">
+              <thead>
                 <tr>
-                  <th className="px-4 py-2.5">Outbox ID</th>
-                  <th className="px-4 py-2.5">Event Type</th>
-                  <th className="px-4 py-2.5">Status</th>
-                  <th className="px-4 py-2.5">Attempts</th>
-                  <th className="px-4 py-2.5">Last Error</th>
-                  <th className="px-4 py-2.5">Queued At</th>
-                  <th className="px-4 py-2.5 text-right">Actions</th>
+                  <th>Outbox ID</th>
+                  <th>Event Type</th>
+                  <th>Status</th>
+                  <th>Attempts</th>
+                  <th>Last Error</th>
+                  <th>Queued At</th>
+                  <th className="text-right">Controls</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-aegis-border">
+              <tbody>
                 {outbox.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-4 py-6 text-center text-slate-400">
+                    <td colSpan={7} className="px-4 py-6 text-center font-mono text-aegis-text-muted">
                       {outboxFilter === "DEAD_LETTER"
-                        ? "Great news: Zero dead-letter events in the worker outbox!"
+                        ? "Nominal state: Zero dead-letter events in the worker outbox."
                         : "Outbox queue is currently empty."}
                     </td>
                   </tr>
                 ) : (
                   outbox.map((row) => (
                     <tr key={row.id}>
-                      <td className="px-4 py-2.5 font-mono text-slate-300">{truncateId(row.id, 10)}</td>
-                      <td className="px-4 py-2.5 font-medium text-white">{row.event_type}</td>
-                      <td className="px-4 py-2.5">
+                      <td className="font-mono text-aegis-text-muted">{truncateId(row.id, 10)}</td>
+                      <td className="font-mono font-medium text-aegis-text-primary">{row.event_type}</td>
+                      <td>
                         <StatusBadge label={row.status} />
                       </td>
-                      <td className="px-4 py-2.5 text-slate-300">{row.attempts}</td>
-                      <td className="max-w-[220px] truncate px-4 py-2.5 font-mono text-[11px] text-rose-300">
+                      <td className="font-mono text-aegis-text-muted">{row.attempts}</td>
+                      <td className="max-w-[220px] truncate font-mono text-[11px] text-aegis-rose">
                         {row.last_error ?? "—"}
                       </td>
-                      <td className="px-4 py-2.5 text-slate-400">{formatIsoDateTime(row.created_at)}</td>
-                      <td className="px-4 py-2.5 text-right">
+                      <td className="font-mono text-aegis-text-faint">{formatIsoDateTime(row.created_at)}</td>
+                      <td className="text-right">
                         {row.status === "DEAD_LETTER" && hasPermission("worker:manage") && (
                           <button
                             type="button"
                             onClick={() => void handleRequeue(row.id)}
-                            className="inline-flex items-center gap-1 rounded border border-sky-500/40 px-2.5 py-1 text-[11px] text-sky-300 hover:bg-sky-500/10"
+                            className="inline-flex items-center gap-1 rounded border border-aegis-accent/40 bg-aegis-accent/10 px-2.5 py-1 font-mono text-[11px] text-aegis-accent hover:bg-aegis-accent/20 transition"
                           >
                             <RefreshCw className="h-3 w-3" />
                             <span>Requeue</span>
@@ -879,12 +898,12 @@ export default function DeveloperPortalPage() {
       {/* API Key Rotate / Revoke Dialog */}
       <ConfirmDialog
         open={confirmKeyAction !== null}
-        title={confirmKeyAction?.type === "rotate" ? "Rotate API Key" : "Revoke API Key"}
+        title={confirmKeyAction?.type === "rotate" ? "Rotate API Key Secret" : "Revoke API Key"}
         description={
           confirmKeyAction?.type === "rotate"
-            ? `Revoke old secret for "${confirmKeyAction.key.name}" and issue a fresh plaintext key immediately?`
+            ? `Revoke existing secret for "${confirmKeyAction.key.name}" and issue a fresh plaintext key immediately?`
             : confirmKeyAction
-              ? `Permanently revoke "${confirmKeyAction.key.name}" (${confirmKeyAction.key.key_prefix}…)? Active agents using it will fail authentication.`
+              ? `Permanently revoke "${confirmKeyAction.key.name}" (${confirmKeyAction.key.key_prefix}…)? Active agents using it will fail authorization.`
               : ""
         }
         confirmLabel={confirmKeyAction?.type === "rotate" ? "Rotate Secret" : "Revoke Key"}

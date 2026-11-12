@@ -191,20 +191,27 @@ export default function AgentsMerchantsPage() {
   }
 
   return (
-    <AppShell title="Agents & Merchants" subtitle="Register AI identities, control agent states, and manage merchant allowlists">
+    <AppShell title="Agents & Merchants" subtitle="Register AI identities, control agent operational states, and manage category allowlists">
       {error && (
-        <div role="status" className="mb-6 rounded-xl border border-rose-500/40 bg-rose-500/10 p-4 text-sm text-rose-200">
-          {error}
+        <div role="status" className="mb-6 rounded-md border border-aegis-rose/40 bg-aegis-rose/10 p-4 text-xs font-mono text-aegis-rose">
+          [FAULT] {error}
         </div>
       )}
 
       <div className="grid gap-6 lg:grid-cols-2">
         {hasPermission("agents:write") && (
           <form onSubmit={(e) => void handleCreateAgent(e)} className="rounded-xl border border-aegis-border bg-aegis-surface p-5">
-            <h2 className="text-base font-semibold text-white">Register AI Agent</h2>
+            <div className="flex items-center justify-between border-b border-aegis-border pb-3">
+              <div>
+                <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-accent">[IDENTITY // PROVISION]</span>
+                <h2 className="text-sm font-semibold tracking-wide text-aegis-text-primary">Register AI Agent</h2>
+              </div>
+              <span className="font-mono text-[11px] text-aegis-text-muted">TENANT-SCOPED</span>
+            </div>
+
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <div>
-                <label htmlFor="agent-name" className="block text-xs font-medium text-slate-300">
+                <label htmlFor="agent-name" className="block font-mono text-[11px] uppercase tracking-wider text-aegis-text-muted">
                   Agent Name *
                 </label>
                 <input
@@ -212,19 +219,19 @@ export default function AgentsMerchantsPage() {
                   required
                   value={agentName}
                   onChange={(e) => setAgentName(e.target.value)}
-                  placeholder="Procurement-Bot"
-                  className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-bg px-3 py-2 text-sm text-white"
+                  placeholder="Procurement-Bot-01"
+                  className="mt-1 w-full rounded border border-aegis-border bg-aegis-card px-3 py-1.5 font-mono text-xs text-aegis-text-primary placeholder:text-aegis-text-faint focus:border-aegis-accent focus:outline-none"
                 />
               </div>
               <div>
-                <label htmlFor="agent-framework" className="block text-xs font-medium text-slate-300">
+                <label htmlFor="agent-framework" className="block font-mono text-[11px] uppercase tracking-wider text-aegis-text-muted">
                   Framework
                 </label>
                 <select
                   id="agent-framework"
                   value={agentFramework}
                   onChange={(e) => setAgentFramework(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-bg px-3 py-2 text-sm text-white"
+                  className="mt-1 w-full rounded border border-aegis-border bg-aegis-card px-3 py-1.5 font-mono text-xs text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
                 >
                   <option value="langgraph">LangGraph</option>
                   <option value="pydantic-ai">PydanticAI</option>
@@ -232,31 +239,35 @@ export default function AgentsMerchantsPage() {
                 </select>
               </div>
               <div>
-                <label htmlFor="agent-purpose" className="block text-xs font-medium text-slate-300">
-                  Purpose
+                <label htmlFor="agent-purpose" className="block font-mono text-[11px] uppercase tracking-wider text-aegis-text-muted">
+                  Purpose / Scope
                 </label>
                 <input
                   id="agent-purpose"
                   value={agentPurpose}
                   onChange={(e) => setAgentPurpose(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-bg px-3 py-2 text-sm text-white"
+                  className="mt-1 w-full rounded border border-aegis-border bg-aegis-card px-3 py-1.5 text-xs text-aegis-text-primary placeholder:text-aegis-text-faint focus:border-aegis-accent focus:outline-none"
                 />
               </div>
               <div>
-                <label htmlFor="agent-fp" className="block text-xs font-medium text-slate-300">
-                  Public Key Fingerprint (optional)
+                <label htmlFor="agent-fp" className="block font-mono text-[11px] uppercase tracking-wider text-aegis-text-muted">
+                  Fingerprint (optional)
                 </label>
                 <input
                   id="agent-fp"
                   value={fingerprint}
                   onChange={(e) => setFingerprint(e.target.value)}
                   placeholder="Auto-generated if empty"
-                  className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-bg px-3 py-2 text-sm text-white"
+                  className="mt-1 w-full rounded border border-aegis-border bg-aegis-card px-3 py-1.5 font-mono text-xs text-aegis-text-primary placeholder:text-aegis-text-faint focus:border-aegis-accent focus:outline-none"
                 />
               </div>
             </div>
-            <button type="submit" className="mt-4 rounded-lg bg-sky-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-sky-400">
-              Register Agent
+
+            <button
+              type="submit"
+              className="mt-5 rounded bg-aegis-accent px-4 py-2 font-mono text-xs font-semibold uppercase tracking-wider text-[#111513] hover:bg-[#c8e562] transition"
+            >
+              Register Agent Identity
             </button>
           </form>
         )}
@@ -264,10 +275,17 @@ export default function AgentsMerchantsPage() {
         {/* GAP-004: Fix permission check from "merchants:write" to "passports:write" */}
         {hasPermission("passports:write") && (
           <form onSubmit={(e) => void handleCreateMerchant(e)} className="rounded-xl border border-aegis-border bg-aegis-surface p-5">
-            <h2 className="text-base font-semibold text-white">Add Allowlisted Merchant</h2>
+            <div className="flex items-center justify-between border-b border-aegis-border pb-3">
+              <div>
+                <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-copper">[ALLOWLIST // GATEWAY]</span>
+                <h2 className="text-sm font-semibold tracking-wide text-aegis-text-primary">Add Allowlisted Merchant</h2>
+              </div>
+              <span className="font-mono text-[11px] text-aegis-text-muted">MCC VERIFIED</span>
+            </div>
+
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <div>
-                <label htmlFor="m-name" className="block text-xs font-medium text-slate-300">
+                <label htmlFor="m-name" className="block font-mono text-[11px] uppercase tracking-wider text-aegis-text-muted">
                   Merchant Name *
                 </label>
                 <input
@@ -276,11 +294,11 @@ export default function AgentsMerchantsPage() {
                   value={merchantName}
                   onChange={(e) => setMerchantName(e.target.value)}
                   placeholder="CloudDocs Pro"
-                  className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-bg px-3 py-2 text-sm text-white"
+                  className="mt-1 w-full rounded border border-aegis-border bg-aegis-card px-3 py-1.5 font-mono text-xs text-aegis-text-primary placeholder:text-aegis-text-faint focus:border-aegis-accent focus:outline-none"
                 />
               </div>
               <div>
-                <label htmlFor="m-domain" className="block text-xs font-medium text-slate-300">
+                <label htmlFor="m-domain" className="block font-mono text-[11px] uppercase tracking-wider text-aegis-text-muted">
                   Domain *
                 </label>
                 <input
@@ -289,23 +307,27 @@ export default function AgentsMerchantsPage() {
                   value={merchantDomain}
                   onChange={(e) => setMerchantDomain(e.target.value)}
                   placeholder="clouddocs.example.com"
-                  className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-bg px-3 py-2 text-sm text-white"
+                  className="mt-1 w-full rounded border border-aegis-border bg-aegis-card px-3 py-1.5 font-mono text-xs text-aegis-text-primary placeholder:text-aegis-text-faint focus:border-aegis-accent focus:outline-none"
                 />
               </div>
               <div>
-                <label htmlFor="m-cat" className="block text-xs font-medium text-slate-300">
-                  Category
+                <label htmlFor="m-cat" className="block font-mono text-[11px] uppercase tracking-wider text-aegis-text-muted">
+                  Category (MCC)
                 </label>
                 <input
                   id="m-cat"
                   value={merchantCategory}
                   onChange={(e) => setMerchantCategory(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-aegis-border bg-aegis-bg px-3 py-2 text-sm text-white"
+                  className="mt-1 w-full rounded border border-aegis-border bg-aegis-card px-3 py-1.5 font-mono text-xs uppercase text-aegis-text-primary placeholder:text-aegis-text-faint focus:border-aegis-accent focus:outline-none"
                 />
               </div>
             </div>
-            <button type="submit" className="mt-4 rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400">
-              Add Merchant
+
+            <button
+              type="submit"
+              className="mt-5 rounded border border-aegis-copper/60 bg-aegis-copper/15 px-4 py-2 font-mono text-xs font-semibold uppercase tracking-wider text-aegis-copper hover:bg-aegis-copper/25 transition"
+            >
+              Add Allowlisted Vendor
             </button>
           </form>
         )}
@@ -313,10 +335,14 @@ export default function AgentsMerchantsPage() {
 
       {/* Agents Table with Search & Pagination */}
       <section className="mt-8 rounded-xl border border-aegis-border bg-aegis-surface p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3 pb-4">
-          <h2 id="agents-caption" className="text-base font-semibold text-white">
-            Registered Agents ({filteredAgents.length})
-          </h2>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-aegis-border pb-4">
+          <div>
+            <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-accent">[ROSTER // ACTIVE AGENTS]</span>
+            <h2 id="agents-caption" className="text-sm font-semibold tracking-wide text-aegis-text-primary">
+              Registered Autonomous Identities ({filteredAgents.length})
+            </h2>
+          </div>
+
           <div className="flex flex-wrap items-center gap-3">
             <div className="relative">
               <input
@@ -326,8 +352,8 @@ export default function AgentsMerchantsPage() {
                   setAgentSearch(e.target.value);
                   setAgentOffset(0);
                 }}
-                placeholder="Search agents (name, purpose, framework)..."
-                className="w-64 rounded-lg border border-aegis-border bg-aegis-bg px-3 py-1.5 text-xs text-white placeholder-slate-400"
+                placeholder="Filter by name, ID, framework..."
+                className="w-64 rounded border border-aegis-border bg-aegis-card px-3 py-1.5 font-mono text-xs text-aegis-text-primary placeholder:text-aegis-text-faint focus:border-aegis-accent focus:outline-none"
               />
               {agentSearch && (
                 <button
@@ -336,13 +362,14 @@ export default function AgentsMerchantsPage() {
                     setAgentSearch("");
                     setAgentOffset(0);
                   }}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-white"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 font-mono text-xs text-aegis-text-muted hover:text-aegis-text-primary"
                 >
                   ✕
                 </button>
               )}
             </div>
-            <div className="flex items-center gap-1.5 text-xs text-slate-300">
+
+            <div className="flex items-center gap-1.5 font-mono text-xs text-aegis-text-muted">
               <label htmlFor="agent-limit-select">Limit:</label>
               <select
                 id="agent-limit-select"
@@ -351,7 +378,7 @@ export default function AgentsMerchantsPage() {
                   setAgentLimit(Number(e.target.value));
                   setAgentOffset(0);
                 }}
-                className="rounded border border-aegis-border bg-aegis-bg px-2 py-1 text-xs text-white"
+                className="rounded border border-aegis-border bg-aegis-card px-2 py-1 font-mono text-xs text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
               >
                 <option value={5}>5</option>
                 <option value={10}>10</option>
@@ -363,50 +390,50 @@ export default function AgentsMerchantsPage() {
         </div>
 
         <div tabIndex={0} role="region" aria-labelledby="agents-caption" className="table-wrapper">
-          <table className="aegis-table w-full text-left text-sm">
+          <table className="aegis-table w-full text-left text-xs">
             <thead>
               <tr>
-                <th scope="col">Name</th>
+                <th scope="col">Agent Identity</th>
                 <th scope="col">Framework</th>
-                <th scope="col">Status</th>
-                <th scope="col">Fingerprint</th>
-                <th scope="col">Created</th>
-                <th scope="col" className="text-right">Actions</th>
+                <th scope="col">Operational State</th>
+                <th scope="col">Key Fingerprint</th>
+                <th scope="col">Provisioned</th>
+                <th scope="col" className="text-right">Controls</th>
               </tr>
             </thead>
             <tbody>
               {loading && agents.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="text-center text-slate-400 py-6">
-                    Loading agents…
+                  <td colSpan={6} className="py-6 text-center font-mono text-aegis-text-muted">
+                    Loading agent identities…
                   </td>
                 </tr>
               ) : pagedAgents.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="text-center text-slate-400 py-6">
-                    {agentSearch ? "No agents matching your search." : "No AI agents registered yet."}
+                  <td colSpan={6} className="py-6 text-center font-mono text-aegis-text-muted">
+                    {agentSearch ? "No agents matching query." : "No AI agent identities registered yet."}
                   </td>
                 </tr>
               ) : (
                 pagedAgents.map((a) => (
                   <tr key={a.id}>
                     <td>
-                      <div className="font-medium text-white">{a.name}</div>
-                      <div className="font-mono text-xs text-slate-400">{a.id}</div>
+                      <div className="font-semibold text-aegis-text-primary">{a.name}</div>
+                      <div className="font-mono text-[11px] text-aegis-text-faint">{a.id}</div>
                     </td>
-                    <td className="text-slate-300">{a.framework}</td>
+                    <td className="font-mono text-aegis-text-muted">{a.framework}</td>
                     <td>
                       <StatusBadge label={a.status} />
                     </td>
-                    <td className="font-mono text-xs text-slate-400">{truncateId(a.public_fingerprint, 16)}</td>
-                    <td className="text-xs text-slate-400">{formatIsoDateTime(a.created_at)}</td>
+                    <td className="font-mono text-[11px] text-aegis-text-muted">{truncateId(a.public_fingerprint, 18)}</td>
+                    <td className="font-mono text-[11px] text-aegis-text-faint">{formatIsoDateTime(a.created_at)}</td>
                     <td className="text-right">
                       {hasPermission("agents:write") && (
                         a.status === "ACTIVE" ? (
                           <button
                             type="button"
                             onClick={() => setConfirmSuspend(a)}
-                            className="rounded border border-rose-500/40 px-2.5 py-1 text-xs text-rose-300 hover:bg-rose-500/15"
+                            className="rounded border border-aegis-rose/40 bg-aegis-rose/10 px-2.5 py-1 font-mono text-[11px] text-aegis-rose hover:bg-aegis-rose/20 transition"
                           >
                             Suspend
                           </button>
@@ -414,7 +441,7 @@ export default function AgentsMerchantsPage() {
                           <button
                             type="button"
                             onClick={() => void handleToggleAgentStatus(a, "ACTIVE")}
-                            className="rounded border border-emerald-500/40 px-2.5 py-1 text-xs text-emerald-300 hover:bg-emerald-500/15"
+                            className="rounded border border-aegis-accent/40 bg-aegis-accent/10 px-2.5 py-1 font-mono text-[11px] text-aegis-accent hover:bg-aegis-accent/20 transition"
                           >
                             Activate
                           </button>
@@ -430,16 +457,16 @@ export default function AgentsMerchantsPage() {
 
         {/* Agents Pagination Bar */}
         {filteredAgents.length > 0 && (
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-aegis-border pt-3 text-xs text-slate-400">
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-aegis-border pt-3 font-mono text-xs text-aegis-text-muted">
             <div>
-              Showing {Math.min(filteredAgents.length, agentOffset + 1)} to {Math.min(filteredAgents.length, agentOffset + agentLimit)} of {filteredAgents.length} agents
+              Showing {Math.min(filteredAgents.length, agentOffset + 1)} to {Math.min(filteredAgents.length, agentOffset + agentLimit)} of {filteredAgents.length} records
             </div>
             <div className="flex items-center gap-2">
               <button
                 type="button"
                 disabled={agentOffset === 0}
                 onClick={() => setAgentOffset((prev) => Math.max(0, prev - agentLimit))}
-                className="rounded border border-aegis-border bg-aegis-bg px-2.5 py-1 text-xs text-slate-200 hover:bg-slate-800 disabled:opacity-40"
+                className="rounded border border-aegis-border bg-aegis-card px-2.5 py-1 text-xs text-aegis-text-primary hover:bg-aegis-secondary disabled:opacity-30"
               >
                 Previous
               </button>
@@ -450,7 +477,7 @@ export default function AgentsMerchantsPage() {
                 type="button"
                 disabled={agentOffset + agentLimit >= filteredAgents.length}
                 onClick={() => setAgentOffset((prev) => prev + agentLimit)}
-                className="rounded border border-aegis-border bg-aegis-bg px-2.5 py-1 text-xs text-slate-200 hover:bg-slate-800 disabled:opacity-40"
+                className="rounded border border-aegis-border bg-aegis-card px-2.5 py-1 text-xs text-aegis-text-primary hover:bg-aegis-secondary disabled:opacity-30"
               >
                 Next
               </button>
@@ -461,10 +488,14 @@ export default function AgentsMerchantsPage() {
 
       {/* Merchants Table with Search & Pagination */}
       <section className="mt-8 rounded-xl border border-aegis-border bg-aegis-surface p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3 pb-4">
-          <h2 id="merchants-caption" className="text-base font-semibold text-white">
-            Merchants ({filteredMerchants.length})
-          </h2>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-aegis-border pb-4">
+          <div>
+            <span className="font-mono text-[10px] uppercase tracking-widest text-aegis-copper">[VENDORS // ALLOWLIST MATRIX]</span>
+            <h2 id="merchants-caption" className="text-sm font-semibold tracking-wide text-aegis-text-primary">
+              Allowlisted Merchants ({filteredMerchants.length})
+            </h2>
+          </div>
+
           <div className="flex flex-wrap items-center gap-3">
             <div className="relative">
               <input
@@ -474,8 +505,8 @@ export default function AgentsMerchantsPage() {
                   setMerchantSearch(e.target.value);
                   setMerchantOffset(0);
                 }}
-                placeholder="Search merchants (name, domain, category)..."
-                className="w-64 rounded-lg border border-aegis-border bg-aegis-bg px-3 py-1.5 text-xs text-white placeholder-slate-400"
+                placeholder="Filter by vendor, domain, category..."
+                className="w-64 rounded border border-aegis-border bg-aegis-card px-3 py-1.5 font-mono text-xs text-aegis-text-primary placeholder:text-aegis-text-faint focus:border-aegis-accent focus:outline-none"
               />
               {merchantSearch && (
                 <button
@@ -484,13 +515,14 @@ export default function AgentsMerchantsPage() {
                     setMerchantSearch("");
                     setMerchantOffset(0);
                   }}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-white"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 font-mono text-xs text-aegis-text-muted hover:text-aegis-text-primary"
                 >
                   ✕
                 </button>
               )}
             </div>
-            <div className="flex items-center gap-1.5 text-xs text-slate-300">
+
+            <div className="flex items-center gap-1.5 font-mono text-xs text-aegis-text-muted">
               <label htmlFor="merchant-limit-select">Limit:</label>
               <select
                 id="merchant-limit-select"
@@ -499,7 +531,7 @@ export default function AgentsMerchantsPage() {
                   setMerchantLimit(Number(e.target.value));
                   setMerchantOffset(0);
                 }}
-                className="rounded border border-aegis-border bg-aegis-bg px-2 py-1 text-xs text-white"
+                className="rounded border border-aegis-border bg-aegis-card px-2 py-1 font-mono text-xs text-aegis-text-primary focus:border-aegis-accent focus:outline-none"
               >
                 <option value={5}>5</option>
                 <option value={10}>10</option>
@@ -511,50 +543,49 @@ export default function AgentsMerchantsPage() {
         </div>
 
         <div tabIndex={0} role="region" aria-labelledby="merchants-caption" className="table-wrapper">
-          <table className="aegis-table w-full text-left text-sm">
+          <table className="aegis-table w-full text-left text-xs">
             <thead>
               <tr>
                 <th scope="col">Merchant</th>
                 <th scope="col">Domain</th>
                 <th scope="col">Category</th>
-                <th scope="col">Allowlisted</th>
-                <th scope="col" className="text-right">Actions</th>
+                <th scope="col">Status</th>
+                <th scope="col" className="text-right">Policy Action</th>
               </tr>
             </thead>
             <tbody>
               {loading && merchants.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="text-center text-slate-400 py-6">
+                  <td colSpan={5} className="py-6 text-center font-mono text-aegis-text-muted">
                     Loading merchants…
                   </td>
                 </tr>
               ) : pagedMerchants.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="text-center text-slate-400 py-6">
-                    {merchantSearch ? "No merchants matching your search." : "No merchants configured yet."}
+                  <td colSpan={5} className="py-6 text-center font-mono text-aegis-text-muted">
+                    {merchantSearch ? "No merchants matching query." : "No merchants configured in allowlist."}
                   </td>
                 </tr>
               ) : (
                 pagedMerchants.map((m) => (
                   <tr key={m.id}>
                     <td>
-                      <div className="font-medium text-white">{m.name}</div>
-                      <div className="font-mono text-xs text-slate-400">{m.id}</div>
+                      <div className="font-semibold text-aegis-text-primary">{m.name}</div>
+                      <div className="font-mono text-[11px] text-aegis-text-faint">{m.id}</div>
                     </td>
-                    <td className="text-slate-300">{m.domain}</td>
-                    <td className="text-slate-300">{m.category}</td>
+                    <td className="font-mono text-aegis-text-muted">{m.domain}</td>
+                    <td className="font-mono text-aegis-text-muted">{m.category}</td>
                     <td>
                       <StatusBadge label={m.is_allowlisted ? "ACTIVE" : "SUSPENDED"} />
                     </td>
                     <td className="text-right">
-                      {/* GAP-004: Fix permission check from "merchants:write" to "passports:write" */}
                       {hasPermission("passports:write") && (
                         <button
                           type="button"
                           onClick={() => void handleToggleMerchantAllowlist(m)}
-                          className="rounded border border-aegis-border px-2.5 py-1 text-xs text-slate-200 hover:bg-slate-800"
+                          className="rounded border border-aegis-border bg-aegis-card px-2.5 py-1 font-mono text-[11px] text-aegis-text-primary hover:bg-aegis-secondary transition"
                         >
-                          {m.is_allowlisted ? "Remove Allowlist" : "Allowlist"}
+                          {m.is_allowlisted ? "Revoke Allowlist" : "Allowlist"}
                         </button>
                       )}
                     </td>
@@ -567,16 +598,16 @@ export default function AgentsMerchantsPage() {
 
         {/* Merchants Pagination Bar */}
         {filteredMerchants.length > 0 && (
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-aegis-border pt-3 text-xs text-slate-400">
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-aegis-border pt-3 font-mono text-xs text-aegis-text-muted">
             <div>
-              Showing {Math.min(filteredMerchants.length, merchantOffset + 1)} to {Math.min(filteredMerchants.length, merchantOffset + merchantLimit)} of {filteredMerchants.length} merchants
+              Showing {Math.min(filteredMerchants.length, merchantOffset + 1)} to {Math.min(filteredMerchants.length, merchantOffset + merchantLimit)} of {filteredMerchants.length} vendors
             </div>
             <div className="flex items-center gap-2">
               <button
                 type="button"
                 disabled={merchantOffset === 0}
                 onClick={() => setMerchantOffset((prev) => Math.max(0, prev - merchantLimit))}
-                className="rounded border border-aegis-border bg-aegis-bg px-2.5 py-1 text-xs text-slate-200 hover:bg-slate-800 disabled:opacity-40"
+                className="rounded border border-aegis-border bg-aegis-card px-2.5 py-1 text-xs text-aegis-text-primary hover:bg-aegis-secondary disabled:opacity-30"
               >
                 Previous
               </button>
@@ -587,7 +618,7 @@ export default function AgentsMerchantsPage() {
                 type="button"
                 disabled={merchantOffset + merchantLimit >= filteredMerchants.length}
                 onClick={() => setMerchantOffset((prev) => prev + merchantLimit)}
-                className="rounded border border-aegis-border bg-aegis-bg px-2.5 py-1 text-xs text-slate-200 hover:bg-slate-800 disabled:opacity-40"
+                className="rounded border border-aegis-border bg-aegis-card px-2.5 py-1 text-xs text-aegis-text-primary hover:bg-aegis-secondary disabled:opacity-30"
               >
                 Next
               </button>

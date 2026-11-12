@@ -5,7 +5,7 @@ export default function DataProcessingAddendumPage() {
   return (
     <div className="space-y-8 rounded-2xl border border-aegis-border bg-aegis-surface p-8 shadow-xl">
       <div className="border-b border-aegis-border pb-6">
-        <div className="flex items-center gap-2 text-sky-400">
+        <div className="flex items-center gap-2 text-aegis-accent">
           <FileCheck2 className="h-6 w-6" />
           <h1 className="text-2xl font-bold text-white">Data Processing Addendum (DPA)</h1>
         </div>
@@ -14,8 +14,8 @@ export default function DataProcessingAddendumPage() {
         </p>
       </div>
 
-      <div className="rounded-xl border border-sky-500/30 bg-sky-500/10 p-4 text-xs text-sky-200">
-        <div className="flex items-center gap-2 font-semibold text-sky-300">
+      <div className="rounded-xl border border-aegis-accent/30 bg-aegis-accent/10 p-4 text-xs text-aegis-accent">
+        <div className="flex items-center gap-2 font-semibold text-aegis-accent">
           <ShieldCheck className="h-4 w-4" />
           <span>DATA CONTROLLER & PROCESSOR RELATIONSHIP</span>
         </div>
@@ -40,7 +40,7 @@ export default function DataProcessingAddendumPage() {
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <div className="rounded-lg border border-aegis-border bg-aegis-panel p-3">
               <div className="flex items-center gap-2 font-semibold text-white">
-                <Lock className="h-4 w-4 text-sky-400" />
+                <Lock className="h-4 w-4 text-aegis-accent" />
                 <span>Cryptographic Hash Chaining</span>
               </div>
               <p className="mt-1 text-[11px] text-slate-400">
