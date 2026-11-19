@@ -31,7 +31,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const checkSession = useCallback(async () => {
     try {
       const data = await apiRequest<AuthSession>("/api/auth/me", {
-        timeoutMs: 10000,
+        timeoutMs: 15000,
       });
       setSession(data);
       setError(null);
@@ -60,7 +60,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const data = await apiRequest<AuthSession>("/api/auth/login", {
           method: "POST",
           body: { email, password, organization_id: orgId ?? null },
-          timeoutMs: 15000,
+          timeoutMs: 30000,
         });
         setSession(data);
       } catch (err) {
@@ -85,7 +85,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const data = await apiRequest<AuthSession>("/api/auth/signup", {
           method: "POST",
           body: payload,
-          timeoutMs: 15000,
+          timeoutMs: 30000,
         });
         setSession(data);
       } catch (err) {
@@ -104,7 +104,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const data = await apiRequest<AuthSession>("/api/auth/switch-org", {
           method: "POST",
           body: { organization_id: orgId },
-          timeoutMs: 15000,
+          timeoutMs: 30000,
         });
         setSession(data);
       } catch (err) {

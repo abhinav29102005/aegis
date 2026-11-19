@@ -32,9 +32,27 @@ function LoginForm() {
   const [orgSlug, setOrgSlug] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [demoNotice, setDemoNotice] = useState<string | null>(null);
   const [infoMsg, setInfoMsg] = useState<string | null>(
     verifyParam ? "Please verify your email address to unlock all organization capabilities." : null,
   );
+
+  function fillDemoCredentials(autoSubmit = false) {
+    setEmail("chief-auditor-bf1ab00d@aegis-nexus.tech");
+    setPassword("SuperSecurePassword123!@#");
+    setMode("login");
+    setErrorMsg(null);
+    setDemoNotice("Pre-filled Chief Auditor credentials (Tenant: BF1AB00D)");
+    if (autoSubmit) {
+      setSubmitting(true);
+      void login("chief-auditor-bf1ab00d@aegis-nexus.tech", "SuperSecurePassword123!@#")
+        .then(() => router.push("/dashboard"))
+        .catch((err) => {
+          setErrorMsg(err instanceof ApiClientError ? err.message : "Authentication failed. Please retry.");
+        })
+        .finally(() => setSubmitting(false));
+    }
+  }
 
   // Invitation state
   const [invitation, setInvitation] = useState<InvitationInfo | null>(
@@ -194,7 +212,31 @@ function LoginForm() {
           aria-live="assertive"
           className="mt-4 border border-[#4A2828] bg-[#211212] p-3 font-mono text-xs text-[#EF5350]"
         >
-          {errorMsg}
+          <div className="font-semibold">{errorMsg}</div>
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => {
+                if (email && password) {
+                  const fakeEvent = { preventDefault: () => {} } as React.FormEvent;
+                  void handleSubmit(fakeEvent);
+                } else {
+                  fillDemoCredentials(true);
+                }
+              }}
+              className="inline-flex items-center gap-1 border border-[#EF5350]/60 bg-[#EF5350]/20 px-2 py-1 text-[11px] uppercase tracking-wider font-bold text-white hover:bg-[#EF5350]/30 transition-colors"
+            >
+              Retry Sign In
+            </button>
+            <button
+              type="button"
+              onClick={() => fillDemoCredentials(false)}
+              className="inline-flex items-center gap-1 border border-aegis-border bg-aegis-card px-2 py-1 text-[11px] uppercase tracking-wider text-aegis-text-muted hover:text-white transition-colors"
+            >
+              Load Demo Credentials
+            </button>
+          </div>
         </div>
       )}
 
@@ -336,7 +378,45 @@ function LoginForm() {
             </button>
           </div>
 
-          <form onSubmit={(e) => void handleSubmit(e)} method="post" className="mt-6 space-y-4">
+          {mode === "login" && (
+            <div className="mt-4 border border-aegis-accent/30 bg-aegis-accent/5 p-3 font-mono text-xs">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-aegis-accent font-semibold text-[11px] uppercase tracking-wider">
+                  <ShieldCheck className="h-3.5 w-3.5 text-aegis-accent" />
+                  <span>EVALUATOR DEMO ACCESS</span>
+                </div>
+                <span className="text-[10px] text-aegis-text-faint font-semibold">ROLE: CHIEF AUDITOR</span>
+              </div>
+              <p className="mt-1 text-[11px] text-aegis-text-muted leading-relaxed">
+                Pre-seeded with active autonomous agents, spending passports, policy sets, and cryptographic audit logs.
+              </p>
+              <div className="mt-2.5 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => fillDemoCredentials(false)}
+                  className="flex-1 border border-aegis-border bg-aegis-card py-1.5 px-2 font-mono text-[10px] uppercase font-semibold text-aegis-text-primary hover:border-aegis-accent transition-colors text-center"
+                >
+                  Fill Credentials
+                </button>
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={() => fillDemoCredentials(true)}
+                  className="flex-1 border border-aegis-accent bg-aegis-accent/20 py-1.5 px-2 font-mono text-[10px] uppercase font-bold text-aegis-accent hover:bg-aegis-accent hover:text-aegis-bg transition-colors disabled:opacity-50 text-center flex items-center justify-center gap-1"
+                >
+                  <span>1-Click Sign In</span>
+                  <ArrowRight className="h-3 w-3" />
+                </button>
+              </div>
+              {demoNotice && (
+                <div className="mt-2 text-[10px] text-aegis-accent flex items-center gap-1">
+                  <span>✓</span> {demoNotice}
+                </div>
+              )}
+            </div>
+          )}
+
+          <form onSubmit={(e) => void handleSubmit(e)} method="post" className="mt-4 space-y-4">
             {mode === "register" && (
               <>
                 <div>
