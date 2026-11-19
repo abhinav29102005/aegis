@@ -1,6 +1,7 @@
 """Shared security primitives for AgentPay Nexus."""
 
 from security.auth import (
+    DEFAULT_PBKDF2_ITERATIONS,
     ROLE_PERMISSIONS,
     AuthContext,
     AuthenticationError,
@@ -56,6 +57,7 @@ from security.tenant import (
 )
 
 __all__ = [
+    "DEFAULT_PBKDF2_ITERATIONS",
     "DEFAULT_TENANT_UUID",
     "ROLE_PERMISSIONS",
     "AuthContext",

@@ -74,16 +74,31 @@ VALID_PAYMENT_TRANSITIONS: dict[PaymentState, frozenset[PaymentState]] = {
 }
 
 
-def can_transition_payment(current: PaymentState, target: PaymentState) -> bool:
+def can_transition_payment(current: PaymentState | str, target: PaymentState | str) -> bool:
     """Return True if transitioning from current to target PaymentState is valid."""
-    return target in VALID_PAYMENT_TRANSITIONS.get(current, frozenset())
+    try:
+        curr_state = PaymentState(current)
+        tgt_state = PaymentState(target)
+    except (ValueError, TypeError):
+        return False
+    return tgt_state in VALID_PAYMENT_TRANSITIONS.get(curr_state, frozenset())
 
 
-def assert_payment_transition(current: PaymentState, target: PaymentState) -> None:
+def assert_payment_transition(current: PaymentState | str, target: PaymentState | str) -> None:
     """Raise ValueError if a payment state transition violates the canonical state machine."""
-    if not can_transition_payment(current, target):
+    try:
+        curr_state = PaymentState(current)
+    except (ValueError, TypeError) as err:
+        raise ValueError(f"Invalid current payment state: {current}") from err
+
+    try:
+        tgt_state = PaymentState(target)
+    except (ValueError, TypeError) as err:
+        raise ValueError(f"Invalid target payment state: {target}") from err
+
+    if not can_transition_payment(curr_state, tgt_state):
         raise ValueError(
-            f"Illegal payment state transition: {current.value} -> {target.value}"
+            f"Illegal payment state transition: {curr_state.value} -> {tgt_state.value}"
         )
 
 
@@ -218,16 +233,31 @@ VALID_DISPUTE_TRANSITIONS: dict[DisputeStatus, frozenset[DisputeStatus]] = {
 }
 
 
-def can_transition_dispute(current: DisputeStatus, target: DisputeStatus) -> bool:
+def can_transition_dispute(current: DisputeStatus | str, target: DisputeStatus | str) -> bool:
     """Return True if transitioning from current to target DisputeStatus is strictly forward."""
-    return target in VALID_DISPUTE_TRANSITIONS.get(current, frozenset())
+    try:
+        curr_state = DisputeStatus(current)
+        tgt_state = DisputeStatus(target)
+    except (ValueError, TypeError):
+        return False
+    return tgt_state in VALID_DISPUTE_TRANSITIONS.get(curr_state, frozenset())
 
 
-def assert_dispute_transition(current: DisputeStatus, target: DisputeStatus) -> None:
+def assert_dispute_transition(current: DisputeStatus | str, target: DisputeStatus | str) -> None:
     """Raise ValueError if a dispute status transition violates the monotonic state machine."""
-    if not can_transition_dispute(current, target):
+    try:
+        curr_state = DisputeStatus(current)
+    except (ValueError, TypeError) as err:
+        raise ValueError(f"Invalid current dispute status: {current}") from err
+
+    try:
+        tgt_state = DisputeStatus(target)
+    except (ValueError, TypeError) as err:
+        raise ValueError(f"Invalid target dispute status: {target}") from err
+
+    if not can_transition_dispute(curr_state, tgt_state):
         raise ValueError(
-            f"Illegal dispute status transition: {current.value} -> {target.value}"
+            f"Illegal dispute status transition: {curr_state.value} -> {tgt_state.value}"
         )
 
 

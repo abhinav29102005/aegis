@@ -48,7 +48,9 @@ def test_financial_event_chain_verification_and_tamper_detection() -> None:
 
 
 def test_password_hashing_and_api_key_generation() -> None:
-    from security import generate_api_key, hash_api_key, hash_password, verify_password
+    from security import DEFAULT_PBKDF2_ITERATIONS, generate_api_key, hash_api_key, hash_password, verify_password
+
+    assert DEFAULT_PBKDF2_ITERATIONS == 600_000
 
     encoded = hash_password("StrongPass!2026", iterations=10_000)
     assert verify_password("StrongPass!2026", encoded)
@@ -62,6 +64,69 @@ def test_password_hashing_and_api_key_generation() -> None:
     digest2 = hash_api_key(plaintext, "pepper-2")
     assert digest1 != digest2
     assert digest1 != plaintext
+
+
+def test_pbkdf2_iterations_salt_entropy_and_edge_cases() -> None:
+    from security import DEFAULT_PBKDF2_ITERATIONS, hash_password, verify_password
+
+    # 1. Iterations: verify default is 600k (OWASP recommendation for PBKDF2-HMAC-SHA256)
+    assert DEFAULT_PBKDF2_ITERATIONS == 600_000
+
+    # 2. Salt entropy: 128 bits (16 bytes = 32 hex chars), generated with CSPRNG per invocation
+    hash1 = hash_password("SecurePassword!123", iterations=1_000)
+    hash2 = hash_password("SecurePassword!123", iterations=1_000)
+    assert hash1 != hash2  # Unique salt per hash
+
+    parts1 = hash1.split("$")
+    assert len(parts1) == 4
+    scheme, iter_str, salt_hex, digest_hex = parts1
+    assert scheme == "pbkdf2_sha256"
+    assert iter_str == "1000"
+    assert len(salt_hex) == 32  # 16 bytes = 128-bit entropy
+    assert len(digest_hex) == 64  # 32 bytes = SHA-256 digest
+    assert bytes.fromhex(salt_hex) != bytes.fromhex(hash2.split("$")[2])
+
+    # 3. Input validation invariants for hash_password
+    with pytest.raises(ValueError, match="at least 8 characters"):
+        hash_password("short")
+    with pytest.raises(TypeError, match="Password must be a string"):
+        hash_password(None)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="exceeds maximum"):
+        hash_password("A" * 4097)
+    with pytest.raises(ValueError, match="positive integer"):
+        hash_password("SecurePassword!123", iterations=0)
+    with pytest.raises(ValueError, match="positive integer"):
+        hash_password("SecurePassword!123", iterations=-100)
+
+    # 4. verify_password edge cases & resilience
+    valid_hash = hash_password("SecurePassword!123", iterations=1_000)
+    assert verify_password("SecurePassword!123", valid_hash) is True
+    assert verify_password("WrongPassword!123", valid_hash) is False
+
+    # None and non-string types must fail gracefully (no AttributeError / TypeError)
+    assert verify_password(None, valid_hash) is False  # type: ignore[arg-type]
+    assert verify_password("SecurePassword!123", None) is False  # type: ignore[arg-type]
+    assert verify_password(12345, valid_hash) is False  # type: ignore[arg-type]
+
+    # Empty, corrupted, or erased hashes
+    assert verify_password("SecurePassword!123", "") is False
+    assert verify_password("SecurePassword!123", "ERASED") is False
+    assert verify_password("SecurePassword!123", "corrupt_hash_string") is False
+    assert verify_password("SecurePassword!123", "argon2$600000$deadbeef$feedface") is False
+    assert verify_password("SecurePassword!123", "pbkdf2_sha256$1000$short$1234") is False
+
+    # Iteration boundaries (negative, 0, or excessive for DoS protection)
+    assert verify_password("SecurePassword!123", f"pbkdf2_sha256$-1${salt_hex}${digest_hex}") is False
+    assert verify_password("SecurePassword!123", f"pbkdf2_sha256$0${salt_hex}${digest_hex}") is False
+    assert verify_password("SecurePassword!123", f"pbkdf2_sha256$10000000${salt_hex}${digest_hex}") is False
+
+    # Low-entropy salt rejection (< 16 bytes = 128 bits)
+    low_entropy_salt = "00" * 8  # only 8 bytes / 64 bits
+    assert verify_password("SecurePassword!123", f"pbkdf2_sha256$1000${low_entropy_salt}${digest_hex}") is False
+
+    # Truncated or malformed digest rejection (!= 32 bytes)
+    truncated_digest = "00" * 16  # only 16 bytes instead of 32 bytes
+    assert verify_password("SecurePassword!123", f"pbkdf2_sha256$1000${salt_hex}${truncated_digest}") is False
 
 
 def test_jwt_token_verification_expiry_and_rbac() -> None:

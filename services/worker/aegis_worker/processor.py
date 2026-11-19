@@ -89,6 +89,7 @@ class OutboxWorker:
         http_client: httpx.AsyncClient | None = None,
         worker_id: str | None = None,
         lease_seconds: int = 60,
+        stop_event: asyncio.Event | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.settings = settings or get_settings()
@@ -97,49 +98,54 @@ class OutboxWorker:
         default_worker_id = f"{socket.gethostname()}-{os.getpid()}"
         self.worker_id = (worker_id or default_worker_id)[:128]
         self.lease_seconds = max(5, int(lease_seconds))
+        self.stop_event = stop_event
 
     def reap_stale_leases(self, *, now: datetime | None = None) -> int:
         """Reclaim or dead-letter PROCESSING outbox rows whose lease has expired."""
         ts = now or _utc_now()
         stale_cutoff = ts - timedelta(seconds=self.lease_seconds)
         with self.session_factory() as session:
-            platform = PlatformRepository(session)
-            stmt = select(OutboxEventRow).where(
-                OutboxEventRow.status == "PROCESSING",
-                or_(
-                    and_(
-                        OutboxEventRow.lease_expires_at.is_not(None),
-                        OutboxEventRow.lease_expires_at < ts,
+            try:
+                platform = PlatformRepository(session)
+                stmt = select(OutboxEventRow).where(
+                    OutboxEventRow.status == "PROCESSING",
+                    or_(
+                        and_(
+                            OutboxEventRow.lease_expires_at.is_not(None),
+                            OutboxEventRow.lease_expires_at < ts,
+                        ),
+                        and_(
+                            OutboxEventRow.lease_expires_at.is_(None),
+                            OutboxEventRow.locked_at.is_not(None),
+                            OutboxEventRow.locked_at < stale_cutoff,
+                        ),
                     ),
-                    and_(
-                        OutboxEventRow.lease_expires_at.is_(None),
-                        OutboxEventRow.locked_at.is_not(None),
-                        OutboxEventRow.locked_at < stale_cutoff,
-                    ),
-                ),
-            )
-            if platform._is_postgres():
-                stmt = stmt.with_for_update(skip_locked=True)
-            stale_rows = list(session.scalars(stmt).all())
-            for row in stale_rows:
-                next_attempts = row.attempts + 1
-                if next_attempts >= self.settings.worker_max_attempts:
-                    platform.mark_outbox_failed(
-                        row.id,
-                        error_message="WORKER_LEASE_EXPIRED",
-                        max_attempts=self.settings.worker_max_attempts,
-                        now=ts,
-                    )
-                else:
-                    row.attempts = next_attempts
-                    row.status = "RETRY"
-                    row.next_retry_at = ts
-                    row.last_error = "WORKER_LEASE_EXPIRED"
-                    row.locked_at = None
-                    row.lease_expires_at = None
-                    row.locked_by = None
-            session.commit()
-            return len(stale_rows)
+                )
+                if platform._is_postgres():
+                    stmt = stmt.with_for_update(skip_locked=True)
+                stale_rows = list(session.scalars(stmt).all())
+                for row in stale_rows:
+                    next_attempts = row.attempts + 1
+                    if next_attempts >= self.settings.worker_max_attempts:
+                        platform.mark_outbox_failed(
+                            row.id,
+                            error_message="WORKER_LEASE_EXPIRED",
+                            max_attempts=self.settings.worker_max_attempts,
+                            now=ts,
+                        )
+                    else:
+                        row.attempts = next_attempts
+                        row.status = "RETRY"
+                        row.next_retry_at = ts
+                        row.last_error = "WORKER_LEASE_EXPIRED"
+                        row.locked_at = None
+                        row.lease_expires_at = None
+                        row.locked_by = None
+                session.commit()
+                return len(stale_rows)
+            except Exception:
+                session.rollback()
+                raise
 
     async def _deliver_to_endpoint(
         self,
@@ -256,55 +262,59 @@ class OutboxWorker:
             )
 
         with self.session_factory() as session:
-            platform = PlatformRepository(session)
-            delivery_errors: list[str] = []
-            has_transient_error = False
-            has_permanent_error = False
-            for outcome in outcomes:
-                session.add(
-                    WebhookDeliveryRow(
-                        id=outcome.delivery_id,
-                        tenant_id=event.tenant_id,
-                        endpoint_id=outcome.endpoint_id,
-                        outbox_event_id=event.id,
-                        event_type=event.event_type,
-                        payload=outcome.body,
-                        status=outcome.status,
-                        attempts=outcome.attempts,
-                        response_status=outcome.response_status,
-                        last_error=outcome.error_message,
-                        delivered_at=outcome.delivered_at,
-                        created_at=ts,
+            try:
+                platform = PlatformRepository(session)
+                delivery_errors: list[str] = []
+                has_transient_error = False
+                has_permanent_error = False
+                for outcome in outcomes:
+                    session.add(
+                        WebhookDeliveryRow(
+                            id=outcome.delivery_id,
+                            tenant_id=event.tenant_id,
+                            endpoint_id=outcome.endpoint_id,
+                            outbox_event_id=event.id,
+                            event_type=event.event_type,
+                            payload=outcome.body,
+                            status=outcome.status,
+                            attempts=outcome.attempts,
+                            response_status=outcome.response_status,
+                            last_error=outcome.error_message,
+                            delivered_at=outcome.delivered_at,
+                            created_at=ts,
+                        )
                     )
-                )
-                if outcome.error_message is not None:
-                    delivery_errors.append(outcome.error_message)
-                    if outcome.permanent_failure:
-                        has_permanent_error = True
-                    else:
-                        has_transient_error = True
+                    if outcome.error_message is not None:
+                        delivery_errors.append(outcome.error_message)
+                        if outcome.permanent_failure:
+                            has_permanent_error = True
+                        else:
+                            has_transient_error = True
 
-            if delivery_errors:
-                effective_max_attempts = (
-                    1 if (has_permanent_error and not has_transient_error) else self.settings.worker_max_attempts
-                )
-                updated = platform.mark_outbox_failed(
-                    event.id,
-                    error_message="; ".join(delivery_errors),
-                    max_attempts=effective_max_attempts,
-                    now=ts,
-                )
-                if updated.status == "RETRY" and updated.next_retry_at is not None:
-                    base_delay = min(300, 5 * (2 ** (updated.attempts - 1)))
-                    jitter = _JITTER_RNG.uniform(0.0, min(10.0, base_delay * 0.25))
-                    updated.next_retry_at = updated.next_retry_at + timedelta(seconds=jitter)
-                    session.flush()
-                result_state = "dead_lettered" if updated.status == "DEAD_LETTER" else "retried"
-            else:
-                platform.mark_outbox_published(event.id, now=ts)
-                result_state = "published"
-            session.commit()
-            return result_state
+                if delivery_errors:
+                    effective_max_attempts = (
+                        1 if (has_permanent_error and not has_transient_error) else self.settings.worker_max_attempts
+                    )
+                    updated = platform.mark_outbox_failed(
+                        event.id,
+                        error_message="; ".join(delivery_errors),
+                        max_attempts=effective_max_attempts,
+                        now=ts,
+                    )
+                    if updated.status == "RETRY" and updated.next_retry_at is not None:
+                        base_delay = min(300, 5 * (2 ** (updated.attempts - 1)))
+                        jitter = _JITTER_RNG.uniform(0.0, min(10.0, base_delay * 0.25))
+                        updated.next_retry_at = updated.next_retry_at + timedelta(seconds=jitter)
+                        session.flush()
+                    result_state = "dead_lettered" if updated.status == "DEAD_LETTER" else "retried"
+                else:
+                    platform.mark_outbox_published(event.id, now=ts)
+                    result_state = "published"
+                session.commit()
+                return result_state
+            except Exception:
+                session.rollback()
+                raise
 
     async def process_outbox_batch(self, *, limit: int = 25, now: datetime | None = None) -> dict[str, int]:
         ts = now or _utc_now()
@@ -314,46 +324,50 @@ class OutboxWorker:
         endpoints_by_event: dict[UUID, list[_EndpointTarget]] = {}
 
         with self.session_factory() as session:
-            platform = PlatformRepository(session)
-            claimed = platform.claim_due_outbox_events(
-                limit=limit,
-                now=ts,
-                worker_id=self.worker_id,
-                lease_seconds=self.lease_seconds,
-            )
-            tenant_ids = {row.tenant_id for row in claimed}
-            active_endpoints_by_tenant: dict[UUID, list[WebhookEndpointRow]] = {tid: [] for tid in tenant_ids}
-            if tenant_ids:
-                ep_rows = list(
-                    session.scalars(
-                        select(WebhookEndpointRow).where(
-                            WebhookEndpointRow.tenant_id.in_(tenant_ids),
-                            WebhookEndpointRow.status == "ACTIVE",
-                        )
-                    ).all()
+            try:
+                platform = PlatformRepository(session)
+                claimed = platform.claim_due_outbox_events(
+                    limit=limit,
+                    now=ts,
+                    worker_id=self.worker_id,
+                    lease_seconds=self.lease_seconds,
                 )
-                for ep in ep_rows:
-                    active_endpoints_by_tenant.setdefault(ep.tenant_id, []).append(ep)
-
-            for row in claimed:
-                claimed_events.append(
-                    _ClaimedEvent(
-                        id=row.id,
-                        tenant_id=row.tenant_id,
-                        aggregate_type=row.aggregate_type,
-                        aggregate_id=row.aggregate_id,
-                        event_type=row.event_type,
-                        payload=dict(row.payload or {}),
-                        created_at=row.created_at,
-                        attempts=row.attempts,
+                tenant_ids = {row.tenant_id for row in claimed}
+                active_endpoints_by_tenant: dict[UUID, list[WebhookEndpointRow]] = {tid: [] for tid in tenant_ids}
+                if tenant_ids:
+                    ep_rows = list(
+                        session.scalars(
+                            select(WebhookEndpointRow).where(
+                                WebhookEndpointRow.tenant_id.in_(tenant_ids),
+                                WebhookEndpointRow.status == "ACTIVE",
+                            )
+                        ).all()
                     )
-                )
-                endpoints_by_event[row.id] = [
-                    _EndpointTarget(id=ep.id, url=ep.url, signing_secret=ep.signing_secret)
-                    for ep in active_endpoints_by_tenant.get(row.tenant_id, [])
-                    if "*" in ep.event_types or row.event_type in ep.event_types
-                ]
-            session.commit()
+                    for ep in ep_rows:
+                        active_endpoints_by_tenant.setdefault(ep.tenant_id, []).append(ep)
+
+                for row in claimed:
+                    claimed_events.append(
+                        _ClaimedEvent(
+                            id=row.id,
+                            tenant_id=row.tenant_id,
+                            aggregate_type=row.aggregate_type,
+                            aggregate_id=row.aggregate_id,
+                            event_type=row.event_type,
+                            payload=dict(row.payload or {}),
+                            created_at=row.created_at,
+                            attempts=row.attempts,
+                        )
+                    )
+                    endpoints_by_event[row.id] = [
+                        _EndpointTarget(id=ep.id, url=ep.url, signing_secret=ep.signing_secret)
+                        for ep in active_endpoints_by_tenant.get(row.tenant_id, [])
+                        if "*" in ep.event_types or row.event_type in ep.event_types
+                    ]
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
 
         if not claimed_events:
             return {"claimed": 0, "published": 0, "retried": 0, "dead_lettered": 0}
@@ -362,7 +376,7 @@ class OutboxWorker:
         own_client = self._injected_http is None
         client = self._injected_http or httpx.AsyncClient(timeout=5.0, follow_redirects=False)
         try:
-            outcomes = await asyncio.gather(
+            results = await asyncio.gather(
                 *(
                     self._process_claimed_event(
                         client=client,
@@ -372,15 +386,28 @@ class OutboxWorker:
                         ts=ts,
                     )
                     for ev in claimed_events
-                )
+                ),
+                return_exceptions=True,
             )
         finally:
             if own_client:
                 await client.aclose()
 
+        outcomes: list[str] = []
+        errors: list[BaseException] = []
+        for r in results:
+            if isinstance(r, BaseException):
+                errors.append(r)
+            else:
+                outcomes.append(r)
+
         published = sum(1 for item in outcomes if item == "published")
         retried = sum(1 for item in outcomes if item == "retried")
         dead_lettered = sum(1 for item in outcomes if item == "dead_lettered")
+
+        if errors:
+            logger.error("Error(s) occurred while processing outbox batch: %s", errors)
+            raise errors[0]
 
         return {
             "claimed": len(claimed_events),
@@ -389,7 +416,12 @@ class OutboxWorker:
             "dead_lettered": dead_lettered,
         }
 
-    async def reconcile_pending_payments(self, *, limit: int = 25) -> dict[str, int]:
+    async def reconcile_pending_payments(
+        self,
+        *,
+        limit: int = 25,
+        stop_event: asyncio.Event | None = None,
+    ) -> dict[str, int]:
         with self.session_factory() as session:
             platform = PlatformRepository(session)
             pending = platform.list_pending_provider_attempts(
@@ -401,7 +433,11 @@ class OutboxWorker:
         checked = 0
         reconciled = 0
         errors = 0
+        effective_stop = stop_event or self.stop_event
         for tenant_id, intent_id, attempt_id in targets:
+            if effective_stop is not None and effective_stop.is_set():
+                logger.info("Worker shutdown requested; stopping pending reconciliation loop early")
+                break
             with self.session_factory() as session:
                 try:
                     platform = PlatformRepository(session)
@@ -436,7 +472,18 @@ class OutboxWorker:
 
         return {"checked": checked, "reconciled": reconciled, "errors": errors}
 
-    async def run_once(self, *, now: datetime | None = None) -> dict[str, Any]:
+    async def run_once(
+        self,
+        *,
+        now: datetime | None = None,
+        stop_event: asyncio.Event | None = None,
+    ) -> dict[str, Any]:
+        effective_stop = stop_event or self.stop_event
         outbox_stats = await self.process_outbox_batch(now=now)
-        reconcile_stats = await self.reconcile_pending_payments()
+        if effective_stop is not None and effective_stop.is_set():
+            return {
+                "outbox": outbox_stats,
+                "reconciliation": {"checked": 0, "reconciled": 0, "errors": 0},
+            }
+        reconcile_stats = await self.reconcile_pending_payments(stop_event=effective_stop)
         return {"outbox": outbox_stats, "reconciliation": reconcile_stats}

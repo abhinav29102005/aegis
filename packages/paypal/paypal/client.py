@@ -54,6 +54,26 @@ def paypal_value_to_minor(value_str: str, currency: str = "USD") -> int:
     return decimal_str_to_minor(value_str, currency)
 
 
+def validate_paypal_request_id(request_id: str, field_name: str = "request_id") -> str:
+    """Validate and sanitize a PayPal-Request-Id header value according to PayPal specifications.
+
+    PayPal specifications:
+    - 1 to 128 characters
+    - Must not be empty or whitespace
+    - Must not contain CRLF or control characters (HTTP header injection guard)
+    """
+    if not isinstance(request_id, str):
+        raise TypeError(f"{field_name} must be a string, got {type(request_id).__name__}")
+    cleaned = request_id.strip()
+    if not cleaned:
+        raise ValueError(f"{field_name} must not be empty or whitespace")
+    if len(cleaned) > 128:
+        raise ValueError(f"{field_name} length ({len(cleaned)}) exceeds PayPal limit of 128 characters")
+    if any(c in cleaned for c in "\r\n\x00"):
+        raise ValueError(f"{field_name} must not contain newline or control characters")
+    return cleaned
+
+
 @dataclass(frozen=True)
 class PayPalOrderCreationResult:
     paypal_order_id: str
@@ -147,12 +167,14 @@ class PayPalExecutorProtocol(Protocol):
         files: Sequence[tuple[str, bytes] | tuple[str, bytes, str]]
         | dict[str, tuple[str, bytes, str] | tuple[str, bytes] | bytes]
         | None = None,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]: ...
 
     async def accept_claim(
         self,
         dispute_id: str,
         note: str | None = None,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]: ...
 
 
@@ -298,13 +320,24 @@ class PayPalSandboxClient:
         return_url: str | None = None,
         cancel_url: str | None = None,
     ) -> PayPalOrderCreationResult:
+        if amount_minor <= 0:
+            raise ValueError("amount_minor must be positive")
+        clean_request_id = validate_paypal_request_id(request_id, "request_id")
+        if not reference_id or not reference_id.strip():
+            raise ValueError("reference_id must not be empty")
+        if (return_url is not None and not cancel_url) or (cancel_url is not None and not return_url):
+            raise ValueError("return_url and cancel_url must both be provided or both omitted")
+
         token = await self.get_access_token()
-        upper_currency = currency.upper()
+        upper_currency = currency.strip().upper()
+        if not upper_currency:
+            raise ValueError("currency must not be empty")
+
         payload: dict[str, Any] = {
             "intent": "CAPTURE",
             "purchase_units": [
                 {
-                    "reference_id": reference_id,
+                    "reference_id": reference_id.strip(),
                     "description": description[:127],
                     "amount": {
                         "currency_code": upper_currency,
@@ -332,7 +365,7 @@ class PayPalSandboxClient:
             headers={
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
-                "PayPal-Request-Id": request_id,
+                "PayPal-Request-Id": clean_request_id,
             },
         )
 
@@ -343,13 +376,22 @@ class PayPalSandboxClient:
                 debug_id=resp.headers.get("PayPal-Debug-Id"),
             )
         data = resp.json()
+        order_id = data.get("id")
+        status = data.get("status")
+        if not order_id or not status:
+            raise PayPalAPIError(
+                f"Malformed PayPal create order response (missing id or status): {data}",
+                status_code=resp.status_code,
+                debug_id=resp.headers.get("PayPal-Debug-Id"),
+            )
+
         approval_url = next(
             (link["href"] for link in data.get("links", []) if link.get("rel") in ("approve", "payer-action")),
             None,
         )
         return PayPalOrderCreationResult(
-            paypal_order_id=data["id"],
-            status=data["status"],
+            paypal_order_id=order_id,
+            status=status,
             approval_url=approval_url,
             raw_response=data,
         )
@@ -380,6 +422,7 @@ class PayPalSandboxClient:
         request_id: str,
     ) -> PayPalCaptureResult:
         """Capture an approved PayPal order and verify status + amount against PayPal."""
+        clean_request_id = validate_paypal_request_id(request_id, "request_id")
         order_data = await self.get_order(paypal_order_id=paypal_order_id)
         order_status = order_data.get("status")
         if order_status not in ("APPROVED", "COMPLETED"):
@@ -406,11 +449,23 @@ class PayPalSandboxClient:
             headers={
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
-                "PayPal-Request-Id": request_id,
+                "PayPal-Request-Id": clean_request_id,
             },
         )
 
         if resp.status_code >= 400:
+            if resp.status_code == 422 and any(
+                issue in resp.text for issue in ("ORDER_ALREADY_CAPTURED", "ORDER_COMPLETED_OR_VOIDED")
+            ):
+                refetched = await self.get_order(paypal_order_id=paypal_order_id)
+                if refetched.get("status") == "COMPLETED":
+                    verified = self._extract_verified_capture(
+                        refetched,
+                        paypal_order_id=paypal_order_id,
+                        expected_amount_minor=expected_amount_minor,
+                        expected_currency=expected_currency,
+                    )
+                    return PayPalCaptureResult(verified_capture=verified, raw_response=refetched)
             raise PayPalAPIError(
                 f"PayPal capture failed ({resp.status_code}): {resp.text}",
                 status_code=resp.status_code,
@@ -468,7 +523,10 @@ class PayPalSandboxClient:
 
         token = await self.get_access_token()
         upper_currency = currency.upper()
-        request_id = idempotency_key or str(uuid4())
+        if idempotency_key is not None and idempotency_key.strip():
+            request_id = validate_paypal_request_id(idempotency_key, "idempotency_key")
+        else:
+            request_id = str(uuid4())
         payload: dict[str, Any] = {
             "amount": {
                 "currency_code": upper_currency,
@@ -507,7 +565,10 @@ class PayPalSandboxClient:
             raise ValueError("authorization_id must not be empty")
 
         token = await self.get_access_token()
-        request_id = idempotency_key or str(uuid4())
+        if idempotency_key is not None and idempotency_key.strip():
+            request_id = validate_paypal_request_id(idempotency_key, "idempotency_key")
+        else:
+            request_id = str(uuid4())
         resp = await self._request(
             "POST",
             f"/v2/payments/authorizations/{authorization_id}/void",
@@ -519,6 +580,8 @@ class PayPalSandboxClient:
             },
         )
         if resp.status_code >= 400:
+            if resp.status_code == 422 and "AUTHORIZATION_ALREADY_VOIDED" in resp.text:
+                return {"id": authorization_id, "status": "VOIDED"}
             raise PayPalAPIError(
                 f"PayPal void authorization failed ({resp.status_code}): {resp.text}",
                 status_code=resp.status_code,
@@ -544,16 +607,20 @@ class PayPalSandboxClient:
             "paypal-transmission-sig",
             "paypal-transmission-time",
         ]
-        if any(not normalized.get(k) for k in required_keys):
+        if any(not (normalized.get(k) or "").strip() for k in required_keys):
+            return False
+
+        cert_url = normalized["paypal-cert-url"].strip()
+        if not cert_url.lower().startswith("https://"):
             return False
 
         token = await self.get_access_token()
         body = {
-            "auth_algo": normalized["paypal-auth-algo"],
-            "cert_url": normalized["paypal-cert-url"],
-            "transmission_id": normalized["paypal-transmission-id"],
-            "transmission_sig": normalized["paypal-transmission-sig"],
-            "transmission_time": normalized["paypal-transmission-time"],
+            "auth_algo": normalized["paypal-auth-algo"].strip(),
+            "cert_url": cert_url,
+            "transmission_id": normalized["paypal-transmission-id"].strip(),
+            "transmission_sig": normalized["paypal-transmission-sig"].strip(),
+            "transmission_time": normalized["paypal-transmission-time"].strip(),
             "webhook_id": self.settings.paypal_webhook_id,
             "webhook_event": webhook_event,
         }
@@ -567,7 +634,11 @@ class PayPalSandboxClient:
 
         if resp.status_code >= 400:
             return False
-        return resp.json().get("verification_status") == "SUCCESS"
+        try:
+            data = resp.json()
+            return isinstance(data, dict) and data.get("verification_status") == "SUCCESS"
+        except (ValueError, TypeError, AttributeError):
+            return False
 
     async def list_disputes(
         self,

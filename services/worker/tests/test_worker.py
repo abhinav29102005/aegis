@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import signal
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -11,6 +13,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from sqlalchemy import event, text
 from aegis_sdk import verify_webhook_signature
 from aegis_worker import OutboxWorker, check_worker_health, touch_heartbeat
 from aegis_worker.main import main as worker_main
@@ -26,6 +29,7 @@ from contracts import (
 from database import (
     LedgerRepository,
     OutboxEventRow,
+    PaymentAttemptRow,
     PlatformRepository,
     create_db_engine,
     create_session_factory,
@@ -601,3 +605,279 @@ async def test_worker_reconciles_pending_provider_payments(tmp_path: Path) -> No
         refreshed = LedgerRepository(session).get_intent(tenant_id, intent_id)
         assert refreshed is not None
         assert refreshed.state == PaymentState.SUCCEEDED
+
+
+@pytest.mark.asyncio
+async def test_outbox_batch_database_session_isolation_and_error_containment(tmp_path: Path) -> None:
+    db_url = f"sqlite:///{tmp_path / 'worker_session_isolation.db'}"
+    engine = create_db_engine(db_url)
+    init_db(engine)
+    real_session_factory = create_session_factory(engine)
+
+    active_sessions = 0
+    max_active_sessions_during_http = 0
+    created_sessions: list[int] = []
+
+    class InstrumentedSessionFactory:
+        def __call__(self):
+            nonlocal active_sessions
+            sess = real_session_factory()
+            created_sessions.append(id(sess))
+
+            class SessionContextWrapper:
+                def __enter__(self_inner):
+                    nonlocal active_sessions
+                    active_sessions += 1
+                    return sess.__enter__()
+
+                def __exit__(self_inner, exc_type, exc_val, exc_tb):
+                    nonlocal active_sessions
+                    try:
+                        return sess.__exit__(exc_type, exc_val, exc_tb)
+                    finally:
+                        active_sessions -= 1
+
+            return SessionContextWrapper()
+
+    session_factory = InstrumentedSessionFactory()
+
+    settings = NexusSettings(
+        database_url=db_url,
+        worker_max_attempts=3,
+    )
+    secret = "whsec_iso_123"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal max_active_sessions_during_http
+        max_active_sessions_during_http = max(max_active_sessions_during_http, active_sessions)
+        return httpx.Response(200, json={"ok": True})
+
+    # Seed 3 events
+    event_ids: list[object] = []
+    with real_session_factory() as session:
+        platform = PlatformRepository(session)
+        ledger = LedgerRepository(session)
+        org = platform.create_organization(name="Iso Org", slug="iso-org")
+        platform.create_webhook_endpoint(
+            tenant_id=org.id,
+            url="https://webhook.iso.example/hook",
+            description="isolation test",
+            signing_secret=secret,
+            event_types=["*"],
+        )
+        for i in range(3):
+            ev = ledger.append_financial_event(
+                tenant_id=org.id,
+                correlation_id=uuid4(),
+                payment_intent_id=None,
+                event_type=FinancialEventType.PROPOSAL_CREATED,
+                actor_type="SYSTEM",
+                actor_id="test",
+                payload={"index": i},
+            )
+            event_ids.append(ev.id)
+        session.commit()
+        tenant_id = org.id
+
+    # 1. Verify that during HTTP requests, 0 DB sessions are open
+    created_sessions.clear()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        worker = OutboxWorker(session_factory, settings=settings, http_client=http_client)
+        res = await worker.process_outbox_batch(limit=10)
+        assert res["claimed"] == 3
+        assert res["published"] == 3
+
+    assert max_active_sessions_during_http == 0
+    # At least 1 for reap, 1 for claim, and 3 distinct sessions for the 3 event outcome recordings
+    assert len(created_sessions) >= 5
+    assert len(set(created_sessions)) == len(created_sessions)
+
+    with real_session_factory() as session:
+        platform = PlatformRepository(session)
+        outbox_rows = platform.list_outbox_events(tenant_id)
+        assert all(row.status == "PUBLISHED" for row in outbox_rows)
+        deliveries = platform.list_webhook_deliveries(tenant_id)
+        assert len(deliveries) == 3
+        assert all(d.status == "DELIVERED" for d in deliveries)
+
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("test_sig", [signal.SIGTERM, signal.SIGINT])
+async def test_graceful_shutdown_on_signals(tmp_path: Path, test_sig: signal.Signals) -> None:
+    db_url = f"sqlite:///{tmp_path / f'worker_signal_{test_sig.name}.db'}"
+    engine = create_db_engine(db_url)
+    init_db(engine)
+    engine.dispose()
+
+    hb_path = tmp_path / f"heartbeat_{test_sig.name}"
+    settings = NexusSettings(database_url=db_url, worker_poll_interval_seconds=10.0)
+
+    loop = asyncio.get_running_loop()
+    worker_task = asyncio.create_task(
+        run_worker_loop(settings=settings, heartbeat_path=hb_path)
+    )
+
+    # Allow worker to start and register signals
+    await asyncio.sleep(0.05)
+    assert not worker_task.done()
+
+    # Deliver signal to process
+    os.kill(os.getpid(), test_sig)
+
+    # Worker must wake up immediately from sleep and finish cleanly
+    await asyncio.wait_for(worker_task, timeout=2.0)
+    assert worker_task.done()
+    assert worker_task.exception() is None
+
+    # Verify signal handlers were cleanly deregistered from event loop in finally block
+    # In asyncio, removing a signal handler returns False when called again if it was already removed
+    assert loop.remove_signal_handler(test_sig) is False
+
+
+@pytest.mark.asyncio
+async def test_shutdown_during_inflight_outbox_processing(tmp_path: Path) -> None:
+    db_url = f"sqlite:///{tmp_path / 'worker_inflight.db'}"
+    engine = create_db_engine(db_url)
+    init_db(engine)
+    session_factory = create_session_factory(engine)
+    settings = NexusSettings(database_url=db_url, worker_poll_interval_seconds=15.0)
+
+    secret = "whsec_inflight_test"
+    inflight_delivered = asyncio.Event()
+
+    async def slow_handler(request: httpx.Request) -> httpx.Response:
+        # Simulate in-flight async network delay, then fire SIGTERM during it
+        await asyncio.sleep(0.1)
+        os.kill(os.getpid(), signal.SIGTERM)
+        await asyncio.sleep(0.1)
+        inflight_delivered.set()
+        return httpx.Response(200, json={"ok": True})
+
+    with session_factory() as session:
+        platform = PlatformRepository(session)
+        ledger = LedgerRepository(session)
+        org = platform.create_organization(name="Inflight Org", slug="inflight-org")
+        platform.create_webhook_endpoint(
+            tenant_id=org.id,
+            url="https://hooks.example.test/inflight",
+            description="inflight test",
+            signing_secret=secret,
+            event_types=["*"],
+        )
+        ledger.append_financial_event(
+            tenant_id=org.id,
+            correlation_id=uuid4(),
+            payment_intent_id=None,
+            event_type=FinancialEventType.PROPOSAL_CREATED,
+            actor_type="SYSTEM",
+            actor_id="test",
+            payload={"amount_minor": 9900},
+        )
+        session.commit()
+        tenant_id = org.id
+
+    hb_path = tmp_path / "hb_inflight"
+    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(slow_handler))
+
+    orig_init = OutboxWorker.__init__
+
+    def patched_init(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        kwargs["http_client"] = mock_client
+        orig_init(self, *args, **kwargs)
+
+    worker_task: asyncio.Task[None]
+    try:
+        OutboxWorker.__init__ = patched_init  # type: ignore[assignment]
+        worker_task = asyncio.create_task(
+            run_worker_loop(settings=settings, heartbeat_path=hb_path)
+        )
+        # Worker must finish in-flight webhook and terminate cleanly well before poll_interval (15s)
+        await asyncio.wait_for(worker_task, timeout=3.0)
+    finally:
+        OutboxWorker.__init__ = orig_init  # type: ignore[assignment]
+        await mock_client.aclose()
+
+    assert inflight_delivered.is_set()
+    assert worker_task.done()
+    assert worker_task.exception() is None
+
+    # In-flight delivery must have completed atomically and been committed to database
+    with session_factory() as session:
+        platform = PlatformRepository(session)
+        events = platform.list_outbox_events(tenant_id)
+        assert len(events) == 1
+        assert events[0].status == "PUBLISHED"
+        deliveries = platform.list_webhook_deliveries(tenant_id)
+        assert len(deliveries) == 1
+        assert deliveries[0].status == "DELIVERED"
+
+
+@pytest.mark.asyncio
+async def test_shutdown_aborts_pending_reconciliation_early(tmp_path: Path) -> None:
+    db_url = f"sqlite:///{tmp_path / 'worker_reconcile_abort.db'}"
+    engine = create_db_engine(db_url)
+
+    @event.listens_for(engine, "connect")
+    def _disable_fk(dbapi_conn, _record):  # type: ignore[no-untyped-def]
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA foreign_keys=OFF")
+        cursor.close()
+
+    init_db(engine)
+    session_factory = create_session_factory(engine)
+    settings = NexusSettings(database_url=db_url)
+
+    stop_event = asyncio.Event()
+    reconciled_count = 0
+
+    def mock_pp(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"id": "PP-ORD-1", "status": "COMPLETED", "purchase_units": [{"payments": {"captures": []}}]})
+
+    pp_client = PayPalSandboxClient(
+        settings=settings,
+        http_client=httpx.AsyncClient(base_url="https://api-m.sandbox.paypal.com", transport=httpx.MockTransport(mock_pp)),
+    )
+
+    with session_factory() as session:
+        platform = PlatformRepository(session)
+        org = platform.create_organization(name="Reconcile Abort Org", slug="rec-abort-org")
+        # Add 3 fake pending attempts
+        for i in range(3):
+            session.add(
+                PaymentAttemptRow(
+                    id=uuid4(),
+                    tenant_id=org.id,
+                    correlation_id=uuid4(),
+                    payment_intent_id=uuid4(),
+                    attempt_number=1,
+                    provider="PAYPAL",
+                    paypal_order_id=f"PP-ORD-{i}",
+                    state=PaymentState.PENDING_PROVIDER.value,
+                    idempotency_key=f"rec-abort-{i}",
+                    created_at=datetime.now(UTC),
+                )
+            )
+        session.commit()
+
+    worker = OutboxWorker(session_factory, settings=settings, paypal_client=pp_client, stop_event=stop_event)
+
+    # Patch PaymentCoordinator.reconcile_pending to set stop_event after the first invocation
+    from guardian.payments.coordinator import PaymentCoordinator
+
+    orig_reconcile = PaymentCoordinator.reconcile_pending
+
+    async def single_then_stop(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal reconciled_count
+        reconciled_count += 1
+        stop_event.set()
+
+    PaymentCoordinator.reconcile_pending = single_then_stop  # type: ignore[assignment]
+    try:
+        res = await worker.reconcile_pending_payments()
+        # Only 1 attempt should have been checked/reconciled before early loop abort
+        assert res["checked"] == 1
+        assert res["reconciled"] == 1
+        assert reconciled_count == 1
+    finally:
+        PaymentCoordinator.reconcile_pending = orig_reconcile  # type: ignore[assignment]

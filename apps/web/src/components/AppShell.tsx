@@ -286,6 +286,20 @@ export function AppShell({
             </div>
 
             <div className="flex items-center gap-2.5">
+              {/* AEGIS Platform Health Status Pill */}
+              <div className="hidden md:flex items-center gap-2 border border-[#00F2FE]/30 bg-[#0A0D12] px-3 py-1 text-[11px] font-mono text-aegis-text-muted shadow-sm">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00F2FE] opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-[#00F2FE]"></span>
+                </span>
+                <span className="text-[#00F2FE] font-bold">AEGIS BLACK BOX:</span>
+                <span className="text-aegis-accent font-semibold">ONLINE</span>
+                <span className="text-aegis-text-faint">|</span>
+                <span className="text-aegis-text-primary">355 TESTS VERIFIED</span>
+                <span className="text-aegis-text-faint">|</span>
+                <span className="text-aegis-accent font-semibold">96.5/100 AUDIT SCORE</span>
+              </div>
+
               <div className="flex items-center border border-aegis-border bg-aegis-surface px-2 py-1">
                 <span className="font-mono text-[10px] uppercase tracking-wider text-aegis-text-faint mr-2 hidden sm:inline">
                   TENANT:

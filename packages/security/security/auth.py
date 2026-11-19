@@ -154,31 +154,54 @@ def validate_role_assignment(actor_role: Role | str, target_role: Role | str) ->
 # ------------------------------------------------------------------
 # Password Hashing (PBKDF2-HMAC-SHA256)
 # ------------------------------------------------------------------
-_PBKDF2_ITERATIONS = 600_000
+DEFAULT_PBKDF2_ITERATIONS = 600_000
+_PBKDF2_ITERATIONS = DEFAULT_PBKDF2_ITERATIONS
+_MIN_PBKDF2_ITERATIONS = 1_000
+_MAX_PBKDF2_ITERATIONS = 5_000_000
+_SALT_BYTES = 16
+_MIN_PASSWORD_LENGTH = 8
+_MAX_PASSWORD_LENGTH = 4096
 
 
-def hash_password(password: str, *, iterations: int = _PBKDF2_ITERATIONS) -> str:
+def hash_password(password: str, *, iterations: int = DEFAULT_PBKDF2_ITERATIONS) -> str:
     """Hash a password using PBKDF2-HMAC-SHA256 with a 128-bit random salt."""
-    if len(password) < 8:
-        raise ValueError("Password must be at least 8 characters")
-    salt = os.urandom(16)
+    if not isinstance(password, str):
+        raise TypeError("Password must be a string")
+    if len(password) < _MIN_PASSWORD_LENGTH:
+        raise ValueError(f"Password must be at least {_MIN_PASSWORD_LENGTH} characters")
+    if len(password) > _MAX_PASSWORD_LENGTH:
+        raise ValueError(f"Password exceeds maximum allowed length of {_MAX_PASSWORD_LENGTH} characters")
+    if not isinstance(iterations, int) or iterations < 1:
+        raise ValueError("Iterations must be a positive integer")
+    salt = os.urandom(_SALT_BYTES)
     digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
     return f"pbkdf2_sha256${iterations}${salt.hex()}${digest.hex()}"
 
 
 def verify_password(password: str, encoded_hash: str) -> bool:
     """Verify a plaintext password against a stored PBKDF2-HMAC-SHA256 hash."""
+    if not isinstance(password, str) or not isinstance(encoded_hash, str):
+        return False
+    if len(password) > _MAX_PASSWORD_LENGTH:
+        return False
     try:
-        scheme, iter_str, salt_hex, digest_hex = encoded_hash.split("$", 3)
+        parts = encoded_hash.split("$")
+        if len(parts) != 4:
+            return False
+        scheme, iter_str, salt_hex, digest_hex = parts
         if scheme != "pbkdf2_sha256":
             return False
         iterations = int(iter_str)
+        if iterations < 1 or iterations > _MAX_PBKDF2_ITERATIONS:
+            return False
         salt = bytes.fromhex(salt_hex)
         expected = bytes.fromhex(digest_hex)
-    except (ValueError, TypeError):
+        if len(salt) < _SALT_BYTES or len(expected) != 32:
+            return False
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+        return hmac.compare_digest(actual, expected)
+    except Exception:
         return False
-    actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
-    return hmac.compare_digest(actual, expected)
 
 
 # ------------------------------------------------------------------

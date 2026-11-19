@@ -12,6 +12,9 @@ dependencies = [
     "pydantic>=2.9.0,<3.0.0",
 ]
 
+[project.scripts]
+aegis = "aegis_sdk.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["aegis_sdk*"]

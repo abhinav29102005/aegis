@@ -397,3 +397,298 @@ async def test_list_disputes_timeout_and_api_errors() -> None:
     assert exc_info.value.status_code == 403
     assert exc_info.value.debug_id == "dbg-403"
     await e_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_create_order_input_validation() -> None:
+    client = PayPalSandboxClient(_sandbox_settings())
+
+    with pytest.raises(ValueError, match="amount_minor must be positive"):
+        await client.create_order(
+            amount_minor=0,
+            currency="USD",
+            reference_id="ref-1",
+            description="desc",
+            request_id="req-1",
+        )
+
+    with pytest.raises(ValueError, match="amount_minor must be positive"):
+        await client.create_order(
+            amount_minor=-100,
+            currency="USD",
+            reference_id="ref-1",
+            description="desc",
+            request_id="req-1",
+        )
+
+    with pytest.raises(ValueError, match="request_id must not be empty"):
+        await client.create_order(
+            amount_minor=100,
+            currency="USD",
+            reference_id="ref-1",
+            description="desc",
+            request_id="   ",
+        )
+
+    with pytest.raises(ValueError, match="reference_id must not be empty"):
+        await client.create_order(
+            amount_minor=100,
+            currency="USD",
+            reference_id="",
+            description="desc",
+            request_id="req-1",
+        )
+
+    with pytest.raises(ValueError, match="return_url and cancel_url must both be provided or both omitted"):
+        await client.create_order(
+            amount_minor=100,
+            currency="USD",
+            reference_id="ref-1",
+            description="desc",
+            request_id="req-1",
+            return_url="https://example.com/return",
+            cancel_url=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_order_with_experience_context_and_payer_action() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/oauth2/token":
+            return httpx.Response(200, json={"access_token": "tok-exp", "expires_in": 3600})
+        if request.url.path == "/v2/checkout/orders" and request.method == "POST":
+            body = json.loads(request.content)
+            assert body["payment_source"]["paypal"]["experience_context"]["return_url"] == "https://app.test/return"
+            assert body["payment_source"]["paypal"]["experience_context"]["cancel_url"] == "https://app.test/cancel"
+            assert body["payment_source"]["paypal"]["experience_context"]["user_action"] == "PAY_NOW"
+            return httpx.Response(
+                201,
+                json={
+                    "id": "ORD-EXP-1",
+                    "status": "CREATED",
+                    "links": [{"rel": "payer-action", "href": "https://www.sandbox.paypal.com/checkoutnow?token=ORD-EXP-1"}],
+                },
+            )
+        return httpx.Response(404)
+
+    async_client = httpx.AsyncClient(base_url="https://api-m.sandbox.paypal.com", transport=httpx.MockTransport(handler))
+    client = PayPalSandboxClient(_sandbox_settings(), http_client=async_client)
+
+    result = await client.create_order(
+        amount_minor=5000,
+        currency="USD",
+        reference_id="ref-exp",
+        description="Experience context test",
+        request_id="req-exp-1",
+        return_url="https://app.test/return",
+        cancel_url="https://app.test/cancel",
+    )
+    assert result.paypal_order_id == "ORD-EXP-1"
+    assert result.status == "CREATED"
+    assert result.approval_url == "https://www.sandbox.paypal.com/checkoutnow?token=ORD-EXP-1"
+    await async_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_create_order_malformed_response_and_api_error() -> None:
+    def malformed_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/oauth2/token":
+            return httpx.Response(200, json={"access_token": "tok-err", "expires_in": 3600})
+        if request.url.path == "/v2/checkout/orders" and request.method == "POST":
+            # Missing "id"
+            return httpx.Response(200, json={"status": "CREATED"})
+        return httpx.Response(404)
+
+    m_client = httpx.AsyncClient(base_url="https://api-m.sandbox.paypal.com", transport=httpx.MockTransport(malformed_handler))
+    client = PayPalSandboxClient(_sandbox_settings(), http_client=m_client)
+
+    with pytest.raises(PayPalAPIError, match="missing id or status"):
+        await client.create_order(
+            amount_minor=1000,
+            currency="USD",
+            reference_id="ref-mal",
+            description="Malformed test",
+            request_id="req-mal-1",
+        )
+    await m_client.aclose()
+
+    def api_err_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/oauth2/token":
+            return httpx.Response(200, json={"access_token": "tok-err", "expires_in": 3600})
+        if request.url.path == "/v2/checkout/orders" and request.method == "POST":
+            return httpx.Response(
+                422,
+                headers={"PayPal-Debug-Id": "dbg-create-422"},
+                text='{"name":"UNPROCESSABLE_ENTITY","details":[{"field":"/purchase_units/0/amount/value","issue":"CANNOT_BE_NEGATIVE"}]}',
+            )
+        return httpx.Response(404)
+
+    e_client = httpx.AsyncClient(base_url="https://api-m.sandbox.paypal.com", transport=httpx.MockTransport(api_err_handler))
+    client2 = PayPalSandboxClient(_sandbox_settings(), http_client=e_client)
+
+    with pytest.raises(PayPalAPIError) as exc_info:
+        await client2.create_order(
+            amount_minor=1000,
+            currency="USD",
+            reference_id="ref-422",
+            description="422 test",
+            request_id="req-422-1",
+        )
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.debug_id == "dbg-create-422"
+    assert "UNPROCESSABLE_ENTITY" in str(exc_info.value)
+    await e_client.aclose()
+
+
+
+def _valid_test_webhook_headers() -> dict[str, str]:
+    return {
+        "PAYPAL-AUTH-ALGO": "SHA256withRSA",
+        "PAYPAL-CERT-URL": "https://api.sandbox.paypal.com/v1/notifications/certs/CERT-SB-1",
+        "PAYPAL-TRANSMISSION-ID": "trans-id-12345",
+        "PAYPAL-TRANSMISSION-SIG": "mock-transmission-sig",
+        "PAYPAL-TRANSMISSION-TIME": "2026-11-19T18:00:00Z",
+    }
+
+
+@pytest.mark.asyncio
+async def test_verify_webhook_signature_success() -> None:
+    verified_requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/oauth2/token":
+            return httpx.Response(200, json={"access_token": "tok-wh", "expires_in": 3600})
+        if request.url.path == "/v1/notifications/verify-webhook-signature" and request.method == "POST":
+            body = json.loads(request.content)
+            verified_requests.append(body)
+            assert body["auth_algo"] == "SHA256withRSA"
+            assert body["cert_url"] == "https://api.sandbox.paypal.com/v1/notifications/certs/CERT-SB-1"
+            assert body["transmission_id"] == "trans-id-12345"
+            assert body["transmission_sig"] == "mock-transmission-sig"
+            assert body["transmission_time"] == "2026-11-19T18:00:00Z"
+            assert body["webhook_id"] == "WH-123"
+            assert body["webhook_event"]["id"] == "WH-EVT-100"
+            return httpx.Response(200, json={"verification_status": "SUCCESS"})
+        return httpx.Response(404)
+
+    async_client = httpx.AsyncClient(base_url="https://api-m.sandbox.paypal.com", transport=httpx.MockTransport(handler))
+    client = PayPalSandboxClient(_sandbox_settings(), http_client=async_client, retry_base_delay=0.0)
+
+    result = await client.verify_webhook_signature(
+        headers=_valid_test_webhook_headers(),
+        webhook_event={"id": "WH-EVT-100", "event_type": "PAYMENT.CAPTURE.COMPLETED"},
+    )
+    assert result is True
+    assert len(verified_requests) == 1
+    await async_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_verify_webhook_signature_failure_status_and_upstream_error() -> None:
+    state = {"status_code": 200, "verification_status": "FAILURE"}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/oauth2/token":
+            return httpx.Response(200, json={"access_token": "tok-wh", "expires_in": 3600})
+        if request.url.path == "/v1/notifications/verify-webhook-signature":
+            if state["status_code"] >= 400:
+                return httpx.Response(state["status_code"], text="bad request")
+            return httpx.Response(200, json={"verification_status": state["verification_status"]})
+        return httpx.Response(404)
+
+    async_client = httpx.AsyncClient(base_url="https://api-m.sandbox.paypal.com", transport=httpx.MockTransport(handler))
+    client = PayPalSandboxClient(_sandbox_settings(), http_client=async_client, retry_base_delay=0.0)
+
+    # Status 200 with verification_status = FAILURE
+    res_fail = await client.verify_webhook_signature(
+        headers=_valid_test_webhook_headers(),
+        webhook_event={"id": "WH-EVT-100"},
+    )
+    assert res_fail is False
+
+    # Status 400 from PayPal API
+    state["status_code"] = 400
+    res_err = await client.verify_webhook_signature(
+        headers=_valid_test_webhook_headers(),
+        webhook_event={"id": "WH-EVT-100"},
+    )
+    assert res_err is False
+
+    await async_client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "missing_or_invalid_header",
+    [
+        "PAYPAL-AUTH-ALGO",
+        "PAYPAL-CERT-URL",
+        "PAYPAL-TRANSMISSION-ID",
+        "PAYPAL-TRANSMISSION-SIG",
+        "PAYPAL-TRANSMISSION-TIME",
+    ],
+)
+async def test_verify_webhook_signature_rejects_missing_empty_whitespace_without_network(
+    missing_or_invalid_header: str,
+) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, json={"verification_status": "SUCCESS"})
+
+    async_client = httpx.AsyncClient(base_url="https://api-m.sandbox.paypal.com", transport=httpx.MockTransport(handler))
+    client = PayPalSandboxClient(_sandbox_settings(), http_client=async_client, retry_base_delay=0.0)
+
+    # Missing header
+    headers = _valid_test_webhook_headers()
+    headers.pop(missing_or_invalid_header)
+    assert await client.verify_webhook_signature(headers=headers, webhook_event={}) is False
+    assert calls == 0
+
+    # Empty string header
+    headers = _valid_test_webhook_headers()
+    headers[missing_or_invalid_header] = ""
+    assert await client.verify_webhook_signature(headers=headers, webhook_event={}) is False
+    assert calls == 0
+
+    # Whitespace-only header
+    headers = _valid_test_webhook_headers()
+    headers[missing_or_invalid_header] = "   "
+    assert await client.verify_webhook_signature(headers=headers, webhook_event={}) is False
+    assert calls == 0
+
+    await async_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_verify_webhook_signature_rejects_non_https_cert_url_without_network() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, json={"verification_status": "SUCCESS"})
+
+    async_client = httpx.AsyncClient(base_url="https://api-m.sandbox.paypal.com", transport=httpx.MockTransport(handler))
+    client = PayPalSandboxClient(_sandbox_settings(), http_client=async_client, retry_base_delay=0.0)
+
+    for bad_url in ["http://api.sandbox.paypal.com/cert", "ftp://evil.com/cert", "javascript:void(0)", "relative/path"]:
+        headers = _valid_test_webhook_headers()
+        headers["PAYPAL-CERT-URL"] = bad_url
+        assert await client.verify_webhook_signature(headers=headers, webhook_event={}) is False
+        assert calls == 0
+
+    await async_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_verify_webhook_signature_requires_webhook_id() -> None:
+    client = PayPalSandboxClient(_sandbox_settings(paypal_webhook_id=""))
+    with pytest.raises(PayPalConfigurationError, match="PAYPAL_WEBHOOK_ID"):
+        await client.verify_webhook_signature(
+            headers=_valid_test_webhook_headers(),
+            webhook_event={"id": "WH-EVT-1"},
+        )
+

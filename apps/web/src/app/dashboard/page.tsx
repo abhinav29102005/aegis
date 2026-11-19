@@ -15,6 +15,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
+import { LivePipelineSimulator } from "@/components/LivePipelineSimulator";
 import { apiRequest, type OverviewMetrics } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { formatIsoDateTime, formatMinorCurrency, truncateId } from "@/lib/format";
@@ -131,96 +132,107 @@ export default function DashboardPage() {
           ))}
         </div>
       ) : metrics ? (
-        <>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 font-mono">
-            {/* Card 1: Budget */}
-            <div className="border border-aegis-border bg-aegis-surface p-5 rounded-sm relative">
-              <div className="flex items-center justify-between text-[11px] uppercase tracking-wider text-aegis-text-muted">
-                <span>PASSPORT LIQUIDITY</span>
-                <Wallet className="h-3.5 w-3.5 text-aegis-accent" />
-              </div>
-              <div className="mt-3 text-2xl font-bold text-aegis-text-primary tabular-nums tracking-tight">
-                {formatMinorCurrency(metrics.budget.available_minor)}
-              </div>
-              <div className="mt-2.5 flex items-center justify-between border-t border-aegis-border-subtle pt-2 text-[11px] text-aegis-text-faint">
-                <span>
-                  SPENT: <span className="text-aegis-copper tabular-nums">{formatMinorCurrency(metrics.budget.spent_minor)}</span>
-                </span>
-                <span>
-                  RESERVED: <span className="text-aegis-text-muted tabular-nums">{formatMinorCurrency(metrics.budget.reserved_minor)}</span>
-                </span>
-              </div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 font-mono">
+          {/* Card 1: Budget */}
+          <div className="border border-aegis-border bg-aegis-surface p-5 rounded-sm relative">
+            <div className="flex items-center justify-between text-[11px] uppercase tracking-wider text-aegis-text-muted">
+              <span>PASSPORT LIQUIDITY</span>
+              <Wallet className="h-3.5 w-3.5 text-aegis-accent" />
             </div>
-
-            {/* Card 2: AI Agents */}
-            <div className="border border-aegis-border bg-aegis-surface p-5 rounded-sm relative">
-              <div className="flex items-center justify-between text-[11px] uppercase tracking-wider text-aegis-text-muted">
-                <span>ACTIVE AGENTS</span>
-                <Bot className="h-3.5 w-3.5 text-aegis-text-primary" />
-              </div>
-              <div className="mt-3 text-2xl font-bold text-aegis-text-primary tabular-nums tracking-tight">
-                {metrics.agents.active} <span className="text-sm font-normal text-aegis-text-faint">/ {metrics.agents.total}</span>
-              </div>
-              <div className="mt-2.5 flex items-center justify-between border-t border-aegis-border-subtle pt-2 text-[11px] text-aegis-text-faint">
-                <span>HUMAN GATES:</span>
-                <Link
-                  href="/payments"
-                  className={`tabular-nums font-semibold hover:underline ${
-                    metrics.pending_approvals > 0 ? "text-aegis-copper" : "text-aegis-accent"
-                  }`}
-                >
-                  {metrics.pending_approvals} PENDING
-                </Link>
-              </div>
+            <div className="mt-3 text-2xl font-bold text-aegis-text-primary tabular-nums tracking-tight">
+              {formatMinorCurrency(metrics.budget.available_minor)}
             </div>
-
-            {/* Card 3: Payments & Disputes */}
-            <div className="border border-aegis-border bg-aegis-surface p-5 rounded-sm relative">
-              <div className="flex items-center justify-between text-[11px] uppercase tracking-wider text-aegis-text-muted">
-                <span>SETTLEMENT VOLUME</span>
-                <Scale className="h-3.5 w-3.5 text-aegis-copper" />
-              </div>
-              <div className="mt-3 text-2xl font-bold text-aegis-text-primary tabular-nums tracking-tight">
-                {metrics.payments.total} <span className="text-sm font-normal text-aegis-text-faint">TXNS</span>
-              </div>
-              <div className="mt-2.5 flex items-center justify-between border-t border-aegis-border-subtle pt-2 text-[11px] text-aegis-text-faint">
-                <span>
-                  SETTLED: <span className="text-aegis-accent tabular-nums">{metrics.payments.by_state.SUCCEEDED ?? 0}</span>
-                </span>
-                <span>
-                  DISPUTES: <span className={metrics.open_disputes > 0 ? "text-[#EF5350]" : "text-aegis-text-muted"}>{metrics.open_disputes}</span>
-                </span>
-              </div>
-            </div>
-
-            {/* Card 4: Integrity & Outbox */}
-            <div className="border border-aegis-border bg-aegis-surface p-5 rounded-sm relative">
-              <div className="flex items-center justify-between text-[11px] uppercase tracking-wider text-aegis-text-muted">
-                <span>INTEGRITY & OUTBOX</span>
-                {metrics.risk_alerts > 0 ? (
-                  <AlertTriangle className="h-3.5 w-3.5 text-[#EF5350]" />
-                ) : (
-                  <CheckCircle2 className="h-3.5 w-3.5 text-aegis-accent" />
-                )}
-              </div>
-              <div className="mt-3 text-2xl font-bold tabular-nums tracking-tight">
-                {metrics.risk_alerts > 0 ? (
-                  <span className="text-[#EF5350]">{metrics.risk_alerts} ALERTS</span>
-                ) : (
-                  <span className="text-aegis-accent">VERIFIED</span>
-                )}
-              </div>
-              <div className="mt-2.5 flex items-center justify-between border-t border-aegis-border-subtle pt-2 text-[11px] text-aegis-text-faint">
-                <span>DEAD-LETTER OUTBOX:</span>
-                <span className={`tabular-nums font-semibold ${metrics.dead_letter_outbox > 0 ? "text-[#EF5350]" : "text-aegis-text-muted"}`}>
-                  {metrics.dead_letter_outbox}
-                </span>
-              </div>
+            <div className="mt-2.5 flex items-center justify-between border-t border-aegis-border-subtle pt-2 text-[11px] text-aegis-text-faint">
+              <span>
+                SPENT: <span className="text-aegis-copper tabular-nums">{formatMinorCurrency(metrics.budget.spent_minor)}</span>
+              </span>
+              <span>
+                RESERVED: <span className="text-aegis-text-muted tabular-nums">{formatMinorCurrency(metrics.budget.reserved_minor)}</span>
+              </span>
             </div>
           </div>
 
-          {/* Recent Chained Financial Events Section */}
-          <section className="mt-10">
+          {/* Card 2: AI Agents */}
+          <div className="border border-aegis-border bg-aegis-surface p-5 rounded-sm relative">
+            <div className="flex items-center justify-between text-[11px] uppercase tracking-wider text-aegis-text-muted">
+              <span>ACTIVE AGENTS</span>
+              <Bot className="h-3.5 w-3.5 text-aegis-text-primary" />
+            </div>
+            <div className="mt-3 text-2xl font-bold text-aegis-text-primary tabular-nums tracking-tight">
+              {metrics.agents.active} <span className="text-sm font-normal text-aegis-text-faint">/ {metrics.agents.total}</span>
+            </div>
+            <div className="mt-2.5 flex items-center justify-between border-t border-aegis-border-subtle pt-2 text-[11px] text-aegis-text-faint">
+              <span>HUMAN GATES:</span>
+              <Link
+                href="/payments"
+                className={`tabular-nums font-semibold hover:underline ${
+                  metrics.pending_approvals > 0 ? "text-aegis-copper" : "text-aegis-accent"
+                }`}
+              >
+                {metrics.pending_approvals} PENDING
+              </Link>
+            </div>
+          </div>
+
+          {/* Card 3: Payments & Disputes */}
+          <div className="border border-aegis-border bg-aegis-surface p-5 rounded-sm relative">
+            <div className="flex items-center justify-between text-[11px] uppercase tracking-wider text-aegis-text-muted">
+              <span>SETTLEMENT VOLUME</span>
+              <Scale className="h-3.5 w-3.5 text-aegis-copper" />
+            </div>
+            <div className="mt-3 text-2xl font-bold text-aegis-text-primary tabular-nums tracking-tight">
+              {metrics.payments.total} <span className="text-sm font-normal text-aegis-text-faint">TXNS</span>
+            </div>
+            <div className="mt-2.5 flex items-center justify-between border-t border-aegis-border-subtle pt-2 text-[11px] text-aegis-text-faint">
+              <span>
+                SETTLED: <span className="text-aegis-accent tabular-nums">{metrics.payments.by_state.SUCCEEDED ?? 0}</span>
+              </span>
+              <span>
+                DISPUTES: <span className={metrics.open_disputes > 0 ? "text-[#EF5350]" : "text-aegis-text-muted"}>{metrics.open_disputes}</span>
+              </span>
+            </div>
+          </div>
+
+          {/* Card 4: Integrity & Outbox */}
+          <div className="border border-aegis-border bg-aegis-surface p-5 rounded-sm relative">
+            <div className="flex items-center justify-between text-[11px] uppercase tracking-wider text-aegis-text-muted">
+              <span>INTEGRITY & OUTBOX</span>
+              {metrics.risk_alerts > 0 ? (
+                <AlertTriangle className="h-3.5 w-3.5 text-[#EF5350]" />
+              ) : (
+                <CheckCircle2 className="h-3.5 w-3.5 text-aegis-accent" />
+              )}
+            </div>
+            <div className="mt-3 text-2xl font-bold tabular-nums tracking-tight">
+              {metrics.risk_alerts > 0 ? (
+                <span className="text-[#EF5350]">{metrics.risk_alerts} ALERTS</span>
+              ) : (
+                <span className="text-aegis-accent">VERIFIED</span>
+              )}
+            </div>
+            <div className="mt-2.5 flex items-center justify-between border-t border-aegis-border-subtle pt-2 text-[11px] text-aegis-text-faint">
+              <span>DEAD-LETTER OUTBOX:</span>
+              <span className={`tabular-nums font-semibold ${metrics.dead_letter_outbox > 0 ? "text-[#EF5350]" : "text-aegis-text-muted"}`}>
+                {metrics.dead_letter_outbox}
+              </span>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+          {/* Interactive Tri-Engine Mission Control */}
+          <div className="mt-8">
+            <LivePipelineSimulator />
+          </div>
+
+      {/* Interactive Tri-Engine Mission Control */}
+      <div className="mt-8">
+        <LivePipelineSimulator />
+      </div>
+
+      {/* Recent Chained Financial Events Section */}
+      {metrics && (
+        <section className="mt-10">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <Shield className="h-4 w-4 text-aegis-accent" />
@@ -293,8 +305,7 @@ export default function DashboardPage() {
               </div>
             )}
           </section>
-        </>
-      ) : null}
-    </AppShell>
-  );
-}
+        )}
+      </AppShell>
+    );
+  }

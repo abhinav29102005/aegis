@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import UUID
@@ -60,6 +60,10 @@ def _json_default(value: Any) -> Any:
     if isinstance(value, datetime):
         utc_val = value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
         return utc_val.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return str(value)
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json")
     raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
@@ -67,7 +71,13 @@ def _json_default(value: Any) -> Any:
 
 def canonical_json(payload: Any) -> str:
     """Serialize any JSON-like or Pydantic object into deterministic canonical JSON."""
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=_json_default)
+    return json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=_json_default,
+        allow_nan=False,
+    )
 
 
 def compute_payload_hash(payload: Any) -> str:
@@ -83,10 +93,19 @@ def compute_quote_hash(
     line_items: list[dict[str, Any]] | None = None,
 ) -> str:
     """Compute an immutable binding hash for a merchant, amount, currency, and line items."""
+    if isinstance(merchant_id, UUID):
+        norm_merchant_id = str(merchant_id)
+    else:
+        raw_merchant = str(merchant_id).strip()
+        try:
+            norm_merchant_id = str(UUID(raw_merchant))
+        except ValueError:
+            norm_merchant_id = raw_merchant
+
     return compute_payload_hash({
-        "merchant_id": str(merchant_id),
-        "amount_minor": amount_minor,
-        "currency": currency.upper(),
+        "merchant_id": norm_merchant_id,
+        "amount_minor": int(amount_minor),
+        "currency": currency.strip().upper(),
         "line_items": line_items or [],
     })
 

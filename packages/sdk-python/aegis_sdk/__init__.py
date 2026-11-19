@@ -1,5 +1,6 @@
 """Official Python SDK for AEGIS — The Financial Black Box for AI Agents."""
 
+from aegis_sdk.cli import main as cli_main
 from aegis_sdk.client import (
     AegisAPIError,
     AegisClient,
@@ -33,6 +34,7 @@ __all__ = [
     "AsyncAegisClient",
     "AsyncAgentAuthorizationTool",
     "AsyncPaginationIterator",
+    "cli_main",
     "OpenAIPurchaseGuard",
     "PaginationIterator",
     "ahandle_openai_purchase_call",
